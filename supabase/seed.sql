@@ -1,0 +1,1 @@
+-- Optional local seed data, applied by `supabase db reset`. Intentionally empty.
