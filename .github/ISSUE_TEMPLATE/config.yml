@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Project documentation
+    url: https://github.com/Saumya2721/IT314_Group15_MindMap-Generator/tree/main/docs
+    about: Read the requirements and user stories before opening work.
