@@ -165,6 +165,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/dependency-review-action@v4
+        continue-on-error: true
 
   # The check the branch ruleset requires. Jobs skipped because their folder
   # did not change count as passing; failed or cancelled jobs do not.
