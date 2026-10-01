@@ -1,0 +1,16 @@
+name: Feature request
+description: Propose a change to what the product does.
+title: "feat: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes: { label: Problem, description: "Who needs this and why." }
+    validations: { required: true }
+  - type: textarea
+    id: acceptance
+    attributes: { label: Acceptance criteria }
+    validations: { required: true }
+  - type: input
+    id: requirement
+    attributes: { label: Related story or requirement, placeholder: "US-05, FR-12" }

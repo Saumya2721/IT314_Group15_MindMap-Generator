@@ -1,0 +1,19 @@
+# The database and storage come from `supabase start`; the containers reach
+# it through host.docker.internal.
+services:
+  backend:
+    build: ./backend
+    env_file:
+      - path: backend/.env
+        required: false
+    environment:
+      SUPABASE_URL: http://host.docker.internal:54321
+      CORS_ORIGINS: http://localhost:5173
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports: ["8000:8000"]
+
+  frontend:
+    build: ./frontend
+    depends_on: [backend]
+    ports: ["5173:80"]

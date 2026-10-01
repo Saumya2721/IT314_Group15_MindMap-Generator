@@ -1,0 +1,16 @@
+name: Bug report
+description: Something does not work as expected.
+title: "fix: "
+labels: [bug]
+body:
+  - type: textarea
+    id: what-happened
+    attributes: { label: What happened, description: "Include what you expected instead." }
+    validations: { required: true }
+  - type: textarea
+    id: steps
+    attributes: { label: Steps to reproduce }
+    validations: { required: true }
+  - type: input
+    id: requirement
+    attributes: { label: Related story or requirement, placeholder: "US-03, FR-07" }
