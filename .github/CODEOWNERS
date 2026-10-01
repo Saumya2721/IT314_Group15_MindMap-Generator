@@ -1,7 +1,7 @@
 # Replace @Saumya2721 with your teammates' handles, then turn on
 # require_code_owner_review in scripts/setup_github.sh and re-run it.
-*                      @Saumya2721
-/supabase/migrations/  @Saumya2721
-/.github/              @Saumya2721
-/backend/Dockerfile    @Saumya2721
-/frontend/Dockerfile   @Saumya2721
+*                      @Saumya2721 @omshiloja01 @Rdx0803
+/supabase/migrations/  @Saumya2721 @omshiloja01 @Rdx0803
+/.github/              @Saumya2721 @omshiloja01 @Rdx0803
+/backend/Dockerfile    @Saumya2721 @omshiloja01 @Rdx0803
+/frontend/Dockerfile   @Saumya2721 @omshiloja01 @Rdx0803
