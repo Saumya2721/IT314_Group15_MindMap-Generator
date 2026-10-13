@@ -1,10 +1,10 @@
 # Sprint Grouping
 
-## Sprint 1 – User Onboarding and Seed Capture
+## Sprint 1 – User Onboarding, Seed Capture and AI Mind Map Generation
 
 ### Goal
 
-Set up the basic user flow and allow users to provide the material from which a mind map can be generated.
+Set up the complete initial user flow, allowing users to create an account, provide the material from which a mind map will be generated, and receive an AI-generated structured mind map.
 
 ### User Stories
 
@@ -19,20 +19,6 @@ Set up the basic user flow and allow users to provide the material from which a 
   - Support text-only, file-only, and combined inputs.
   - Validate unsupported or corrupted files.
   - Convert accepted inputs into a common seed representation.
-
-### Sprint Outcome
-
-At the end of this sprint, a user should be able to create an account, sign in, and provide the raw material that will be used for mind map generation.
-
----
-
-## Sprint 2 – AI Mind Map Generation
-
-### Goal
-
-Build the core generation flow that converts a user's seed into a structured mind map.
-
-### User Stories
 
 - **US-03 – Generate a Mind Map from a Seed**
   - Send the seed to the generation service.
@@ -49,15 +35,15 @@ Build the core generation flow that converts a user's seed into a structured min
 
 ### Sprint Outcome
 
-At the end of this sprint, a user should be able to submit a seed and receive a structured mind map, as well as regenerate the complete map when the initial result is not suitable.
+At the end of this sprint, a user should be able to create an account, sign in, provide raw material, generate an AI-based structured mind map, and regenerate the complete map when the initial result is not suitable.
 
 ---
 
-## Sprint 3 – Mind Map Editing, Persistence and Export
+## Sprint 2 – Mind Map Editing, Persistence and Export
 
 ### Goal
 
-Give users control over the generated map and allow them to save, find, and export their work.
+Give users control over the generated map and allow them to refine, save, find, reopen, and export their work.
 
 ### User Stories
 
@@ -91,15 +77,15 @@ Give users control over the generated map and allow them to save, find, and expo
 
 ### Sprint Outcome
 
-At the end of this sprint, a user should be able to manually edit the generated mind map, refine individual branches, save the map, find previously saved maps, reopen them, and export the current map as PDF or PNG.
+At the end of this sprint, a user should be able to manually edit the generated mind map, refine individual branches, save the map, search and reopen previously saved maps, and export the current map as PDF or PNG.
 
 ---
 
-## Sprint 4 – Platform Administration
+## Sprint 3 – Platform Administration, Developer Configuration and QA Enablement
 
 ### Goal
 
-Add the administrative functionality needed to manage the platform while keeping user data private.
+Add the administrative capabilities required to manage the platform while protecting user privacy, and provide developers and QA with a configurable and testable generation pipeline.
 
 ### User Stories
 
@@ -110,20 +96,6 @@ Add the administrative functionality needed to manage the platform while keeping
   - Restrict admin functionality to authorized users.
   - Prevent unnecessary access to private user map content.
   - Record administrative actions for auditing.
-
-### Sprint Outcome
-
-At the end of this sprint, authorized administrators should be able to manage supported account operations and view platform-level usage information without exposing private user content.
-
----
-
-## Sprint 5 – Developer and QA Enablement
-
-### Goal
-
-Make the generation pipeline easier to configure, extend, and test.
-
-### User Stories
 
 - **US-10 – Configure the Generation Pipeline**
   - Configure the LLM integration.
@@ -141,15 +113,12 @@ Make the generation pipeline easier to configure, extend, and test.
 
 ### Sprint Outcome
 
-At the end of this sprint, developers should be able to modify the generation pipeline more easily, while QA should be able to test the application without depending on live external services.
+At the end of this sprint, authorized administrators should be able to manage supported account operations and view platform-level usage information without exposing private user content. Developers should be able to configure and extend the generation pipeline more easily, while QA should be able to test the application in an isolated environment without depending completely on live external services.
 
 ---
 
+# Notes
 
-## Notes
-
-- **US-01 and US-02** are placed first because authentication and seed submission are the starting points of the main user flow.
-- **US-03 and US-04** depend on the seed being available and provide the initial AI-generated map.
-- **US-05 to US-08** are grouped together because they all work on the generated mind map. At the end of this sprint, the user can modify the map and also save, reopen, and export it.
-- **US-09** is kept separate because administrative functionality has different permissions and privacy requirements.
-- **US-10 and US-11** focus on making the generation pipeline configurable and ensuring that the application can be tested without depending completely on live external services.
+- **US-01 to US-04** are grouped into the first sprint because authentication and seed submission are the starting points of the main user flow, while mind map generation and whole-map regeneration directly depend on the seed being available.
+- **US-05 to US-08** remain together in the second sprint because they all operate on the generated mind map. This sprint focuses on editing, refinement, persistence, search, reopening, and export.
+- **US-09 to US-11** are grouped into the third sprint because administrative functionality, generation-pipeline configuration, and isolated QA/testing are primarily concerned with platform management, maintainability, security, and operational readiness.
