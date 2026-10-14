@@ -21,9 +21,9 @@ select set_config('request.jwt.claims',
 set local role authenticated;
 
 select is((select count(*)::int from public.mind_maps), 0,
-    'a user cannot read another user''s map');
+    'a user cannot read another user''s private map');
 select is((select count(*)::int from public.nodes), 0,
-    'a user cannot read nodes of another user''s map');
+    'a user cannot read nodes of another user''s private map');
 
 select throws_ok(
     $$insert into public.nodes (map_id, label)
@@ -32,7 +32,7 @@ select throws_ok(
     'a user cannot add nodes to another user''s map'
 );
 
--- Act as Alice, the owner.
+-- Act as Alice, who owns the map.
 select set_config('request.jwt.claim.sub', 'a0000000-0000-0000-0000-000000000001', true);
 select set_config('request.jwt.claims',
     '{"sub":"a0000000-0000-0000-0000-000000000001","role":"authenticated"}', true);
@@ -42,7 +42,7 @@ select is((select count(*)::int from public.mind_maps), 1, 'the owner can read t
 reset role;
 set local role anon;
 select is((select count(*)::int from public.mind_maps), 0,
-    'anonymous visitors cannot read any map');
+    'anonymous visitors cannot read a private map');
 
 reset role;
 select * from finish();

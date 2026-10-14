@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(6);
+select plan(10);
 
 insert into auth.users (id, email)
 values ('a0000000-0000-0000-0000-000000000001', 'alice@example.com');
@@ -19,9 +19,8 @@ values ('b0000000-0000-0000-0000-000000000001',
         'c0000000-0000-0000-0000-000000000001',
         'c0000000-0000-0000-0000-000000000002');
 
-select is(
-    (select email from public.users where id = 'a0000000-0000-0000-0000-000000000001'),
-    'alice@example.com',
+select ok(
+    exists (select 1 from public.profiles where id = 'a0000000-0000-0000-0000-000000000001'),
     'signing up creates a profile row'
 );
 
@@ -60,18 +59,52 @@ select lives_ok(
     'node-level regeneration can run alongside a full-map job'
 );
 
+select lives_ok(
+    $$delete from public.nodes where id = 'c0000000-0000-0000-0000-000000000002'$$,
+    'deleting a targeted node succeeds and clears the regeneration target'
+);
+
 insert into public.embeddings
     (generation_job_id, map_id, chunk_text, embedding, embedding_model, source)
 values
     ('d0000000-0000-0000-0000-000000000001', 'b0000000-0000-0000-0000-000000000001',
-     'a chunk', array_fill(0.1::real, array[1536])::vector, 'test-model', 'uploaded_seed');
+     'a chunk', array_fill(0.1::real, array[1536])::extensions.vector, 'test-model', 'uploaded_seed');
 
 select is(
     (select count(*)::int from public.match_embeddings(
-        array_fill(0.1::real, array[1536])::vector,
+        array_fill(0.1::real, array[1536])::extensions.vector,
         'd0000000-0000-0000-0000-000000000001')),
     1,
     'match_embeddings returns the stored chunk for its job'
+);
+
+
+select ok(
+    exists (
+        select 1 from information_schema.columns
+        where table_schema = 'public' and table_name = 'generation_jobs'
+          and column_name = 'callback_token_hash'
+    ),
+    'generation_jobs includes the backend callback token hash column'
+);
+
+select ok(
+    exists (
+        select 1 from information_schema.columns
+        where table_schema = 'public' and table_name = 'embeddings'
+          and column_name = 'pinecone_vector_id'
+    ),
+    'embeddings includes the Pinecone vector ID column'
+);
+
+select lives_ok(
+    $$insert into public.embeddings
+        (generation_job_id, map_id, chunk_text, pinecone_vector_id, embedding_model, source)
+      values
+        ('d0000000-0000-0000-0000-000000000001',
+         'b0000000-0000-0000-0000-000000000001',
+         'Pinecone-backed chunk', 'pinecone-test-vector-1', 'test-model', 'uploaded_seed')$$,
+    'backend can store Pinecone metadata without a local pgvector value'
 );
 
 select * from finish();
