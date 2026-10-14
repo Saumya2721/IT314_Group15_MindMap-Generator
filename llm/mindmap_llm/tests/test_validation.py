@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-import uuid
-
 import pytest
-
 from tests.conftest import VALID_DRAFT_PAYLOAD
 from validation.schema import ValidationFailure, resolve_to_records, validate_draft
 
@@ -39,7 +36,11 @@ def test_multiple_roots_rejected():
 
 def test_disconnected_cluster_rejected():
     payload = {
-        "nodes": [{"id": "n1", "label": "Root"}, {"id": "n2", "label": "Child"}, {"id": "n3", "label": "Orphan"}],
+        "nodes": [
+            {"id": "n1", "label": "Root"},
+            {"id": "n2", "label": "Child"},
+            {"id": "n3", "label": "Orphan"},
+        ],
         "edges": [{"source": "n1", "target": "n2", "label": None}],
         # n3 has no incoming edge either, so this is actually a 2-root case;
         # covered separately by test_multiple_roots_rejected. This case

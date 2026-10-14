@@ -7,15 +7,17 @@ Nothing in orchestration/ changes.
 
 from __future__ import annotations
 
-from config import Settings
+from config import LLMSettings
 from tools.arxiv_tool import ArxivTool
 from tools.base import Tool
 from tools.web_search_tool import TavilyWebSearchTool
 
 
-def build_tool_registry(settings: Settings) -> dict[str, Tool]:
+def build_tool_registry(settings: LLMSettings) -> dict[str, Tool]:
     registry: dict[str, Tool] = {
-        "arxiv_search": ArxivTool(api_base=settings.tools.arxiv_api_base, timeout_s=settings.tools.tool_timeout_s),
+        "arxiv_search": ArxivTool(
+            api_base=settings.tools.arxiv_api_base, timeout_s=settings.tools.tool_timeout_s
+        ),
     }
     if settings.tools.web_search_api_key:
         try:

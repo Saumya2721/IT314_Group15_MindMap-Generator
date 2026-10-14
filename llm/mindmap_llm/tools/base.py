@@ -18,7 +18,9 @@ from providers.base import ToolSpec
 class ToolResult:
     content: str
     source_title: str | None
-    source_url: str  # required: embeddings.chk_embeddings_source_url needs this for non-seed sources
+    source_url: (
+        str  # required: embeddings.chk_embeddings_source_url needs this for non-seed sources
+    )
 
 
 class ToolError(Exception):

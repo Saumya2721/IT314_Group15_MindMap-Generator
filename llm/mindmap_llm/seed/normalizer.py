@@ -30,10 +30,14 @@ SUPPORTED_MIME_PREFIXES = ("application/pdf", "image/")
 class UploadedFile:
     """File bytes already fetched (worker/files.py) from the backend's
     signed URL — this module never deals with URLs, only bytes."""
+
     file_name: str
     mime_type: str
     data: bytes
-    storage_key: str | None = None  # carried through to SeedAssetDraft so the backend can match it to its own upload record
+    storage_key: str | None = (
+        None  # carried through to SeedAssetDraft so the backend can match it to its own
+        # upload record
+    )
 
 
 @dataclass
@@ -46,9 +50,12 @@ class SeedSubmission:
 @dataclass
 class NormalizedSeed:
     """The single combined Seed object generation consumes (FR-06)."""
+
     combined_text: str
     seed_assets: list[SeedAssetDraft]
-    rejected_files: list[tuple[str, str]]  # (file_name, reason) — Scenario 4: report clearly, don't block
+    rejected_files: list[
+        tuple[str, str]
+    ]  # (file_name, reason) — Scenario 4: report clearly, don't block
 
 
 class NoUsableSeedContent(Exception):
@@ -84,7 +91,11 @@ async def normalize_seed(
     seed_assets: list[SeedAssetDraft] = []
     rejected: list[tuple[str, str]] = []
 
-    base_text = normalize_free_text(submission.topic, submission.ideas) if (submission.topic or submission.ideas) else None
+    base_text = (
+        normalize_free_text(submission.topic, submission.ideas)
+        if (submission.topic or submission.ideas)
+        else None
+    )
     if base_text:
         text_parts.append(base_text)
 
@@ -93,11 +104,15 @@ async def normalize_seed(
             if len(f.data) == 0:
                 raise SeedExtractionError("The file is empty.")
             if len(f.data) > MAX_FILE_SIZE_BYTES:
-                raise SeedExtractionError(f"File exceeds the {MAX_FILE_SIZE_BYTES // (1024*1024)} MB limit.")
+                raise SeedExtractionError(
+                    f"File exceeds the {MAX_FILE_SIZE_BYTES // (1024 * 1024)} MB limit."
+                )
             if not f.mime_type.startswith(SUPPORTED_MIME_PREFIXES):
                 raise SeedExtractionError(f"Unsupported file type: {f.mime_type}")
 
-            if not await _classify_is_supported_upload(decision_model, f.file_name, f.mime_type, len(f.data)):
+            if not await _classify_is_supported_upload(
+                decision_model, f.file_name, f.mime_type, len(f.data)
+            ):
                 raise SeedExtractionError("This file doesn't look like a valid PDF or image.")
 
             if f.mime_type.startswith("application/pdf"):
@@ -107,15 +122,17 @@ async def normalize_seed(
                 extracted = extract_text_from_image(f.data)
                 asset_type = SeedAssetType.IMAGE
 
-            seed_assets.append(SeedAssetDraft(
-                asset_type=asset_type,
-                file_name=f.file_name,
-                storage_key=f.storage_key,
-                mime_type=f.mime_type,
-                content_text=extracted,
-                file_size_bytes=len(f.data),
-                checksum_sha256=checksum_sha256(f.data),
-            ))
+            seed_assets.append(
+                SeedAssetDraft(
+                    asset_type=asset_type,
+                    file_name=f.file_name,
+                    storage_key=f.storage_key,
+                    mime_type=f.mime_type,
+                    content_text=extracted,
+                    file_size_bytes=len(f.data),
+                    checksum_sha256=checksum_sha256(f.data),
+                )
+            )
             text_parts.append(f"[From {f.file_name}]\n{extracted}")
 
         except SeedExtractionError as exc:
@@ -123,16 +140,26 @@ async def normalize_seed(
             rejected.append((f.file_name, str(exc)))
 
     if base_text:
-        seed_assets.append(SeedAssetDraft(
-            asset_type=SeedAssetType.TEXT, file_name=None, storage_key=None,
-            mime_type=None, content_text=base_text,
-            file_size_bytes=len(base_text.encode("utf-8")), checksum_sha256=None,
-        ))
+        seed_assets.append(
+            SeedAssetDraft(
+                asset_type=SeedAssetType.TEXT,
+                file_name=None,
+                storage_key=None,
+                mime_type=None,
+                content_text=base_text,
+                file_size_bytes=len(base_text.encode("utf-8")),
+                checksum_sha256=None,
+            )
+        )
 
     if not text_parts:
         raise NoUsableSeedContent(
             "No usable seed content: "
-            + ("; ".join(f"{name}: {reason}" for name, reason in rejected) if rejected else "nothing was submitted.")
+            + (
+                "; ".join(f"{name}: {reason}" for name, reason in rejected)
+                if rejected
+                else "nothing was submitted."
+            )
         )
 
     return NormalizedSeed(

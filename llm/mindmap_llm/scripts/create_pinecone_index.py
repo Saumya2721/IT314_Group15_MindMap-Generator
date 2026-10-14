@@ -17,9 +17,8 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from dotenv import load_dotenv
-
-from config import get_settings
+from config import get_settings  # noqa: E402
+from dotenv import load_dotenv  # noqa: E402
 
 
 def main() -> None:
@@ -36,7 +35,10 @@ def main() -> None:
 
     if settings.pinecone.index_name in existing:
         print(f"Index {settings.pinecone.index_name!r} already exists — not recreating it.")
-        print("If EMBEDDING_MODEL changed dimension, delete the old index first (this will lose all stored chunks).")
+        print(
+            "If EMBEDDING_MODEL changed dimension, delete the old index first "
+            "(this will lose all stored chunks)."
+        )
         return
 
     pc.create_index(
@@ -47,7 +49,8 @@ def main() -> None:
     )
     print(
         f"Created index {settings.pinecone.index_name!r} "
-        f"(dimension={settings.embedding.dimension}, metric=dotproduct, model={settings.embedding.model})"
+        f"(dimension={settings.embedding.dimension}, "
+        f"metric=dotproduct, model={settings.embedding.model})"
     )
 
 

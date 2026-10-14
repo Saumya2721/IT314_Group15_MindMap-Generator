@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-
 from orchestration.prompts import JSONExtractionError, extract_json_object
 
 

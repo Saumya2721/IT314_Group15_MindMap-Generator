@@ -54,7 +54,9 @@ def extract_text_from_image(data: bytes) -> str:
         import pytesseract
         from PIL import Image, UnidentifiedImageError
     except ImportError as exc:  # pragma: no cover
-        raise RuntimeError("pytesseract/Pillow not installed. `pip install pytesseract pillow`.") from exc
+        raise RuntimeError(
+            "pytesseract/Pillow not installed. `pip install pytesseract pillow`."
+        ) from exc
 
     try:
         image = Image.open(io.BytesIO(data))

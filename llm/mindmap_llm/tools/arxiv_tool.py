@@ -3,7 +3,6 @@ from __future__ import annotations
 import xml.etree.ElementTree as ET
 
 import httpx
-
 from providers.base import ToolSpec
 from tools.base import Tool, ToolError, ToolResult
 
@@ -20,7 +19,9 @@ class ArxivTool(Tool):
     def spec(self) -> ToolSpec:
         return ToolSpec(
             name="arxiv_search",
-            description="Search arXiv for papers relevant to a topic. Use for academic/technical grounding.",
+            description=(
+                "Search arXiv for papers relevant to a topic. Use for academic/technical grounding."
+            ),
             input_schema={
                 "type": "object",
                 "properties": {"query": {"type": "string"}},

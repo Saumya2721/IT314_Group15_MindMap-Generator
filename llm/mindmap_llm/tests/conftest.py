@@ -10,20 +10,20 @@ Fakes cover all four dependencies that GenerationDeps bundles:
 FakeConnection and fake_conn (asyncpg stand-ins for JobTracker) have been
 removed — JobTracker is gone; the worker uses JobCallbackClient instead.
 """
+
 from __future__ import annotations
 
 import pytest
-
 from callback.client import CallbackAlreadySent
 from contracts.models import GenerationResult
 from providers.base import LLMProvider, LLMResponse, Message, ToolSpec
 from providers.decision_model import ClassifyResult, DecisionModel, ScoreResult
-from rag.pinecone_store import PineconeVectorStore, RetrievedChunkRecord, VectorChunk
-
+from rag.pinecone_store import RetrievedChunkRecord, VectorChunk
 
 # ---------------------------------------------------------------------------
 # LLM fake
 # ---------------------------------------------------------------------------
+
 
 class FakeLLMProvider(LLMProvider):
     """Returns a scripted sequence of responses, one per call, so a test
@@ -55,6 +55,7 @@ class FakeLLMProvider(LLMProvider):
 # Decision model fake
 # ---------------------------------------------------------------------------
 
+
 class FakeDecisionModel(DecisionModel):
     """Always picks the first label with full confidence; gives every item
     score 1.0. Enough to let the pipeline proceed without Jev."""
@@ -76,6 +77,7 @@ class FakeDecisionModel(DecisionModel):
 # ---------------------------------------------------------------------------
 # Vector store fake  (in-memory, no Pinecone SDK needed)
 # ---------------------------------------------------------------------------
+
 
 class FakeVectorStore:
     """Minimal in-memory replacement for PineconeVectorStore.
@@ -120,14 +122,18 @@ class FakeVectorStore:
         self, *, namespace: str, source, dimension: int, limit: int = 1000
     ) -> list[RetrievedChunkRecord]:
         return await self.query(
-            namespace=namespace, query_text="", query_embedding=[],
-            top_k=limit, source_filter=source,
+            namespace=namespace,
+            query_text="",
+            query_embedding=[],
+            top_k=limit,
+            source_filter=source,
         )
 
 
 # ---------------------------------------------------------------------------
 # Callback client fake
 # ---------------------------------------------------------------------------
+
 
 class FakeCallbackClient:
     """Records every call in-process instead of making HTTP requests.
@@ -170,6 +176,7 @@ class FakeCallbackClient:
 # Embedding provider fake
 # ---------------------------------------------------------------------------
 
+
 class FakeEmbeddingProvider:
     """Produces fixed-dimension dummy vectors for tests."""
 
@@ -192,21 +199,26 @@ class FakeEmbeddingProvider:
 # Pytest fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def fake_llm():
     return FakeLLMProvider
+
 
 @pytest.fixture
 def fake_decision_model():
     return FakeDecisionModel()
 
+
 @pytest.fixture
 def fake_embedding_provider():
     return FakeEmbeddingProvider()
 
+
 @pytest.fixture
 def fake_vector_store():
     return FakeVectorStore()
+
 
 @pytest.fixture
 def fake_callback():
@@ -219,7 +231,12 @@ def fake_callback():
 
 VALID_DRAFT_PAYLOAD = {
     "nodes": [
-        {"id": "n1", "label": "Photosynthesis", "description": "Root concept", "node_type": "default"},
+        {
+            "id": "n1",
+            "label": "Photosynthesis",
+            "description": "Root concept",
+            "node_type": "default",
+        },
         {"id": "n2", "label": "Light Reactions", "description": None, "node_type": "default"},
         {"id": "n3", "label": "Calvin Cycle", "description": None, "node_type": "default"},
     ],

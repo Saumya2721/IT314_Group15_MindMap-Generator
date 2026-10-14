@@ -30,6 +30,7 @@ select = ["E", "F", "I", "B", "UP"]
 python_version = "3.12"
 strict = true
 warn_unreachable = true
+mypy_path = "mindmap_llm"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

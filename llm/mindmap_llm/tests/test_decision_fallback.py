@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-
 from providers.decision_fallback import HeuristicDecisionModel, LLMBackedDecisionModel
 from providers.decision_model import DecisionModelUnavailable
 from providers.registry import SafeDecisionModel
@@ -12,7 +11,11 @@ from tests.conftest import FakeLLMProvider
 async def test_llm_backed_classify_picks_a_valid_label():
     llm = FakeLLMProvider(responses=["balanced"])
     model = LLMBackedDecisionModel(llm)
-    result = await model.classify(state="some seed text", question="detail level?", labels=["overview", "balanced", "detailed"])
+    result = await model.classify(
+        state="some seed text",
+        question="detail level?",
+        labels=["overview", "balanced", "detailed"],
+    )
     assert result.label == "balanced"
 
 
@@ -20,7 +23,9 @@ async def test_llm_backed_classify_picks_a_valid_label():
 async def test_llm_backed_classify_falls_back_to_first_label_on_junk_output():
     llm = FakeLLMProvider(responses=["I have no idea what you mean"])
     model = LLMBackedDecisionModel(llm)
-    result = await model.classify(state="x", question="detail level?", labels=["overview", "balanced", "detailed"])
+    result = await model.classify(
+        state="x", question="detail level?", labels=["overview", "balanced", "detailed"]
+    )
     assert result.label == "overview"  # first label is the safe default
 
 
@@ -52,7 +57,9 @@ class AlwaysFailingDecisionModel:
 async def test_safe_decision_model_falls_back_when_primary_unavailable():
     llm = FakeLLMProvider(responses=["detailed"])
     safe = SafeDecisionModel(primary=AlwaysFailingDecisionModel(), llm_fallback=llm)
-    result = await safe.classify(state="x", question="detail level?", labels=["overview", "balanced", "detailed"])
+    result = await safe.classify(
+        state="x", question="detail level?", labels=["overview", "balanced", "detailed"]
+    )
     assert result.label == "detailed"
     assert len(llm.calls) == 1  # confirms the LLM fallback path was actually used
 
@@ -61,5 +68,7 @@ async def test_safe_decision_model_falls_back_when_primary_unavailable():
 async def test_safe_decision_model_works_with_no_primary_configured():
     llm = FakeLLMProvider(responses=["overview"])
     safe = SafeDecisionModel(primary=None, llm_fallback=llm)
-    result = await safe.classify(state="x", question="detail level?", labels=["overview", "balanced", "detailed"])
+    result = await safe.classify(
+        state="x", question="detail level?", labels=["overview", "balanced", "detailed"]
+    )
     assert result.label == "overview"

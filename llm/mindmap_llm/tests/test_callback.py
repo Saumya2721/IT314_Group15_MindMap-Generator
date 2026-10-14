@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import json
 import uuid
+
 import httpx
 import pytest
-
 from callback.client import CallbackAlreadySent, JobCallbackClient, NullCallbackClient
 from contracts.models import GenerationError, GenerationResult
 
@@ -23,7 +23,9 @@ def _make_dummy_result(job_id: uuid.UUID, status: str = "completed") -> Generati
         job_id=job_id,
         map_id=map_id,
         status="failed",
-        error=GenerationError(stage="validate", error_type="Error", message="Boom", retryable=False),
+        error=GenerationError(
+            stage="validate", error_type="Error", message="Boom", retryable=False
+        ),
     )
 
 
@@ -37,7 +39,9 @@ async def test_job_callback_client_progress_success():
         return httpx.Response(200, json={"ok": True})
 
     client = JobCallbackClient(job_id=job_id, base_url="https://api.test", token="secret-token")
-    client._client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://api.test")
+    client._client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="https://api.test"
+    )
 
     await client.progress(50)
     await client.aclose()
@@ -58,7 +62,9 @@ async def test_job_callback_client_progress_error_swallowed(caplog):
         return httpx.Response(500, json={"error": "server down"})
 
     client = JobCallbackClient(job_id=job_id, base_url="https://api.test", token="secret-token")
-    client._client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://api.test")
+    client._client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="https://api.test"
+    )
 
     # Should not raise exception
     await client.progress(25)
@@ -75,7 +81,9 @@ async def test_job_callback_client_complete():
         return httpx.Response(200, json={"status": "ok"})
 
     client = JobCallbackClient(job_id=job_id, base_url="https://api.test", token="secret-token")
-    client._client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://api.test")
+    client._client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="https://api.test"
+    )
 
     result = _make_dummy_result(job_id, status="completed")
     await client.complete(result)
@@ -98,7 +106,9 @@ async def test_job_callback_client_fail():
         return httpx.Response(200, json={"status": "ok"})
 
     client = JobCallbackClient(job_id=job_id, base_url="https://api.test", token="secret-token")
-    client._client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://api.test")
+    client._client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="https://api.test"
+    )
 
     result = _make_dummy_result(job_id, status="failed")
     await client.fail(result)
@@ -119,7 +129,9 @@ async def test_job_callback_client_terminal_double_call_raises():
         return httpx.Response(200, json={"status": "ok"})
 
     client = JobCallbackClient(job_id=job_id, base_url="https://api.test", token="secret-token")
-    client._client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://api.test")
+    client._client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="https://api.test"
+    )
 
     result = _make_dummy_result(job_id, status="completed")
     await client.complete(result)
@@ -144,7 +156,9 @@ async def test_job_callback_client_terminal_http_failure_raises():
         return httpx.Response(502, text="Bad Gateway")
 
     client = JobCallbackClient(job_id=job_id, base_url="https://api.test", token="secret-token")
-    client._client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://api.test")
+    client._client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="https://api.test"
+    )
 
     result = _make_dummy_result(job_id, status="completed")
     with pytest.raises(httpx.HTTPStatusError):
