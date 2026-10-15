@@ -12,7 +12,7 @@ The repository is a foundation for the sprints in `Documentation/sprint_Grouping
 | `llm/` | Seed processing, retrieval and generation logic with its own uv project. |
 | `frontend/` | React app (Vite, TypeScript). |
 | `supabase/` | Postgres migrations, storage setup and database tests. |
-| `Documentation/` | Requirements, user stories, stakeholder analysis. |
+| `docs/requirements/` | Requirements, user stories, stakeholder analysis. |
 | `docs/engineering/` | Code rules, testing strategy, configuration. |
 
 ## Quick start
