@@ -1,1 +1,4 @@
--- Optional local seed data, applied by `supabase db reset`. Intentionally empty.
+-- Optional local seed data, applied by `supabase db reset` (local only, never pushed).
+-- Intentionally empty: users are created through Supabase Auth (the
+-- on_auth_user_created trigger then creates their public.profiles row), and
+-- all other rows are written by the backend.
