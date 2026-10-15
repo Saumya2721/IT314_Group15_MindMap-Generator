@@ -33,23 +33,22 @@ if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
 # Backend configuration and database
-from core.config import settings as app_settings
-from db.connection import create_db_pool
+# Backward-compatible exports
+from auth.schemas import SignupRequest, UserCredentials  # noqa: F401
 
 # LLM module and services
 from config import get_settings as get_llm_settings
+from core.config import settings as app_settings
+from db.connection import create_db_pool
+from maps.routes import router as maps_router
 from providers.registry import get_llm_provider
-from services.generator import MindMapGenerator
-from services.mindmap_service import MindMapBackendService
 
 # API routers
 from routes.auth import router as auth_router
 from routes.internal import router as internal_router
-from maps.routes import router as maps_router
 from routes.users import router as users_router
-
-# Backward-compatible exports
-from auth.schemas import SignupRequest, UserCredentials  # noqa: F401
+from services.generator import MindMapGenerator
+from services.mindmap_service import MindMapBackendService
 
 FRONTEND_URL = app_settings.FRONTEND_URL
 
