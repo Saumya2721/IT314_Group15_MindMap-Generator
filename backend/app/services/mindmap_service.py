@@ -60,7 +60,8 @@ class MindMapBackendService:
         6. Returns complete graph for immediate screen display / frontend.
         """
         job_id = existing_job_id or uuid4()
-        summary_msg = f"Generate mind map for topic: '{topic or 'General'}' (Detail: {detail_level or 'overview'})"
+        summary_msg = ( f"Generate mind map for topic: '{topic or 'General'}'"
+                        f"(Detail: {detail_level or 'overview'})" )
 
         # Step 1: Initialize Job & Chat in DB
         async with transaction(self.pool) as conn:
@@ -178,7 +179,8 @@ class MindMapBackendService:
                 conn,
                 thread_id,
                 "assistant",
-                f"Successfully generated mind map with {len(node_records)} nodes and {len(edge_records)} edges.",
+                f"Successfully generated mind map with {len(node_records)} nodes " 
+                f"and {len(edge_records)} edges.",
             )
 
         logger.info("Successfully persisted graph for map %s (job %s)", map_id, job_id)
@@ -319,7 +321,8 @@ class MindMapBackendService:
                 conn,
                 thread_id,
                 "assistant",
-                f"Regeneration complete with {len(node_records)} nodes and {len(edge_records)} edges.",
+                f"Regeneration complete with {len(node_records)} nodes "
+                f"and {len(edge_records)} edges.",
             )
 
         return {
