@@ -51,7 +51,6 @@ if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
 
-
 FRONTEND_URL = app_settings.FRONTEND_URL
 
 
@@ -82,7 +81,6 @@ async def lifespan(app: FastAPI):
         logger.warning("Could not initialize default LLM provider: %s", exc)
 
     service = MindMapBackendService(pool, generator)
-
 
     redis_pool = await create_redis_pool()
 
