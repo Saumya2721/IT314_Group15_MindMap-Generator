@@ -3,6 +3,7 @@
 Bridges the backend in-process generation service directly to the LLM
 orchestration prompts, provider abstraction, and validation schema.
 """
+# ruff: noqa: E402
 from __future__ import annotations
 
 import logging
@@ -161,7 +162,11 @@ class MindMapGenerator:
                 previous_validation_errors=validation_errors if validation_errors else None,
             )
 
-            logger.info("MindMapGenerator invoking LLM (attempt %d/%d)...", attempt + 1, self.max_retries + 1)
+            logger.info(
+                "MindMapGenerator invoking LLM (attempt %d/%d)...",
+                attempt + 1,
+                self.max_retries + 1,
+            )
             response = await self.llm.generate(
                 [Message(role="user", content=prompt)],
                 system=GENERATION_SYSTEM_PROMPT,
@@ -186,7 +191,8 @@ class MindMapGenerator:
                         "label": n.label,
                         "description": n.description,
                         "node_type": n.node_type,
-                        "background_color": n.background_color or ("#4F46E5" if n.node_type == "root" else "#3B82F6"),
+                        "background_color": n.background_color
+                        or ("#4F46E5" if n.node_type == "root" else "#3B82F6"),
                         "text_color": n.text_color or "#FFFFFF",
                         "pos_x": getattr(n, "pos_x", 0.0),
                         "pos_y": getattr(n, "pos_y", 0.0),
@@ -213,6 +219,8 @@ class MindMapGenerator:
 
         # If retries exhausted, raise with informative diagnostics
         raise RuntimeError(
-            f"MindMapGenerator failed to produce a valid schema after {self.max_retries + 1} attempts. "
-            f"Last validation errors: {validation_errors}. LLM response was: {last_raw_response[:300]}..."
+            f"MindMapGenerator failed to produce a valid schema after "
+            f"{self.max_retries + 1} attempts. "
+            f"Last validation errors: {validation_errors}. "
+            f"LLM response was: {last_raw_response[:300]}..."
         )
