@@ -1,0 +1,212 @@
+/* MindMapCanvas.css - Interactive Drafting Canvas Viewport */
+
+.canvas-viewport-container {
+  position: relative;
+  width: 100%;
+  height: calc(100vh - 56px);
+  overflow: hidden;
+  background-color: var(--canvas-foundation);
+  user-select: none;
+  cursor: grab;
+}
+
+.canvas-viewport-container:active {
+  cursor: grabbing;
+}
+
+/* Subtle 28px isometric dot matrix canvas */
+.canvas-grid-pattern {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  opacity: 0.35;
+}
+
+/* Inner Transformable Plane for Pan & Zoom */
+.canvas-transform-plane {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 2400px;
+  height: 1400px;
+  transform-origin: 0 0;
+  transition: transform 0.05s linear;
+}
+
+/* Connectors SVG Layer */
+.canvas-connectors-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 10;
+}
+
+/* Nodes Container Layer */
+.canvas-nodes-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 20;
+}
+
+/* Base Mind Map Node Card */
+.atelier-node-card {
+  position: absolute;
+  background-color: var(--card-surface);
+  border: 1px solid rgba(191, 200, 201, 0.45);
+  border-radius: var(--radius-lg);
+  padding: 14px 16px;
+  box-shadow: 0 2px 8px rgba(32, 37, 34, 0.05);
+  cursor: pointer;
+  transition: box-shadow 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+}
+
+.atelier-node-card:hover {
+  box-shadow: 0 4px 16px rgba(32, 37, 34, 0.08);
+  border-color: var(--outline);
+}
+
+.atelier-node-card.selected {
+  border: 2px solid var(--primary-container) !important;
+  box-shadow: 0 6px 20px rgba(21, 94, 99, 0.15) !important;
+}
+
+/* Core Nexus Node */
+.node-variant-core {
+  width: 220px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
+}
+
+.core-tag-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-label);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--primary);
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.core-node-name {
+  font-family: var(--font-headline);
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--on-surface);
+  margin: 0;
+  line-height: 1.25;
+}
+
+.core-node-desc {
+  font-size: 12px;
+  color: var(--on-surface-variant);
+  margin: 8px 0 0 0;
+  line-height: 1.45;
+}
+
+/* Primary Branch Node */
+.node-variant-branch {
+  width: 250px;
+}
+
+.branch-top-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.branch-taxonomy-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  font-family: var(--font-label);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.branch-node-name {
+  font-family: var(--font-headline);
+  font-size: 18px;
+  color: var(--on-surface);
+  margin: 0;
+  font-weight: 500;
+}
+
+.branch-node-desc {
+  font-size: 12px;
+  color: var(--on-surface-variant);
+  margin: 6px 0 0 0;
+  line-height: 1.4;
+}
+
+/* Sub-leaf Node */
+.node-variant-leaf {
+  width: 260px;
+  padding: 10px 14px;
+}
+
+.leaf-top-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.leaf-node-name {
+  font-family: var(--font-headline);
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--on-surface);
+  margin: 0;
+}
+
+.leaf-category-stamp {
+  font-family: var(--font-label);
+  font-size: 10px;
+  background-color: var(--surface-container);
+  color: var(--on-surface-variant);
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+}
+
+.leaf-node-desc {
+  font-size: 12px;
+  color: var(--on-surface-variant);
+  margin: 4px 0 0 0;
+  line-height: 1.35;
+}
+
+/* Toast Alert Message */
+.canvas-toast-alert {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  background-color: var(--ink-primary);
+  color: #ffffff;
+  padding: 8px 16px;
+  border-radius: var(--radius-default);
+  font-size: 12px;
+  font-family: var(--font-label);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.15);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  animation: toastFadeIn 0.2s ease-out;
+}
+
+@keyframes toastFadeIn {
+  from { opacity: 0; transform: translate(-50%, -8px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}

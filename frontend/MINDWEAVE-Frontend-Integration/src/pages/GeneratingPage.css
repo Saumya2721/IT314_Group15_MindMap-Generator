@@ -1,0 +1,477 @@
+/* =========================================================
+   MINDWEAVE — Screen 4: Generating Map + Editor (GeneratingPage.css)
+   Regular CSS matching Stitch Warm Editorial Studio design
+   ========================================================= */
+
+.generating-layout {
+  min-height: 100vh;
+  background-color: var(--surface);
+  color: var(--on-surface);
+  display: flex;
+  flex-direction: column;
+}
+
+.generating-main {
+  width: 100%;
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 64px var(--gutter) 40px; /* Offset for header */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+}
+
+/* =========================================================
+   PHASE 2: GENERATED EDITOR VIEW (ON SAME PAGE)
+   ========================================================= */
+
+.generating-editor-view {
+  width: 100%;
+  height: 100vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background-color: var(--canvas-foundation);
+  animation: editorFadeIn 0.3s ease-out;
+}
+
+@keyframes editorFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Outline View Alternative */
+.outline-view-container {
+  width: 100%;
+  height: calc(100vh - 56px);
+  overflow-y: auto;
+  padding: 40px var(--gutter);
+  display: flex;
+  justify-content: center;
+  background-color: var(--surface);
+}
+
+.outline-card {
+  max-width: 720px;
+  width: 100%;
+  background-color: var(--surface-container-lowest);
+  border: 1px solid var(--structural-border);
+  border-radius: var(--radius-lg);
+  padding: 32px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.04);
+}
+
+.outline-title {
+  font-size: 26px;
+  color: var(--primary);
+  margin-top: 0;
+  margin-bottom: 20px;
+  font-weight: 600;
+}
+
+.outline-list {
+  padding-left: 20px;
+  line-height: 1.8;
+  color: var(--on-surface);
+  font-size: 15px;
+}
+
+.outline-list ul {
+  padding-left: 24px;
+  color: var(--on-surface-variant);
+  font-size: 14px;
+}
+
+/* =========================================================
+   PHASE 1: CENTRAL SYNTHESIS CONSOLE (760px)
+   ========================================================= */
+
+.synthesis-console-card {
+  width: 100%;
+  max-width: 760px;
+  background-color: var(--surface-container-lowest);
+  border: 1px solid var(--structural-border);
+  border-radius: var(--radius-xl);
+  padding: 32px 24px;
+  box-shadow: 0 8px 32px rgba(24, 29, 26, 0.06);
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+@media (min-width: 640px) {
+  .synthesis-console-card {
+    padding: 40px 36px;
+  }
+}
+
+/* Top Decorative Craft Watermark Line */
+.console-watermark-line {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: linear-gradient(
+    to right,
+    rgba(153, 70, 41, 0.35),
+    var(--primary-container),
+    rgba(254, 149, 114, 0.45)
+  );
+}
+
+/* Header Section */
+.console-header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  align-items: flex-start;
+}
+
+.topic-badge-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: var(--radius-full);
+  background-color: rgba(153, 70, 41, 0.1);
+  color: var(--secondary);
+  font-family: var(--font-label);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 600;
+}
+
+.topic-dot-marker {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: var(--secondary);
+}
+
+.console-title {
+  font-family: var(--font-headline);
+  font-size: clamp(26px, 3.2vw, 32px);
+  color: var(--on-surface);
+  margin: 4px 0 0 0;
+  font-weight: 400;
+  letter-spacing: -0.015em;
+  line-height: 1.2;
+}
+
+.console-subtitle {
+  font-size: 14px;
+  color: var(--on-surface-variant);
+  max-width: 580px;
+  margin: 4px 0 0 0;
+  line-height: 1.5;
+}
+
+/* =========================================================
+   LIVE EMERGING SPATIAL PREVIEW VIEWPORT
+   ========================================================= */
+
+.manifestation-container {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.manifestation-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 4px;
+}
+
+.manifestation-label {
+  font-family: var(--font-label);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--on-surface-variant);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+
+.manifestation-label-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: var(--secondary-container);
+}
+
+.manifestation-speed-rate {
+  font-family: monospace;
+  font-size: 11px;
+  color: var(--outline);
+}
+
+.manifestation-viewport {
+  width: 100%;
+  height: 288px;
+  background-color: var(--surface-container-low);
+  border-radius: var(--radius-default);
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--structural-border);
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.04);
+}
+
+/* Drafting Dot Grid Pattern */
+.manifestation-grid-bg {
+  position: absolute;
+  inset: 0;
+  opacity: 0.28;
+  pointer-events: none;
+  background-image: radial-gradient(var(--outline) 1.2px, transparent 1.2px);
+  background-size: 20px 20px;
+}
+
+/* Animated Connector Vectors SVG */
+.manifestation-vectors-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.connector-pulse {
+  animation: connectorPulse 2s ease-in-out infinite;
+}
+
+@keyframes connectorPulse {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 0.95; }
+}
+
+/* Central Core Node */
+.manifestation-core-node {
+  position: relative;
+  z-index: 10;
+  background-color: #ffffff;
+  padding: 12px 20px;
+  border-radius: var(--radius-default);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
+  border: 1px solid var(--structural-border);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  max-width: 240px;
+  transition: transform 0.3s ease;
+}
+
+.core-top-accent {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background-color: var(--primary-container);
+  border-radius: var(--radius-default) var(--radius-default) 0 0;
+}
+
+.core-tag {
+  font-family: var(--font-label);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--secondary);
+  font-weight: 600;
+}
+
+.core-title {
+  font-family: var(--font-headline);
+  font-size: 17px;
+  color: var(--primary);
+  font-weight: 600;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 200px;
+}
+
+/* Manifesting Branch Nodes */
+.manifesting-branch {
+  position: absolute;
+  z-index: 10;
+  background-color: rgba(255, 255, 255, 0.94);
+  padding: 6px 12px;
+  border-radius: var(--radius-default);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+  border: 1px solid var(--structural-border);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  transition: all 0.4s ease;
+}
+
+.branch-top-strip {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  border-radius: var(--radius-default) var(--radius-default) 0 0;
+}
+
+.branch-top-strip.peach { background-color: var(--secondary); }
+.branch-top-strip.teal { background-color: var(--primary-container); }
+
+.branch-header-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.branch-title {
+  font-family: var(--font-label);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--on-surface);
+}
+
+.branch-subtitle {
+  font-size: 10px;
+  color: var(--on-surface-variant);
+  margin-top: 1px;
+}
+
+/* Specific Positions */
+.branch-pos-left {
+  left: 24px;
+  top: 36px;
+  animation: branchGlow 3s ease-in-out infinite;
+}
+
+.branch-pos-right {
+  right: 28px;
+  top: 44px;
+  animation: branchGlow 3s ease-in-out infinite 0.5s;
+}
+
+.branch-pos-ghosted {
+  right: 36px;
+  bottom: 32px;
+  opacity: 0.5;
+  background-color: rgba(255, 255, 255, 0.6);
+  border-style: dashed;
+}
+
+@keyframes branchGlow {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+}
+
+/* Spatial Coordinates Marker */
+.spatial-marker-pill {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-family: monospace;
+  font-size: 10px;
+  color: var(--outline);
+  background-color: rgba(235, 239, 234, 0.75);
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  user-select: none;
+}
+
+/* =========================================================
+   FOOTER / ACTIONS
+   ========================================================= */
+
+.console-footer-bar {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding-top: 4px;
+}
+
+@media (min-width: 640px) {
+  .console-footer-bar {
+    flex-direction: row;
+  }
+}
+
+.contemplative-quote {
+  font-family: var(--font-headline);
+  font-style: italic;
+  font-size: 14px;
+  color: var(--on-surface-variant);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-cancel-generation {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  background-color: var(--surface-container-low);
+  border: 1px solid transparent;
+  border-radius: var(--radius-default);
+  font-family: var(--font-label);
+  font-size: 12px;
+  color: var(--on-surface-variant);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-cancel-generation:hover {
+  background-color: #FDEDED;
+  color: #BA1A1A;
+}
+
+/* Diagnostics Below Console */
+.diagnostics-panel {
+  max-width: 760px;
+  width: 100%;
+  margin-top: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-family: var(--font-label);
+  font-size: 11px;
+  color: var(--on-surface-variant);
+  padding: 0 4px;
+}
+
+.diagnostics-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.diagnostics-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: var(--primary-container);
+}
+
+.diagnostics-latency {
+  font-family: monospace;
+  font-size: 11px;
+  color: var(--outline);
+}
