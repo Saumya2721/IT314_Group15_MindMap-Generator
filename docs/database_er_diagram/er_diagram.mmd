@@ -1,0 +1,128 @@
+%% Mind Map Generator — ER diagram (final Supabase schema)
+%% Generated from the Postgres catalog of a database built from supabase/migrations.
+%% Line style: solid (--) = database-enforced foreign key; dotted (..) = application-level link (no FK).
+%% Supabase-managed tables (auth.users, storage.objects) show only the columns this app uses.
+%% Attribute comment: NOT NULL or NULL. Types: timestamptz = timestamp with time zone; float8 = double precision.
+erDiagram
+    direction LR
+    auth_users["auth.users"] {
+        uuid id PK "NOT NULL"
+        varchar(255) email "NULL"
+        jsonb raw_user_meta_data "NULL"
+    }
+    profiles {
+        uuid id PK, FK "NOT NULL"
+        varchar(255) name "NULL"
+        timestamptz created_at "NOT NULL"
+        timestamptz updated_at "NOT NULL"
+    }
+    mind_maps {
+        uuid id PK "NOT NULL"
+        uuid user_id FK "NOT NULL"
+        varchar(255) title "NOT NULL"
+        text description "NULL"
+        boolean is_public "NOT NULL"
+        timestamptz created_at "NOT NULL"
+        timestamptz updated_at "NOT NULL"
+    }
+    chat_threads {
+        uuid id PK "NOT NULL"
+        uuid map_id FK, UK "NOT NULL"
+        uuid user_id FK "NOT NULL"
+        timestamptz created_at "NOT NULL"
+    }
+    chat_messages {
+        uuid id PK "NOT NULL"
+        uuid thread_id FK "NOT NULL"
+        varchar(20) role "NOT NULL"
+        text content "NOT NULL"
+        timestamptz created_at "NOT NULL"
+    }
+    generation_jobs {
+        uuid id PK "NOT NULL"
+        uuid map_id FK "NOT NULL"
+        uuid triggered_by_message_id FK "NULL"
+        varchar(20) job_type "NOT NULL"
+        uuid target_node_id FK "NULL"
+        text status "NOT NULL"
+        integer progress_percent "NOT NULL"
+        text error_message "NULL"
+        timestamptz created_at "NOT NULL"
+        timestamptz started_at "NULL"
+        timestamptz completed_at "NULL"
+        varchar(64) callback_token_hash "NULL"
+    }
+    seed_assets {
+        uuid id PK "NOT NULL"
+        uuid generation_job_id FK "NOT NULL"
+        varchar(20) asset_type "NOT NULL"
+        varchar(255) file_name "NULL"
+        text storage_key "NULL"
+        varchar(100) mime_type "NULL"
+        text content_text "NULL"
+        bigint file_size_bytes "NULL"
+        varchar(64) checksum_sha256 "NULL"
+        timestamptz uploaded_at "NOT NULL"
+    }
+    storage_objects["storage.objects"] {
+        uuid id PK "NOT NULL"
+        text bucket_id "NULL"
+        text name "NULL"
+    }
+    embeddings {
+        uuid id PK "NOT NULL"
+        uuid generation_job_id FK "NOT NULL"
+        uuid map_id FK "NOT NULL"
+        text chunk_text "NOT NULL"
+        vector(1536) embedding "NULL - DEPRECATED, unused"
+        varchar(100) embedding_model "NOT NULL"
+        varchar(20) source "NOT NULL"
+        text source_title "NULL"
+        text source_url "NULL"
+        timestamptz retrieved_at "NULL"
+        timestamptz created_at "NOT NULL"
+        varchar(100) pinecone_vector_id "NULL"
+    }
+    nodes {
+        uuid id PK "NOT NULL"
+        uuid map_id FK "NOT NULL"
+        varchar(255) label "NOT NULL"
+        text description "NULL"
+        float8 pos_x "NOT NULL"
+        float8 pos_y "NOT NULL"
+        varchar(7) background_color "NULL"
+        varchar(7) text_color "NULL"
+        float8 width "NULL"
+        float8 height "NULL"
+        varchar(50) node_type "NOT NULL"
+        uuid source_job_id FK "NULL"
+        jsonb node_data "NULL"
+        timestamptz created_at "NOT NULL"
+        timestamptz updated_at "NOT NULL"
+    }
+    edges {
+        uuid id PK "NOT NULL"
+        uuid map_id FK "NOT NULL"
+        uuid source_node_id FK, UK "NOT NULL - composite UK (source_node_id, target_node_id, label)"
+        uuid target_node_id FK, UK "NOT NULL - composite UK (source_node_id, target_node_id, label)"
+        varchar(100) label UK "NULL - composite UK (source_node_id, target_node_id, label)"
+        jsonb edge_data "NULL"
+        timestamptz created_at "NOT NULL"
+    }
+    chat_threads ||--o{ chat_messages : "contains [thread_id]"
+    mind_maps ||--o| chat_threads : "has conversation [map_id]"
+    profiles ||--o{ chat_threads : "owns thread [user_id]"
+    mind_maps ||--o{ edges : "contains [map_id]"
+    nodes ||--o{ edges : "source (parent) of [source_node_id]"
+    nodes ||--o{ edges : "target (child) of [target_node_id]"
+    generation_jobs ||--o{ embeddings : "indexed chunks [generation_job_id]"
+    mind_maps ||--o{ embeddings : "has chunks [map_id]"
+    nodes |o--o{ generation_jobs : "regeneration target [target_node_id]"
+    mind_maps ||--o{ generation_jobs : "runs [map_id]"
+    chat_messages |o--o{ generation_jobs : "triggers [triggered_by_message_id]"
+    profiles ||--o{ mind_maps : "owns [user_id]"
+    mind_maps ||--o{ nodes : "contains [map_id]"
+    generation_jobs |o--o{ nodes : "generated [source_job_id]"
+    auth_users ||--o| profiles : "has profile [id]"
+    generation_jobs ||--o{ seed_assets : "uses seed [generation_job_id]"
+    storage_objects |o..o| seed_assets : "file stored as (app link, no FK) [storage_key]"
