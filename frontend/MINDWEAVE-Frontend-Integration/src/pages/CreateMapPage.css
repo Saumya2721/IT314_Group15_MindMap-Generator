@@ -1,0 +1,406 @@
+/* =========================================================
+   MINDWEAVE — Screen 3: Create Mind Map (CreateMapPage.css)
+   Regular CSS matching Stitch Warm Editorial Studio design
+   ========================================================= */
+
+.create-map-layout {
+  min-height: 100vh;
+  background-color: var(--surface);
+  color: var(--on-surface);
+  display: flex;
+  flex-direction: column;
+}
+
+.create-map-main {
+  width: 100%;
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 64px var(--gutter) 0; /* Header offset */
+  flex: 1;
+}
+
+.create-map-content {
+  max-width: 768px;
+  margin: 0 auto;
+  width: 100%;
+  padding-top: 36px;
+  padding-bottom: 56px;
+}
+
+/* =========================================================
+   HEADER SECTION: Atelier Synthesis
+   ========================================================= */
+
+.create-header-section {
+  text-align: center;
+  margin-bottom: 36px;
+}
+
+.atelier-badge-tag {
+  font-family: var(--font-label);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--secondary);
+  font-weight: 600;
+  display: inline-block;
+  margin-bottom: 6px;
+}
+
+.create-headline {
+  font-family: var(--font-headline);
+  font-size: clamp(30px, 3.8vw, 40px);
+  color: var(--on-surface);
+  margin: 0;
+  font-weight: 400;
+  letter-spacing: -0.015em;
+  line-height: 1.2;
+}
+
+.create-description {
+  font-size: 16px;
+  color: var(--on-surface-variant);
+  margin-top: 8px;
+  margin-bottom: 0;
+}
+
+/* =========================================================
+   FORM CARD
+   ========================================================= */
+
+.create-form-card {
+  background-color: var(--surface-container-lowest);
+  border: 1px solid var(--structural-border);
+  border-radius: var(--radius-xl);
+  padding: 28px 20px;
+  box-shadow: 0 4px 20px rgba(24, 29, 26, 0.04);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+@media (min-width: 640px) {
+  .create-form-card {
+    padding: 40px 36px;
+  }
+}
+
+/* Field Group */
+.form-field-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.field-title-label {
+  font-family: var(--font-headline);
+  font-size: 19px;
+  font-weight: 500;
+  color: var(--on-surface);
+}
+
+.field-label-detail {
+  font-family: var(--font-label);
+  font-size: 11px;
+  color: var(--outline);
+  font-weight: 400;
+  margin-left: 6px;
+}
+
+/* Topic Input */
+.topic-text-input {
+  width: 100%;
+  background-color: var(--surface-container-low);
+  padding: 13px 16px;
+  color: var(--on-surface);
+  font-family: var(--font-body);
+  font-size: 16px;
+  border-radius: var(--radius-default);
+  border: 1px solid transparent;
+  outline: none;
+  transition: all 0.15s ease;
+}
+
+.topic-text-input:focus {
+  background-color: #ffffff;
+  border-color: var(--primary-container);
+  box-shadow: 0 0 0 1px var(--primary-container);
+}
+
+.topic-text-input::placeholder {
+  color: var(--outline);
+}
+
+.topic-text-input.has-error {
+  border-color: #ba1a1a;
+  background-color: #fff9f9;
+}
+
+.input-error-text {
+  font-size: 12px;
+  color: #ba1a1a;
+  margin-top: 2px;
+  font-weight: 500;
+}
+
+/* Quick Suggestion Chips */
+.suggestions-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs);
+  padding-top: 4px;
+}
+
+.suggestions-prefix {
+  font-family: var(--font-label);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--outline);
+  font-weight: 600;
+  margin-right: 4px;
+}
+
+.suggestion-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  background-color: var(--surface-container-low);
+  border: 1px solid var(--structural-border);
+  border-radius: var(--radius-default);
+  font-family: var(--font-label);
+  font-size: 11px;
+  color: var(--on-surface);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.suggestion-pill:hover {
+  background-color: var(--surface-container);
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.pill-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.pill-dot-peach { background-color: var(--secondary-container); }
+.pill-dot-gold { background-color: var(--tertiary-fixed-dim); }
+.pill-dot-cyan { background-color: var(--primary-fixed-dim); }
+
+/* Textarea Surface */
+.textarea-surface {
+  background-color: var(--surface);
+  border-radius: var(--radius-default);
+  border: 1px solid var(--structural-border);
+  padding: 14px 16px;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.03);
+  transition: border-color 0.15s ease;
+}
+
+.textarea-surface:focus-within {
+  border-color: var(--primary-container);
+  background-color: #ffffff;
+}
+
+.thoughts-input {
+  width: 100%;
+  background-color: transparent;
+  border: none;
+  color: var(--on-surface);
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.65;
+  outline: none;
+  resize: vertical;
+  min-height: 170px;
+}
+
+.thoughts-input::placeholder {
+  color: var(--outline);
+}
+
+/* Live Word & Character Counter */
+.textarea-metrics-bar {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--outline);
+  font-family: var(--font-label);
+  padding-top: 2px;
+}
+
+/* File Attachment Dropzone */
+.file-attachment-zone {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  background-color: var(--surface-container-low);
+  border: 1px dashed var(--structural-border);
+  border-radius: var(--radius-default);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.file-attachment-zone:hover {
+  background-color: var(--surface-container);
+  border-color: var(--primary);
+}
+
+.dropzone-info-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.dropzone-file-icon {
+  font-size: 22px;
+  color: var(--primary);
+  transition: transform 0.15s ease;
+}
+
+.file-attachment-zone:hover .dropzone-file-icon {
+  transform: scale(1.08);
+}
+
+.dropzone-heading {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--on-surface);
+  margin: 0;
+}
+
+.dropzone-subtext {
+  font-size: 12px;
+  color: var(--on-surface-variant);
+  margin: 2px 0 0 0;
+}
+
+.dropzone-browse-trigger {
+  font-family: var(--font-label);
+  font-size: 12px;
+  color: var(--primary);
+  text-decoration: underline;
+  font-weight: 500;
+}
+
+/* Attached file tag pill */
+.attached-file-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 12px;
+  background-color: #ffffff;
+  border: 1px solid var(--structural-border);
+  border-radius: var(--radius-default);
+  font-size: 12px;
+  margin-top: 8px;
+}
+
+.attached-file-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--on-surface);
+}
+
+.btn-remove-file {
+  background: none;
+  border: none;
+  color: var(--outline);
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: center;
+}
+
+.btn-remove-file:hover {
+  color: #ba1a1a;
+}
+
+/* Form Action Footer */
+.create-action-footer {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding-top: 8px;
+}
+
+@media (min-width: 640px) {
+  .create-action-footer {
+    flex-direction: row;
+  }
+}
+
+.security-assurance {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--outline);
+}
+
+.security-lock-icon {
+  font-size: 16px;
+  color: var(--primary);
+}
+
+.btn-generate-submit {
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 13px 28px;
+  background-color: var(--primary-container);
+  color: #FAF8F5;
+  border: 1px solid var(--primary-container);
+  border-radius: var(--radius-default);
+  font-family: var(--font-label);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  transition: all 0.15s ease;
+}
+
+@media (min-width: 640px) {
+  .btn-generate-submit {
+    width: auto;
+  }
+}
+
+.btn-generate-submit:hover:not(:disabled) {
+  background-color: var(--primary);
+  border-color: var(--primary);
+}
+
+.btn-generate-submit:active:not(:disabled) {
+  transform: translate(1px, 1px);
+}
+
+.btn-generate-submit:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn-generate-arrow {
+  font-size: 18px;
+  transition: transform 0.15s ease;
+}
+
+.btn-generate-submit:hover .btn-generate-arrow {
+  transform: translateX(3px);
+}

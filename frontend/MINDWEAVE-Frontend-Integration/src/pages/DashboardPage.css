@@ -1,0 +1,298 @@
+/* =========================================================
+   MINDWEAVE — Screen 2: Dashboard (DashboardPage.css)
+   Regular CSS matching the Stitch Warm Editorial Studio design
+   ========================================================= */
+
+.dashboard-layout {
+  min-height: 100vh;
+  background-color: var(--surface);
+  color: var(--on-surface);
+  display: flex;
+  flex-direction: column;
+}
+
+.dashboard-main {
+  width: 100%;
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 64px var(--gutter) 0; /* 64px top offset for fixed AppHeader */
+  min-height: calc(100vh - 120px);
+  flex: 1;
+}
+
+/* =========================================================
+   HERO / GREETING SECTION
+   ========================================================= */
+
+.dashboard-hero {
+  padding-top: 48px;
+  padding-bottom: 40px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--space-lg);
+  border-bottom: 1px solid var(--surface-container-high);
+}
+
+@media (min-width: 768px) {
+  .dashboard-hero {
+    flex-direction: row;
+    align-items: flex-end;
+  }
+}
+
+.hero-left {
+  max-width: 600px;
+}
+
+.hero-heading {
+  font-family: var(--font-headline);
+  font-size: clamp(34px, 4vw, 44px);
+  line-height: 1.15;
+  color: var(--on-surface);
+  margin: 0 0 8px 0;
+  font-weight: 400;
+  letter-spacing: -0.02em;
+}
+
+.hero-subheading {
+  font-family: var(--font-headline);
+  font-size: 18px;
+  font-style: italic;
+  color: var(--on-surface-variant);
+  margin: 0;
+}
+
+.hero-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  width: 100%;
+}
+
+@media (min-width: 768px) {
+  .hero-actions {
+    width: auto;
+  }
+}
+
+/* Search Input */
+.search-wrapper {
+  position: relative;
+  flex: 1;
+}
+
+@media (min-width: 768px) {
+  .search-wrapper {
+    width: 280px;
+    flex: initial;
+  }
+}
+
+.search-icon {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--outline);
+  font-size: 18px;
+  pointer-events: none;
+  user-select: none;
+}
+
+.search-input {
+  width: 100%;
+  padding: 9px 12px 9px 38px;
+  background-color: var(--surface-container-lowest);
+  color: var(--on-surface);
+  border: 1px solid var(--surface-container-highest);
+  border-radius: var(--radius-default);
+  font-family: var(--font-body);
+  font-size: 13px;
+  outline: none;
+  transition: all 0.15s ease;
+}
+
+.search-input::placeholder {
+  color: var(--outline);
+}
+
+.search-input:focus {
+  border-color: var(--primary-container);
+  box-shadow: 0 0 0 1px var(--primary-container);
+}
+
+.search-clear-btn {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: var(--outline);
+  cursor: pointer;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+}
+
+.search-clear-btn:hover {
+  color: var(--on-surface);
+}
+
+/* Primary CTA Button */
+.btn-new-mind-map {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 18px;
+  background-color: var(--primary);
+  color: var(--surface-container-lowest);
+  border: 1px solid var(--primary);
+  border-radius: var(--radius-default);
+  font-family: var(--font-body);
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap;
+  box-shadow: var(--shadow-sm);
+  transition: all 0.15s ease;
+}
+
+.btn-new-mind-map:hover {
+  background-color: var(--primary-container);
+  border-color: var(--primary-container);
+}
+
+/* =========================================================
+   SECTION HEADER (RECENT MAPS & SORT)
+   ========================================================= */
+
+.dashboard-section-header {
+  padding-top: 40px;
+  margin-bottom: 32px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-md);
+}
+
+.section-titles {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-md);
+}
+
+.section-heading {
+  font-family: var(--font-headline);
+  font-size: 22px;
+  color: var(--on-surface);
+  font-weight: 400;
+  margin: 0;
+}
+
+.section-tagline {
+  font-size: 13px;
+  color: var(--outline);
+  font-weight: 400;
+}
+
+/* Sort Control */
+.sort-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--outline);
+  position: relative;
+}
+
+.sort-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-color: transparent;
+  border: none;
+  font-family: var(--font-body);
+  font-size: 12px;
+  color: var(--outline);
+  cursor: pointer;
+  padding-right: 18px;
+  outline: none;
+  font-weight: 500;
+  transition: color 0.15s ease;
+}
+
+.sort-select:hover {
+  color: var(--on-surface);
+}
+
+.sort-icon {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 16px;
+  pointer-events: none;
+}
+
+/* =========================================================
+   MIND MAPS GRID & EMPTY STATE
+   ========================================================= */
+
+.maps-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-lg);
+  padding-bottom: 64px;
+}
+
+@media (min-width: 640px) {
+  .maps-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (min-width: 1024px) {
+  .maps-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+/* Empty State */
+.dashboard-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 64px 24px;
+  text-align: center;
+  background-color: var(--surface-container-lowest);
+  border: 1px dashed var(--structural-border);
+  border-radius: var(--radius-lg);
+  margin-bottom: 64px;
+}
+
+.empty-state-icon {
+  font-size: 48px;
+  color: var(--outline);
+  margin-bottom: 16px;
+}
+
+.empty-state-title {
+  font-family: var(--font-headline);
+  font-size: 24px;
+  color: var(--on-surface);
+  margin: 0 0 8px 0;
+  font-weight: 500;
+}
+
+.empty-state-text {
+  font-size: 14px;
+  color: var(--on-surface-variant);
+  max-width: 440px;
+  margin: 0 0 24px 0;
+  line-height: 1.5;
+}

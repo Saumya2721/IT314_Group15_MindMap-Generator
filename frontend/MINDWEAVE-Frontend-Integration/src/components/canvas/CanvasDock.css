@@ -1,0 +1,73 @@
+/* CanvasDock.css - Minimalist Canvas Control Dock */
+
+.canvas-control-dock {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  background-color: rgba(251, 249, 244, 0.96);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 4px 20px rgba(24, 29, 26, 0.08);
+  border: 1px solid rgba(191, 200, 201, 0.4);
+  padding: 6px 12px;
+  gap: 8px;
+  user-select: none;
+}
+
+.btn-dock-icon {
+  background: none;
+  border: none;
+  color: var(--on-surface-variant);
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  transition: all 0.15s ease;
+}
+
+.btn-dock-icon:hover {
+  background-color: var(--surface-container);
+  color: var(--on-surface);
+}
+
+.dock-zoom-level {
+  font-family: var(--font-label);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--on-surface);
+  min-width: 42px;
+  text-align: center;
+}
+
+.dock-divider {
+  width: 1px;
+  height: 16px;
+  background-color: rgba(191, 200, 201, 0.5);
+}
+
+.btn-dock-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: none;
+  font-family: var(--font-label);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--on-surface);
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.btn-dock-action:hover {
+  background-color: var(--surface-container);
+}
