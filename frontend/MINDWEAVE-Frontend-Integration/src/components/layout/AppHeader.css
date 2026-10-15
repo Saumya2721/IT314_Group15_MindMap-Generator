@@ -1,0 +1,208 @@
+/* AppHeader.css - Warm Editorial Studio Header */
+
+.app-header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 64px;
+  background-color: rgba(246, 251, 245, 0.92);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--surface-container-high);
+  z-index: 50;
+  box-shadow: 0 1px 8px rgba(0, 0, 0, 0.03);
+}
+
+.app-header-inner {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 0 var(--gutter);
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.app-header-left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xl);
+}
+
+.header-brand-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+}
+
+.header-brand-monogram {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-default);
+  background-color: var(--primary-container);
+  color: #FAF8F5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-headline);
+  font-size: 16px;
+  font-weight: 600;
+  user-select: none;
+}
+
+.header-brand-text {
+  font-family: var(--font-headline);
+  font-size: 21px;
+  color: var(--primary);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.header-nav {
+  display: none;
+  align-items: center;
+  gap: var(--space-lg);
+}
+
+@media (min-width: 768px) {
+  .header-nav {
+    display: flex;
+  }
+}
+
+.header-nav-link {
+  font-family: var(--font-body);
+  font-size: 14px;
+  color: var(--on-surface-variant);
+  text-decoration: none;
+  padding: 6px 0;
+  transition: color 0.15s ease;
+  position: relative;
+}
+
+.header-nav-link:hover {
+  color: var(--on-surface);
+}
+
+.header-nav-link.active {
+  color: var(--primary);
+  font-weight: 600;
+  border-bottom: 2px solid var(--primary);
+}
+
+.app-header-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.btn-header-new-map {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  background-color: var(--primary);
+  color: #ffffff;
+  border: 1px solid var(--primary);
+  border-radius: var(--radius-default);
+  font-family: var(--font-body);
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  box-shadow: var(--shadow-sm);
+}
+
+.btn-header-new-map:hover {
+  background-color: var(--primary-container);
+  border-color: var(--primary-container);
+}
+
+/* User profile avatar and dropdown */
+.header-profile-menu-wrapper {
+  position: relative;
+}
+
+.header-avatar-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.header-avatar-img {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1px solid var(--outline-variant);
+  transition: box-shadow 0.15s ease;
+}
+
+.header-avatar-btn:hover .header-avatar-img {
+  box-shadow: 0 0 0 2px var(--primary);
+}
+
+.profile-dropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 210px;
+  background-color: #ffffff;
+  border: 1px solid var(--structural-border);
+  border-radius: var(--radius-default);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+  padding: 8px 0;
+  z-index: 100;
+  animation: dropdownFadeIn 0.15s ease-out;
+}
+
+@keyframes dropdownFadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.profile-dropdown-user {
+  padding: 8px 16px 10px;
+  border-bottom: 1px solid var(--surface-container-high);
+}
+
+.dropdown-user-name {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--on-surface);
+}
+
+.dropdown-user-email {
+  font-size: 11px;
+  color: var(--outline);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dropdown-logout-btn {
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-body);
+  font-size: 13px;
+  color: var(--secondary);
+  cursor: pointer;
+  text-align: left;
+  transition: background-color 0.15s ease;
+}
+
+.dropdown-logout-btn:hover {
+  background-color: var(--surface-container-low);
+}
