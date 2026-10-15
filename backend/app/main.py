@@ -3,10 +3,28 @@ import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+# Backend configuration and database
+# Backward-compatible exports
+from auth.schemas import SignupRequest, UserCredentials  # noqa: F401
+
+# LLM module and services
+from config import get_settings as get_llm_settings
+from core.config import settings as app_settings
+from db.connection import create_db_pool
 from dotenv import find_dotenv, load_dotenv
 from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
+from maps.routes import router as maps_router
+from providers.registry import get_llm_provider
+
+# API routers
+from routes.auth import router as auth_router
+from routes.internal import router as internal_router
+from routes.users import router as users_router
+from services.generator import MindMapGenerator
+from services.mindmap_service import MindMapBackendService
+from services.queue import close_redis_pool, create_redis_pool
 
 logger = logging.getLogger("backend.main")
 
@@ -32,23 +50,7 @@ if llm_dir.exists() and str(llm_dir) not in sys.path:
 if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
-# Backend configuration and database
-# Backward-compatible exports
-from auth.schemas import SignupRequest, UserCredentials  # noqa: F401
 
-# LLM module and services
-from config import get_settings as get_llm_settings
-from core.config import settings as app_settings
-from db.connection import create_db_pool
-from maps.routes import router as maps_router
-from providers.registry import get_llm_provider
-
-# API routers
-from routes.auth import router as auth_router
-from routes.internal import router as internal_router
-from routes.users import router as users_router
-from services.generator import MindMapGenerator
-from services.mindmap_service import MindMapBackendService
 
 FRONTEND_URL = app_settings.FRONTEND_URL
 
@@ -81,7 +83,6 @@ async def lifespan(app: FastAPI):
 
     service = MindMapBackendService(pool, generator)
 
-    from services.queue import close_redis_pool, create_redis_pool
 
     redis_pool = await create_redis_pool()
 
