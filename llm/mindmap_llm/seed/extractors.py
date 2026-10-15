@@ -68,7 +68,7 @@ def extract_text_from_image(data: bytes) -> str:
         raise SeedExtractionError(f"Couldn't open this image: {exc}") from exc
 
     try:
-        text = pytesseract.image_to_string(image)
+        text: str = pytesseract.image_to_string(image)
     except Exception as exc:
         raise SeedExtractionError(f"OCR failed on this image: {exc}") from exc
 

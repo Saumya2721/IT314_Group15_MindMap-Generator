@@ -5,13 +5,13 @@ from tests.conftest import VALID_DRAFT_PAYLOAD
 from validation.schema import ValidationFailure, resolve_to_records, validate_draft
 
 
-def test_valid_draft_passes():
+def test_valid_draft_passes() -> None:
     draft = validate_draft(VALID_DRAFT_PAYLOAD)
     assert len(draft.nodes) == 3
     assert len(draft.edges) == 2
 
 
-def test_duplicate_node_ids_rejected():
+def test_duplicate_node_ids_rejected() -> None:
     payload = {
         "nodes": [
             {"id": "n1", "label": "A"},
@@ -24,7 +24,7 @@ def test_duplicate_node_ids_rejected():
     assert "Duplicate node id" in str(exc_info.value)
 
 
-def test_multiple_roots_rejected():
+def test_multiple_roots_rejected() -> None:
     payload = {
         "nodes": [{"id": "n1", "label": "A"}, {"id": "n2", "label": "B"}],
         "edges": [],  # two nodes, no edges => two roots, violates DR-02
@@ -34,7 +34,7 @@ def test_multiple_roots_rejected():
     assert "DR-02" in str(exc_info.value) or "root" in str(exc_info.value).lower()
 
 
-def test_disconnected_cluster_rejected():
+def test_disconnected_cluster_rejected() -> None:
     payload = {
         "nodes": [
             {"id": "n1", "label": "Root"},
@@ -50,7 +50,7 @@ def test_disconnected_cluster_rejected():
         validate_draft(payload)
 
 
-def test_self_loop_rejected():
+def test_self_loop_rejected() -> None:
     payload = {
         "nodes": [{"id": "n1", "label": "A"}, {"id": "n2", "label": "B"}],
         "edges": [{"source": "n1", "target": "n1", "label": None}],
@@ -59,7 +59,7 @@ def test_self_loop_rejected():
         validate_draft(payload)
 
 
-def test_edge_referencing_unknown_node_rejected():
+def test_edge_referencing_unknown_node_rejected() -> None:
     payload = {
         "nodes": [{"id": "n1", "label": "A"}],
         "edges": [{"source": "n1", "target": "does-not-exist", "label": None}],
@@ -68,7 +68,7 @@ def test_edge_referencing_unknown_node_rejected():
         validate_draft(payload)
 
 
-def test_invalid_hex_color_rejected():
+def test_invalid_hex_color_rejected() -> None:
     payload = {
         "nodes": [{"id": "n1", "label": "A", "background_color": "not-a-hex-color"}],
         "edges": [],
@@ -77,7 +77,7 @@ def test_invalid_hex_color_rejected():
         validate_draft(payload)
 
 
-def test_resolve_to_records_produces_valid_uuids_and_preserves_edges():
+def test_resolve_to_records_produces_valid_uuids_and_preserves_edges() -> None:
     draft = validate_draft(VALID_DRAFT_PAYLOAD)
     nodes, edges = resolve_to_records(draft)
 

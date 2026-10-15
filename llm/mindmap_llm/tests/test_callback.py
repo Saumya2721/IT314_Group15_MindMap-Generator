@@ -30,7 +30,7 @@ def _make_dummy_result(job_id: uuid.UUID, status: str = "completed") -> Generati
 
 
 @pytest.mark.asyncio
-async def test_job_callback_client_progress_success():
+async def test_job_callback_client_progress_success() -> None:
     job_id = uuid.uuid4()
     requests_received = []
 
@@ -55,7 +55,9 @@ async def test_job_callback_client_progress_success():
 
 
 @pytest.mark.asyncio
-async def test_job_callback_client_progress_error_swallowed(caplog):
+async def test_job_callback_client_progress_error_swallowed(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     job_id = uuid.uuid4()
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -72,7 +74,7 @@ async def test_job_callback_client_progress_error_swallowed(caplog):
 
 
 @pytest.mark.asyncio
-async def test_job_callback_client_complete():
+async def test_job_callback_client_complete() -> None:
     job_id = uuid.uuid4()
     requests_received = []
 
@@ -97,7 +99,7 @@ async def test_job_callback_client_complete():
 
 
 @pytest.mark.asyncio
-async def test_job_callback_client_fail():
+async def test_job_callback_client_fail() -> None:
     job_id = uuid.uuid4()
     requests_received = []
 
@@ -122,7 +124,7 @@ async def test_job_callback_client_fail():
 
 
 @pytest.mark.asyncio
-async def test_job_callback_client_terminal_double_call_raises():
+async def test_job_callback_client_terminal_double_call_raises() -> None:
     job_id = uuid.uuid4()
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -149,7 +151,7 @@ async def test_job_callback_client_terminal_double_call_raises():
 
 
 @pytest.mark.asyncio
-async def test_job_callback_client_terminal_http_failure_raises():
+async def test_job_callback_client_terminal_http_failure_raises() -> None:
     job_id = uuid.uuid4()
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -168,7 +170,7 @@ async def test_job_callback_client_terminal_http_failure_raises():
 
 
 @pytest.mark.asyncio
-async def test_null_callback_client():
+async def test_null_callback_client() -> None:
     client = NullCallbackClient(job_id="test-job")
     result = _make_dummy_result(uuid.uuid4(), status="completed")
 

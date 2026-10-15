@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 from callback.client import CallbackAlreadySent
-from contracts.models import GenerationResult
+from contracts.models import ChunkSource, GenerationResult
 from providers.base import LLMProvider, LLMResponse, Message, ToolSpec
 from providers.decision_model import ClassifyResult, DecisionModel, ScoreResult
 from rag.pinecone_store import RetrievedChunkRecord, VectorChunk
@@ -29,7 +29,7 @@ class FakeLLMProvider(LLMProvider):
     """Returns a scripted sequence of responses, one per call, so a test
     can simulate 'bad output, then good output on retry' deterministically."""
 
-    def __init__(self, responses: list[str]):
+    def __init__(self, responses: list[str]) -> None:
         self._responses = list(responses)
         self.calls: list[list[Message]] = []
 
@@ -87,7 +87,7 @@ class FakeVectorStore:
     Enough to let the pipeline flow through ingest → retrieve without errors.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._store: dict[str, list[VectorChunk]] = {}
 
     async def upsert_chunks(self, *, namespace: str, chunks: list[VectorChunk]) -> int:
@@ -101,7 +101,7 @@ class FakeVectorStore:
         query_text: str,
         query_embedding: list[float],
         top_k: int,
-        source_filter=None,
+        source_filter: ChunkSource | None = None,
     ) -> list[RetrievedChunkRecord]:
         chunks = self._store.get(namespace, [])
         if source_filter is not None:
@@ -119,7 +119,7 @@ class FakeVectorStore:
         ]
 
     async def fetch_all_for_source(
-        self, *, namespace: str, source, dimension: int, limit: int = 1000
+        self, *, namespace: str, source: ChunkSource, dimension: int, limit: int = 1000
     ) -> list[RetrievedChunkRecord]:
         return await self.query(
             namespace=namespace,
@@ -141,7 +141,7 @@ class FakeCallbackClient:
     tests can assert the terminal callback was sent exactly once.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.progress_calls: list[int] = []
         self.complete_result: GenerationResult | None = None
         self.fail_result: GenerationResult | None = None
@@ -180,7 +180,7 @@ class FakeCallbackClient:
 class FakeEmbeddingProvider:
     """Produces fixed-dimension dummy vectors for tests."""
 
-    def __init__(self, dimension: int = 1024):
+    def __init__(self, dimension: int = 1024) -> None:
         self._dimension = dimension
 
     @property
@@ -201,27 +201,27 @@ class FakeEmbeddingProvider:
 
 
 @pytest.fixture
-def fake_llm():
+def fake_llm() -> type[FakeLLMProvider]:
     return FakeLLMProvider
 
 
 @pytest.fixture
-def fake_decision_model():
+def fake_decision_model() -> FakeDecisionModel:
     return FakeDecisionModel()
 
 
 @pytest.fixture
-def fake_embedding_provider():
+def fake_embedding_provider() -> FakeEmbeddingProvider:
     return FakeEmbeddingProvider()
 
 
 @pytest.fixture
-def fake_vector_store():
+def fake_vector_store() -> FakeVectorStore:
     return FakeVectorStore()
 
 
 @pytest.fixture
-def fake_callback():
+def fake_callback() -> FakeCallbackClient:
     return FakeCallbackClient()
 
 

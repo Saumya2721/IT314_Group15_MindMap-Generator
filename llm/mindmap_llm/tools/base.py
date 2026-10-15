@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import Any
 
 from providers.base import ToolSpec
 
@@ -38,5 +39,5 @@ class Tool(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def invoke(self, **kwargs) -> list[ToolResult]:
+    async def invoke(self, *args: Any, **kwargs: Any) -> list[ToolResult]:
         raise NotImplementedError

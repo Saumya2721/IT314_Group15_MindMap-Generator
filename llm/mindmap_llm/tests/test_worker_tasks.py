@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from typing import Any, NoReturn
 
 import pytest
 from config import Settings
@@ -19,7 +20,7 @@ from worker.tasks import generate_mindmap
 
 
 class ExplodingLLM(FakeLLMProvider):
-    async def generate(self, *args, **kwargs):
+    async def generate(self, *args: Any, **kwargs: Any) -> NoReturn:
         raise RuntimeError("Simulated unhandled LLM crash")
 
 
@@ -28,7 +29,7 @@ def _build_request_payload(
     topic: str | None = "Photosynthesis",
     ideas: str | None = "Light reactions, Calvin cycle",
     regeneration_instruction: str | None = None,
-) -> dict:
+) -> dict[str, Any]:
     req = GenerationRequest(
         job_id=uuid.uuid4(),
         map_id=uuid.uuid4(),
@@ -43,7 +44,7 @@ def _build_request_payload(
 
 
 @pytest.mark.asyncio
-async def test_generate_mindmap_success():
+async def test_generate_mindmap_success() -> None:
     payload = _build_request_payload()
     callback = FakeCallbackClient()
     ctx = {
@@ -68,7 +69,7 @@ async def test_generate_mindmap_success():
 
 
 @pytest.mark.asyncio
-async def test_generate_mindmap_no_usable_seed_rejected():
+async def test_generate_mindmap_no_usable_seed_rejected() -> None:
     payload = _build_request_payload(topic=None, ideas=None)
     callback = FakeCallbackClient()
     ctx = {
@@ -87,12 +88,14 @@ async def test_generate_mindmap_no_usable_seed_rejected():
     assert callback.terminal_sent
     assert callback.fail_result is not None
     assert callback.fail_result.status == "rejected"
+    assert callback.fail_result.error is not None
     assert callback.fail_result.error.stage == "intake"
+    assert callback.fail_result.error is not None
     assert callback.fail_result.error.retryable is False
 
 
 @pytest.mark.asyncio
-async def test_generate_mindmap_unhandled_crash_marks_failed():
+async def test_generate_mindmap_unhandled_crash_marks_failed() -> None:
     payload = _build_request_payload()
     callback = FakeCallbackClient()
     ctx = {
@@ -111,12 +114,14 @@ async def test_generate_mindmap_unhandled_crash_marks_failed():
     assert callback.terminal_sent
     assert callback.fail_result is not None
     assert callback.fail_result.status == "failed"
+    assert callback.fail_result.error is not None
     assert callback.fail_result.error.retryable is True
+    assert callback.fail_result.error is not None
     assert "Simulated unhandled LLM crash" in callback.fail_result.error.message
 
 
 @pytest.mark.asyncio
-async def test_generate_mindmap_regenerate_full_success():
+async def test_generate_mindmap_regenerate_full_success() -> None:
     map_id = uuid.uuid4()
     req = GenerationRequest(
         job_id=uuid.uuid4(),
@@ -160,7 +165,7 @@ async def test_generate_mindmap_regenerate_full_success():
 
 
 @pytest.mark.asyncio
-async def test_generate_mindmap_regenerate_full_no_seed_rejected():
+async def test_generate_mindmap_regenerate_full_no_seed_rejected() -> None:
     map_id = uuid.uuid4()
     req = GenerationRequest(
         job_id=uuid.uuid4(),
@@ -190,4 +195,5 @@ async def test_generate_mindmap_regenerate_full_no_seed_rejected():
     assert callback.terminal_sent
     assert callback.fail_result is not None
     assert callback.fail_result.status == "rejected"
+    assert callback.fail_result.error is not None
     assert "No original seed chunks found" in callback.fail_result.error.message

@@ -30,6 +30,7 @@ from embeddings.registry import get_embedding_provider  # noqa: E402
 from orchestration.deps import GenerationDeps  # noqa: E402
 from orchestration.graph import run_generation  # noqa: E402
 from orchestration.nodes import reconstruct_seed_from_namespace  # noqa: E402
+from orchestration.state import GenerationState  # noqa: E402
 from providers.registry import get_decision_model, get_llm_provider  # noqa: E402
 from rag.pinecone_store import PineconeVectorStore  # noqa: E402
 from seed.normalizer import SeedSubmission, normalize_seed  # noqa: E402
@@ -75,6 +76,7 @@ async def main() -> None:
     namespace = str(map_id)
     job_id = uuid.uuid4()
 
+    initial_state: GenerationState
     if args.command == "generate":
         normalized = await normalize_seed(
             submission=SeedSubmission(topic=args.topic, ideas=args.ideas, files=[]),

@@ -30,7 +30,7 @@ class ArxivTool(Tool):
         )
 
     async def invoke(self, *, query: str) -> list[ToolResult]:
-        params = {
+        params: dict[str, str | int] = {
             "search_query": f"all:{query}",
             "start": 0,
             "max_results": self._max_results,
