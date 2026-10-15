@@ -83,6 +83,7 @@ async def lifespan(app: FastAPI):
     service = MindMapBackendService(pool, generator)
 
     from services.queue import close_redis_pool, create_redis_pool
+
     redis_pool = await create_redis_pool()
 
     app.state.pool = pool
@@ -161,6 +162,7 @@ app.include_router(users_router, include_in_schema=False)
 app.include_router(maps_router)
 app.include_router(internal_router)
 
+
 @app.get("/", include_in_schema=False)
 @app.get("/app", include_in_schema=False)
 def root():
@@ -212,4 +214,5 @@ async def health_readiness(response: Response):
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
