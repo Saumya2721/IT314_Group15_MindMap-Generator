@@ -1,7 +1,9 @@
 import logging
 import sys
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 # Backend configuration and database
 # Backward-compatible exports
@@ -55,7 +57,7 @@ FRONTEND_URL = app_settings.FRONTEND_URL
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Initialize the database pool, generator, and application state."""
     pool = None
     try:
@@ -113,7 +115,7 @@ app.add_middleware(
 )
 
 
-def custom_openapi():
+def custom_openapi() -> dict[str, Any]:
     if app.openapi_schema:
         return app.openapi_schema
 
@@ -163,12 +165,12 @@ app.include_router(internal_router)
 
 @app.get("/", include_in_schema=False)
 @app.get("/app", include_in_schema=False)
-def root():
+def root() -> dict[str, str]:
     return {"message": "Welcome to Mind Map Generator API"}
 
 
 @app.get("/api/health")
-def health():
+def health() -> dict[str, Any]:
     return {
         "status": "ok",
         "service": "Mind Map Generator API",
