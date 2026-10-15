@@ -98,6 +98,7 @@ class JobCallbackClient:
                     await asyncio.sleep(0.5 * (2 ** (attempt - 1)))
         if last_exc:
             raise last_exc
+        return {}
 
     async def fail(self, result: GenerationResult) -> dict:
         if self._terminal_sent:
@@ -122,6 +123,7 @@ class JobCallbackClient:
                     await asyncio.sleep(0.5 * (2 ** (attempt - 1)))
         if last_exc:
             raise last_exc
+        return {}
 
     async def aclose(self) -> None:
         await self._client.aclose()

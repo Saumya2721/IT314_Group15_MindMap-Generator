@@ -18,7 +18,7 @@ from __future__ import annotations
 try:
     import numpy as np
 except ImportError:
-    np = None
+    np = None  # type: ignore[assignment]
 
 import httpx
 from embeddings.base import EmbeddingProvider

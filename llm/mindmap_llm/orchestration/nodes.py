@@ -64,8 +64,9 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
 
     async def classify_routing_node(state: GenerationState) -> dict:
         query_text = state["seed_text"]
-        if state.get("regeneration_instruction"):
-            query_text += "\n\n" + state["regeneration_instruction"]
+        regen_instr = state.get("regeneration_instruction")
+        if regen_instr:
+            query_text += "\n\n" + regen_instr
 
         resolved_detail = state.get("detail_level")
         if not resolved_detail:
