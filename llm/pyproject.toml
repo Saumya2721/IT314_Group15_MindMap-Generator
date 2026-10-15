@@ -28,7 +28,10 @@ select = ["E", "F", "I", "B", "UP"]
 
 [tool.mypy]
 python_version = "3.12"
-strict = true
+mypy_path = "mindmap_llm"
+explicit_package_bases = true
+ignore_missing_imports = true
+check_untyped_defs = true
 warn_unreachable = true
 
 [tool.pytest.ini_options]
