@@ -155,11 +155,20 @@ max_indexes = 5
 enabled = true
 # The base URL of your website. Used as an allow-list for redirects and for constructing URLs used
 # in emails.
-site_url = "http://127.0.0.1:3000"
+# Matches the backend default FRONTEND_URL (backend/core/config.py).
+site_url = "http://localhost:3000"
 # The public URL that Auth serves on. Defaults to the API external URL with `/auth/v1` appended.
 # external_url = ""
 # A list of *exact* URLs that auth providers are permitted to redirect to post authentication.
-additional_redirect_urls = ["https://127.0.0.1:3000"]
+# The backend sends users to {FRONTEND_URL}/auth/callback (Google) and
+# {FRONTEND_URL}/reset-password (password reset); its CORS list allows ports 3000 and 5173.
+# Local development only: set the hosted project's URLs in Dashboard -> Authentication -> URL Configuration.
+additional_redirect_urls = [
+  "http://localhost:3000/**",
+  "http://127.0.0.1:3000/**",
+  "http://localhost:5173/**",
+  "http://127.0.0.1:5173/**",
+]
 # How long tokens are valid for, in seconds. Defaults to 3600 (1 hour), maximum 604,800 (1 week).
 jwt_expiry = 3600
 # JWT issuer URL. If not set, defaults to auth.external_url.
@@ -331,6 +340,22 @@ url = ""
 # If enabled, the nonce check will be skipped. Required for local sign in with Google auth.
 skip_nonce_check = false
 # If enabled, it will allow the user to successfully authenticate when the provider does not return an email address.
+email_optional = false
+
+# Google sign-in (FR-03 / FR-39). Used by backend/auth/service.py:
+# sign_in_with_oauth(provider="google") + exchange_code_for_session().
+# Disabled by default so `supabase start` works without Google credentials.
+# To use it locally: export the two variables below (never commit them), set
+# enabled = true, and add http://127.0.0.1:54321/auth/v1/callback as an
+# authorised redirect URI in the Google Cloud console.
+# For the hosted project, configure Google in Dashboard -> Authentication -> Providers.
+[auth.external.google]
+enabled = false
+client_id = "env(SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID)"
+secret = "env(SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET)"
+redirect_uri = ""
+url = ""
+skip_nonce_check = false
 email_optional = false
 
 # Allow Solana wallet holders to sign in to your project via the Sign in with Solana (SIWS, EIP-4361) standard.
