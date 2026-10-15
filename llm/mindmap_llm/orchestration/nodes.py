@@ -18,7 +18,7 @@ closure over GenerationDeps. CHANGED in the worker restructure:
 from __future__ import annotations
 
 import logging
-from typing import Callable
+from collections.abc import Callable
 
 from contracts.models import ChunkSource
 from orchestration.deps import GenerationDeps
@@ -43,6 +43,7 @@ DETAIL_LEVELS = ["overview", "balanced", "detailed"]
 
 class NoPriorSeedError(NoUsableSeedContent):
     """Raised when regenerating a map but no prior seed chunks exist in Pinecone."""
+
     pass
 
 
@@ -71,13 +72,17 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
             result = await deps.decision_model.classify(
                 state=query_text[:4000],
                 question=(
-                    "How much detail should this mind map have? 'overview' = 5-10 nodes high level, "
-                    "'balanced' = 10-25 nodes with one sub-level, 'detailed' = 25-60 nodes multi-level."
+                    "How much detail should this mind map have? "
+                    "'overview' = 5-10 nodes high level, "
+                    "'balanced' = 10-25 nodes with one sub-level, "
+                    "'detailed' = 25-60 nodes multi-level."
                 ),
                 labels=DETAIL_LEVELS,
             )
             resolved_detail = result.label
-            logger.info("Inferred detail_level=%s (confidence=%.2f)", resolved_detail, result.confidence)
+            logger.info(
+                "Inferred detail_level=%s (confidence=%.2f)", resolved_detail, result.confidence
+            )
 
         web_search_available = "web_search" in deps.tools
         arxiv_available = "arxiv_search" in deps.tools
@@ -86,14 +91,20 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
         if web_search_available:
             r = await deps.decision_model.classify(
                 state=query_text[:4000],
-                question="Would a live web search meaningfully improve grounding for this mind map's content?",
+                question=(
+                    "Would a live web search meaningfully improve grounding "
+                    "for this mind map's content?"
+                ),
                 labels=["yes", "no"],
             )
             routing["web_search"] = r.label == "yes"
         if arxiv_available:
             r = await deps.decision_model.classify(
                 state=query_text[:4000],
-                question="Is this topic academic/technical enough that arXiv papers would add useful grounding?",
+                question=(
+                    "Is this topic academic/technical enough that arXiv papers "
+                    "would add useful grounding?"
+                ),
                 labels=["yes", "no"],
             )
             routing["arxiv_search"] = r.label == "yes"
@@ -221,9 +232,14 @@ async def reconstruct_seed_from_namespace(deps: GenerationDeps, *, namespace: st
     no re-embedding — US-04's 'preserve the original seed as base
     context'). Raises if there's nothing to reuse."""
     chunks = await deps.vector_store.fetch_all_for_source(
-        namespace=namespace, source=ChunkSource.UPLOADED_SEED, dimension=deps.embedding_provider.dimension,
+        namespace=namespace,
+        source=ChunkSource.UPLOADED_SEED,
+        dimension=deps.embedding_provider.dimension,
     )
     if not chunks:
-        raise NoPriorSeedError(f"No original seed chunks found in namespace {namespace!r} — cannot regenerate without a seed.")
+        raise NoPriorSeedError(
+            f"No original seed chunks found in namespace {namespace!r} "
+            "— cannot regenerate without a seed."
+        )
     sorted_chunks = sorted(chunks, key=lambda c: getattr(c, "chunk_index", 0))
     return "\n\n".join(c.chunk_text for c in sorted_chunks)

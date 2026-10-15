@@ -9,6 +9,7 @@ Also supports 'sentence-transformers/all-MiniLM-L6-v2' (384-dimensional).
 from __future__ import annotations
 
 import asyncio
+
 from embeddings.base import EmbeddingProvider
 
 

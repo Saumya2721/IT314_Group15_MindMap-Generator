@@ -13,7 +13,8 @@ Rules (do not violate these):
 - The JSON object has exactly two keys: "nodes" and "edges".
 - Each node: {"id": "<short unique string id, e.g. n1>", "label": "<short concept, <= 6 words>", \
 "description": "<1-3 sentence explanation, or null>", "node_type": "default"}
-- Each edge: {"source": "<node id>", "target": "<node id>", "label": "<short relationship, e.g. 'causes', 'is-a', 'contains', or null>"}
+- Each edge: {"source": "<node id>", "target": "<node id>", \
+"label": "<short relationship, e.g. 'causes', 'is-a', 'contains', or null>"}
 - There must be EXACTLY ONE root node with no incoming edges — the central concept — and every \
 other node must be reachable from it. Do not create disconnected clusters.
 - Every node id referenced by an edge must exist in "nodes".

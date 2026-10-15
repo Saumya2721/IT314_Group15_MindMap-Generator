@@ -21,7 +21,6 @@ except ImportError:
     np = None
 
 import httpx
-
 from embeddings.base import EmbeddingProvider
 
 
@@ -57,8 +56,12 @@ class HuggingFaceEmbeddingProvider(EmbeddingProvider):
     async def embed(self, texts: list[str]) -> list[list[float]]:
         all_vectors: list[list[float]] = []
         for start in range(0, len(texts), self._batch_size):
-            batch = texts[start:start + self._batch_size]
-            url = f"/{self._model}/pipeline/feature-extraction" if "router.huggingface.co" in str(self._client.base_url) else f"/{self._model}"
+            batch = texts[start : start + self._batch_size]
+            url = (
+                f"/{self._model}/pipeline/feature-extraction"
+                if "router.huggingface.co" in str(self._client.base_url)
+                else f"/{self._model}"
+            )
             resp = await self._client.post(
                 url,
                 json={"inputs": batch, "options": {"wait_for_model": True}},
@@ -72,7 +75,10 @@ class HuggingFaceEmbeddingProvider(EmbeddingProvider):
                 if isinstance(item, list) and item and isinstance(item[0], list):
                     seq_len = len(item)
                     hidden_dim = len(item[0])
-                    pooled = [float(sum(item[step][dim] for step in range(seq_len)) / seq_len) for dim in range(hidden_dim)]
+                    pooled = [
+                        float(sum(item[step][dim] for step in range(seq_len)) / seq_len)
+                        for dim in range(hidden_dim)
+                    ]
                     all_vectors.append(pooled)
                 else:
                     all_vectors.append([float(x) for x in item])

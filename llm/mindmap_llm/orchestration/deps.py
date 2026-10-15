@@ -18,6 +18,7 @@ class GenerationDeps:
     (Postgres-backed) are gone, replaced by `vector_store` (Pinecone)
     and `callback` (HTTP calls to the backend). This is still the ONLY
     thing tests have to swap out to run the pipeline fully mocked."""
+
     llm: LLMProvider
     decision_model: DecisionModel
     embedding_provider: EmbeddingProvider

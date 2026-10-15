@@ -17,7 +17,6 @@ import asyncio
 import logging
 
 import httpx
-
 from contracts.models import GenerationResult
 
 logger = logging.getLogger(__name__)
@@ -60,7 +59,9 @@ class JobCallbackClient:
 
     async def progress(self, percent: int) -> None:
         if self._terminal_sent:
-            raise CallbackAlreadySent(f"job {self._job_id}: progress() called after a terminal callback")
+            raise CallbackAlreadySent(
+                f"job {self._job_id}: progress() called after a terminal callback"
+            )
         try:
             resp = await self._client.post(
                 f"/internal/jobs/{self._job_id}/progress", json={"progress_percent": percent}
@@ -70,7 +71,9 @@ class JobCallbackClient:
             # A missed progress tick is not fatal to the generation itself —
             # log it and keep going rather than failing the whole job over
             # a UI nicety. complete()/fail() below are NOT allowed to do this.
-            logger.warning("job %s: progress callback failed (percent=%d): %s", self._job_id, percent, exc)
+            logger.warning(
+                "job %s: progress callback failed (percent=%d): %s", self._job_id, percent, exc
+            )
 
     async def complete(self, result: GenerationResult) -> dict:
         if self._terminal_sent:
@@ -88,7 +91,9 @@ class JobCallbackClient:
                 return resp.json() if resp.content else {"status": "completed"}
             except (httpx.TransportError, httpx.TimeoutException) as exc:
                 last_exc = exc
-                logger.warning("job %s: complete callback attempt %d/3 failed: %s", self._job_id, attempt, exc)
+                logger.warning(
+                    "job %s: complete callback attempt %d/3 failed: %s", self._job_id, attempt, exc
+                )
                 if attempt < 3:
                     await asyncio.sleep(0.5 * (2 ** (attempt - 1)))
         if last_exc:
@@ -110,7 +115,9 @@ class JobCallbackClient:
                 return resp.json() if resp.content else {"status": "failed"}
             except (httpx.TransportError, httpx.TimeoutException) as exc:
                 last_exc = exc
-                logger.warning("job %s: fail callback attempt %d/3 failed: %s", self._job_id, attempt, exc)
+                logger.warning(
+                    "job %s: fail callback attempt %d/3 failed: %s", self._job_id, attempt, exc
+                )
                 if attempt < 3:
                     await asyncio.sleep(0.5 * (2 ** (attempt - 1)))
         if last_exc:
@@ -135,10 +142,17 @@ class NullCallbackClient:
         logger.info("job %s: progress %d%%", self._job_id, percent)
 
     async def complete(self, result) -> None:
-        logger.info("job %s: completed (%d nodes, %d edges)", self._job_id, len(result.nodes), len(result.edges))
+        logger.info(
+            "job %s: completed (%d nodes, %d edges)",
+            self._job_id,
+            len(result.nodes),
+            len(result.edges),
+        )
 
     async def fail(self, result) -> None:
-        logger.info("job %s: failed — %s", self._job_id, result.error.message if result.error else "unknown")
+        logger.info(
+            "job %s: failed — %s", self._job_id, result.error.message if result.error else "unknown"
+        )
 
     async def aclose(self) -> None:
         pass

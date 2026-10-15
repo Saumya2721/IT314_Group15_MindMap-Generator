@@ -47,7 +47,9 @@ def _get_float(name: str, default: float) -> float:
 
 @dataclass(frozen=True)
 class ArqConfig:
-    redis_url: str = field(default_factory=lambda: os.environ.get("REDIS_URL", "redis://localhost:6379"))
+    redis_url: str = field(
+        default_factory=lambda: os.environ.get("REDIS_URL", "redis://localhost:6379")
+    )
     max_jobs: int = field(default_factory=lambda: _get_int("ARQ_MAX_JOBS", 4))
     # Must exceed the slowest realistic generation (detailed mode budget
     # is 180s) with real headroom for retries inside the graph.
@@ -62,8 +64,11 @@ class LLMConfig:
     providers.registry.get_llm_provider(). Add new providers by
     registering them there — nothing else needs to change.
     """
+
     provider: str = field(default_factory=lambda: os.environ.get("LLM_PROVIDER", "groq"))
-    model: str = field(default_factory=lambda: os.environ.get("LLM_MODEL", "llama-3.3-70b-versatile"))
+    model: str = field(
+        default_factory=lambda: os.environ.get("LLM_MODEL", "llama-3.3-70b-versatile")
+    )
     api_key: str = field(default_factory=lambda: os.environ.get("LLM_API_KEY", ""))
     api_base: str | None = field(default_factory=lambda: os.environ.get("LLM_API_BASE") or None)
     max_output_tokens: int = field(default_factory=lambda: _get_int("LLM_MAX_OUTPUT_TOKENS", 8000))
@@ -79,13 +84,16 @@ class DecisionModelConfig:
     call site falls back to a cheap heuristic or the primary LLM so the
     pipeline still works without it (NFR-07: graceful degradation).
     """
+
     enabled: bool = field(default_factory=lambda: _get_bool("DECISION_MODEL_ENABLED", True))
     provider: str = field(default_factory=lambda: os.environ.get("DECISION_MODEL_PROVIDER", "jev"))
     api_key: str = field(default_factory=lambda: os.environ.get("TYPESAFE_API_KEY", ""))
-    api_base: str = field(default_factory=lambda: os.environ.get(
-        "TYPESAFE_API_BASE", "https://api.typesafe.ai/v1"
-    ))
-    request_timeout_s: float = field(default_factory=lambda: _get_float("DECISION_MODEL_TIMEOUT_S", 3.0))
+    api_base: str = field(
+        default_factory=lambda: os.environ.get("TYPESAFE_API_BASE", "https://api.typesafe.ai/v1")
+    )
+    request_timeout_s: float = field(
+        default_factory=lambda: _get_float("DECISION_MODEL_TIMEOUT_S", 3.0)
+    )
 
 
 @dataclass(frozen=True)
@@ -96,14 +104,21 @@ class EmbeddingConfig:
     (see scripts/create_pinecone_index.py) — there is no more
     auto-projection safety net (see embeddings/huggingface_provider.py).
     """
-    provider: str = field(default_factory=lambda: os.environ.get("EMBEDDING_PROVIDER", "huggingface"))
-    model: str = field(default_factory=lambda: os.environ.get(
-        "EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2"
-    ))
+
+    provider: str = field(
+        default_factory=lambda: os.environ.get("EMBEDDING_PROVIDER", "huggingface")
+    )
+    model: str = field(
+        default_factory=lambda: os.environ.get(
+            "EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2"
+        )
+    )
     api_key: str = field(default_factory=lambda: os.environ.get("EMBEDDING_API_KEY", ""))
-    api_base: str = field(default_factory=lambda: os.environ.get(
-        "EMBEDDING_API_BASE", "https://router.huggingface.co/hf-inference/models"
-    ))
+    api_base: str = field(
+        default_factory=lambda: os.environ.get(
+            "EMBEDDING_API_BASE", "https://router.huggingface.co/hf-inference/models"
+        )
+    )
     dimension: int = field(default_factory=lambda: _get_int("EMBEDDING_DIMENSION", 384))
     batch_size: int = field(default_factory=lambda: _get_int("EMBEDDING_BATCH_SIZE", 32))
 
@@ -111,31 +126,47 @@ class EmbeddingConfig:
 @dataclass(frozen=True)
 class PineconeConfig:
     api_key: str = field(default_factory=lambda: os.environ.get("PINECONE_API_KEY", ""))
-    index_name: str = field(default_factory=lambda: os.environ.get("PINECONE_INDEX", "mindmap-chunks"))
-    # Convex-combination weight for hybrid dense+sparse queries (1.0 = dense-only, 0.0 = sparse-only).
+    index_name: str = field(
+        default_factory=lambda: os.environ.get("PINECONE_INDEX", "mindmap-chunks")
+    )
+    # Convex-combination weight for hybrid dense+sparse queries
+    # (1.0 = dense-only, 0.0 = sparse-only).
     dense_weight: float = field(default_factory=lambda: _get_float("PINECONE_DENSE_WEIGHT", 0.5))
 
 
 @dataclass(frozen=True)
 class ToolConfig:
-    web_search_provider: str = field(default_factory=lambda: os.environ.get("SEARCH_PROVIDER", "tavily"))
+    web_search_provider: str = field(
+        default_factory=lambda: os.environ.get("SEARCH_PROVIDER", "tavily")
+    )
     web_search_api_key: str = field(default_factory=lambda: os.environ.get("SEARCH_API_KEY", ""))
-    arxiv_api_base: str = field(default_factory=lambda: os.environ.get(
-        "ARXIV_API_BASE", "http://export.arxiv.org/api/query"
-    ))
+    arxiv_api_base: str = field(
+        default_factory=lambda: os.environ.get(
+            "ARXIV_API_BASE", "http://export.arxiv.org/api/query"
+        )
+    )
     tool_timeout_s: float = field(default_factory=lambda: _get_float("TOOL_TIMEOUT_S", 15.0))
 
 
 @dataclass(frozen=True)
 class GenerationConfig:
-    max_generation_retries: int = field(default_factory=lambda: _get_int("MAX_GENERATION_RETRIES", 2))
-    default_detail_level: str = field(default_factory=lambda: os.environ.get(
-        "DEFAULT_DETAIL_LEVEL", ""  # empty => Jev/heuristic infers it
-    ))
+    max_generation_retries: int = field(
+        default_factory=lambda: _get_int("MAX_GENERATION_RETRIES", 2)
+    )
+    default_detail_level: str = field(
+        default_factory=lambda: os.environ.get(
+            "DEFAULT_DETAIL_LEVEL",
+            "",  # empty => Jev/heuristic infers it
+        )
+    )
     rag_top_k: int = field(default_factory=lambda: _get_int("RAG_TOP_K", 12))
     rag_rerank_top_k: int = field(default_factory=lambda: _get_int("RAG_RERANK_TOP_K", 6))
-    overview_latency_budget_s: float = field(default_factory=lambda: _get_float("OVERVIEW_LATENCY_BUDGET_S", 30.0))
-    detailed_latency_budget_s: float = field(default_factory=lambda: _get_float("DETAILED_LATENCY_BUDGET_S", 180.0))
+    overview_latency_budget_s: float = field(
+        default_factory=lambda: _get_float("OVERVIEW_LATENCY_BUDGET_S", 30.0)
+    )
+    detailed_latency_budget_s: float = field(
+        default_factory=lambda: _get_float("DETAILED_LATENCY_BUDGET_S", 180.0)
+    )
 
 
 @dataclass(frozen=True)

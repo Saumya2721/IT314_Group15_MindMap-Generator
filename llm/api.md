@@ -46,6 +46,7 @@ import uuid
 from arq import create_pool
 from arq.connections import RedisSettings
 
+
 # Enqueue helper inside FastAPI:
 async def enqueue_generation_job(redis_pool, request_payload: dict):
     await redis_pool.enqueue_job(
@@ -238,11 +239,13 @@ from pydantic import BaseModel
 
 router = APIRouter(prefix="/api/maps", tags=["maps"])
 
+
 class GenerateRequest(BaseModel):
     topic: str | None = None
     ideas: str | None = None
     file_keys: list[str] = []
     detail_level: str | None = None
+
 
 @router.post("/{map_id}/generate", status_code=status.HTTP_202_ACCEPTED)
 async def generate_map(
@@ -259,7 +262,9 @@ async def generate_map(
     # 2. Prevent concurrent runs on the same map
     active_job = await get_active_job(db, map_id)
     if active_job:
-        raise HTTPException(status_code=409, detail="A generation job is already running for this map.")
+        raise HTTPException(
+            status_code=409, detail="A generation job is already running for this map."
+        )
 
     # 3. Create generation_jobs row (status='pending')
     job_id = uuid.uuid4()
@@ -269,12 +274,14 @@ async def generate_map(
     file_refs = []
     for key in body.file_keys:
         signed_url = await storage.create_signed_url("seed-assets", key, expires_in=1800)
-        file_refs.append({
-            "file_name": key.split("/")[-1],
-            "mime_type": guess_mime_type(key),
-            "url": signed_url,
-            "storage_key": key,
-        })
+        file_refs.append(
+            {
+                "file_name": key.split("/")[-1],
+                "mime_type": guess_mime_type(key),
+                "url": signed_url,
+                "storage_key": key,
+            }
+        )
 
     # 5. Mint a short-lived token for callback authentication
     callback_token = mint_job_token(job_id)

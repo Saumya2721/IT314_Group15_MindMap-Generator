@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from langgraph.graph import END, StateGraph
-
 from orchestration.deps import GenerationDeps
 from orchestration.nodes import make_nodes
 from orchestration.state import GenerationState
@@ -37,8 +36,13 @@ def build_generation_graph(deps: GenerationDeps):
     graph.add_edge("retrieve", "generate")
     graph.add_edge("generate", "validate")
     graph.add_conditional_edges(
-        "validate", _validate_router,
-        {"finalize_success": "finalize_success", "generate": "generate", "finalize_failure": "finalize_failure"},
+        "validate",
+        _validate_router,
+        {
+            "finalize_success": "finalize_success",
+            "generate": "generate",
+            "finalize_failure": "finalize_failure",
+        },
     )
     graph.add_edge("finalize_success", END)
     graph.add_edge("finalize_failure", END)

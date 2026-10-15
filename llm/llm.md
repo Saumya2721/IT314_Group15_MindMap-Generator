@@ -135,20 +135,20 @@ The graph state is defined in [`orchestration/state.py`](./orchestration/state.p
 class GenerationState(TypedDict, total=False):
     job_id: UUID
     map_id: UUID
-    namespace: str                          # Pinecone namespace (str(map_id))
+    namespace: str  # Pinecone namespace (str(map_id))
     seed_text: str
-    detail_level: str | None                # "overview" | "balanced" | "detailed" | None
-    resolved_detail_level: str              # Set after classify_routing
+    detail_level: str | None  # "overview" | "balanced" | "detailed" | None
+    resolved_detail_level: str  # Set after classify_routing
     regeneration_instruction: str | None
     is_regeneration: bool
 
-    candidate_draft: dict | None            # Raw JSON from LLM
-    nodes: list[NodeDraft]                  # Validated nodes with real UUIDs
-    edges: list[EdgeDraft]                  # Validated edges
-    validation_errors: list[str]            # Feedback passed to LLM on retry
-    retry_count: int                        # Incremented on each validation retry
+    candidate_draft: dict | None  # Raw JSON from LLM
+    nodes: list[NodeDraft]  # Validated nodes with real UUIDs
+    edges: list[EdgeDraft]  # Validated edges
+    validation_errors: list[str]  # Feedback passed to LLM on retry
+    retry_count: int  # Incremented on each validation retry
 
-    status: str                             # "completed" | "failed"
+    status: str  # "completed" | "failed"
     error_message: str | None
     failed_stage: str | None
 ```
