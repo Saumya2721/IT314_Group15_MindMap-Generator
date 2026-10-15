@@ -2,6 +2,7 @@
 
 Extracted cleanly from mm_backend into backend.uploads.service.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -9,12 +10,10 @@ import inspect
 import logging
 import os
 import re
-from typing import List, Tuple
 from uuid import UUID
 
-from fastapi import HTTPException, UploadFile
-
 from core.supabase import admin
+from fastapi import HTTPException, UploadFile
 
 try:
     from seed.normalizer import UploadedFile
@@ -22,12 +21,13 @@ except ImportError:
     from dataclasses import dataclass
 
     @dataclass
-    class UploadedFile:
+    class UploadedFile:  # type: ignore[no-redef]
         file_name: str
         mime_type: str
         data: bytes
         storage_key: str | None = None
         signed_url: str | None = None
+
 
 logger = logging.getLogger(__name__)
 
@@ -66,17 +66,17 @@ def sniff_mime(data: bytes) -> str | None:
     return None
 
 
-def display_name(name: str) -> str:
+def display_name(name: str | None) -> str:
     base = os.path.basename((name or "file").replace("\\", "/")).strip()
     return (base or "file")[-200:]
 
 
-def storage_name(name: str) -> str:
+def storage_name(name: str | None) -> str:
     safe = re.sub(r"[^A-Za-z0-9._-]+", "_", display_name(name)).strip("._")
     return (safe or "file")[-100:]
 
 
-async def read_uploads(files: List[UploadFile]) -> List[Tuple[str, str, bytes]]:
+async def read_uploads(files: list[UploadFile]) -> list[tuple[str, str, bytes]]:
     """Fast-fail checks: count, empty, too large, unsupported/corrupt header."""
     files = [f for f in files if f is not None and f.filename]
     if len(files) > MAX_FILES:
@@ -88,10 +88,14 @@ async def read_uploads(files: List[UploadFile]) -> List[Tuple[str, str, bytes]]:
         if not data:
             raise HTTPException(422, f"{name}: the file is empty.")
         if len(data) > MAX_FILE_BYTES:
-            raise HTTPException(413, f"{name}: file is larger than {MAX_FILE_BYTES // (1024 * 1024)} MB.")
+            raise HTTPException(
+                413, f"{name}: file is larger than {MAX_FILE_BYTES // (1024 * 1024)} MB."
+            )
         mime = sniff_mime(data)
         if mime is None:
-            raise HTTPException(415, f"{name}: unsupported or corrupted file. Use PDF, PNG, JPEG or WEBP.")
+            raise HTTPException(
+                415, f"{name}: unsupported or corrupted file. Use PDF, PNG, JPEG or WEBP."
+            )
         items.append((name, mime, data))
     return items
 
@@ -100,11 +104,14 @@ async def store_files(
     user_id: UUID,
     map_id: UUID,
     job_id: UUID,
-    items: List[Tuple[str, str, bytes]],
-) -> List[UploadedFile]:
-    """Upload to <user_id>/<map_id>/<job_id>/<n>_<file> in Supabase Storage and produce signed URLs."""
-    result: List[UploadedFile] = []
-    uploaded_keys: List[str] = []
+    items: list[tuple[str, str, bytes]],
+) -> list[UploadedFile]:
+    """Upload to <user_id>/<map_id>/<job_id>/<n>_<file> in Supabase Storage.
+
+    Produces signed URLs for each uploaded file.
+    """
+    result: list[UploadedFile] = []
+    uploaded_keys: list[str] = []
     params = inspect.signature(UploadedFile).parameters
     has_storage_key_param = "storage_key" in params
     has_signed_url_param = "signed_url" in params
@@ -125,8 +132,12 @@ async def store_files(
                 try:
                     await asyncio.to_thread(admin.storage.from_(BUCKET).remove, uploaded_keys)
                 except Exception as rm_exc:
-                    logger.warning("Failed to clean up partial storage keys %s: %s", uploaded_keys, rm_exc)
-            raise HTTPException(502, "Could not store the uploaded file in Supabase Storage. Please try again.")
+                    logger.warning(
+                        "Failed to clean up partial storage keys %s: %s", uploaded_keys, rm_exc
+                    )
+            raise HTTPException(
+                502, "Could not store the uploaded file in Supabase Storage. Please try again."
+            ) from exc
 
         signed_url = await create_signed_url(key)
         kwargs = {}
