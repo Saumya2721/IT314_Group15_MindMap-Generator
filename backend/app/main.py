@@ -154,6 +154,8 @@ def custom_openapi() -> dict[str, Any]:
 
 app.openapi = custom_openapi
 
+app.openapi = custom_openapi
+
 # Register routers with clean, canonical docs
 app.include_router(auth_router, prefix="/api")
 app.include_router(auth_router, include_in_schema=False)
