@@ -4,13 +4,13 @@ Replaces the legacy mm_backend.supa implementation with robust error
 handling and lazy initialization to avoid crashing on import when
 environment variables are not yet loaded.
 """
+
 from __future__ import annotations
 
 import logging
 import os
 import re
 from pathlib import Path
-from typing import Optional
 from uuid import UUID
 
 from dotenv import find_dotenv, load_dotenv
@@ -37,7 +37,7 @@ SUPABASE_URL = re.sub(r"/rest/v1/?$", "", (os.getenv("SUPABASE_URL") or "").stri
 SERVICE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_SERVICE_KEY")
 ANON_KEY = os.getenv("SUPABASE_ANON_KEY")
 
-_admin_client: Optional[Client] = None
+_admin_client: Client | None = None
 
 
 def is_supabase_configured() -> bool:
@@ -91,10 +91,10 @@ bearer = HTTPBearer(auto_error=False)
 
 def get_current_user(
     request: Request,
-    creds: Optional[HTTPAuthorizationCredentials] = Depends(bearer),
+    creds: HTTPAuthorizationCredentials | None = Depends(bearer),
 ):
     """Validate token from Authorization header OR HttpOnly cookie via Supabase auth."""
-    token: Optional[str] = None
+    token: str | None = None
     if creds and creds.credentials:
         token = creds.credentials
     elif request.cookies.get("access_token"):

@@ -1,12 +1,12 @@
-from typing import Optional
-from fastapi import Response
+
 from core.config import settings
+from fastapi import Response
 
 
 def set_auth_cookies(
     response: Response,
     access_token: str,
-    refresh_token: Optional[str] = None,
+    refresh_token: str | None = None,
     expires_in: int = 3600,
 ) -> None:
     """Set secure, HttpOnly cookies for access and refresh tokens."""
