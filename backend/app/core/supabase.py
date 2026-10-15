@@ -81,7 +81,10 @@ def anon_client() -> Client:
     if not SUPABASE_URL or not ANON_KEY:
         raise HTTPException(
             status_code=500,
-            detail="Supabase auth credentials missing. Please set SUPABASE_URL and SUPABASE_ANON_KEY in your .env file.",
+            detail=(
+                "Supabase auth credentials missing."
+                "Please set SUPABASE_URL and SUPABASE_ANON_KEY in your .env file."
+            ),
         )
     return create_client(SUPABASE_URL, ANON_KEY)
 
@@ -91,7 +94,7 @@ bearer = HTTPBearer(auto_error=False)
 
 def get_current_user(
     request: Request,
-    creds: HTTPAuthorizationCredentials | None = Depends(bearer),
+    creds: HTTPAuthorizationCredentials | None = Depends(bearer),  # noqa: B008
 ):
     """Validate token from Authorization header OR HttpOnly cookie via Supabase auth."""
     token: str | None = None
@@ -129,6 +132,6 @@ def get_current_user(
     return user
 
 
-def current_user_id(user=Depends(get_current_user)) -> UUID:
+def current_user_id(user=Depends(get_current_user)) -> UUID:  # noqa: B008
     """Extract and validate the UUID of the authenticated user."""
     return UUID(user.id)
