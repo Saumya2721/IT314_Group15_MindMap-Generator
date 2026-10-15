@@ -3,6 +3,26 @@ import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import './AppHeader.css';
 
+const DEFAULT_AVATAR_URL =
+  'https://lh3.googleusercontent.com/aida-public/AB6AXuB5NFQwx9Y0rkms3wT-alCi2zxtqHCZTAyMjKmP-sM-J9ndHLFRGNXSNIIJoy3udUkvYoWpJx3UparXK04g0--C0qgINk6I23Gr51wKOCjjTxhG6omD1AYLepqxSr4wUeUe39GJz6LhROot39TPah3fin69PBU9KXsoLCY2Fo2FO1NCISm6AXUrQyU6lR4KkwE-b4sTXAkCvVxebm23xefPgmr7PxjecBiZeQ2FpHHdTOOgkS9HQo87';
+
+function getSafeAvatarUrl(avatar) {
+  if (typeof avatar !== 'string' || !avatar.trim()) {
+    return DEFAULT_AVATAR_URL;
+  }
+
+  try {
+    const parsed = new URL(avatar, window.location.origin);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return parsed.href;
+    }
+  } catch {
+    // ignore invalid URL and use fallback
+  }
+
+  return DEFAULT_AVATAR_URL;
+}
+
 export function AppHeader() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
@@ -85,10 +105,7 @@ export function AppHeader() {
               aria-label="User account menu"
             >
               <img
-                src={
-                  user?.avatar ||
-                  'https://lh3.googleusercontent.com/aida-public/AB6AXuB5NFQwx9Y0rkms3wT-alCi2zxtqHCZTAyMjKmP-sM-J9ndHLFRGNXSNIIJoy3udUkvYoWpJx3UparXK04g0--C0qgINk6I23Gr51wKOCjjTxhG6omD1AYLepqxSr4wUeUe39GJz6LhROot39TPah3fin69PBU9KXsoLCY2Fo2FO1NCISm6AXUrQyU6lR4KkwE-b4sTXAkCvVxebm23xefPgmr7PxjecBiZeQ2FpHHdTOOgkS9HQo87'
-                }
+                src={getSafeAvatarUrl(user?.avatar)}
                 alt="Profile"
                 className="header-avatar-img"
               />
