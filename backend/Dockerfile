@@ -1,13 +1,13 @@
 # Build context is backend/  ->  docker build -t mindmap-api backend
 
-FROM python:3.12-slim AS builder
+FROM python:3.14-slim AS builder
 ENV UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never
 RUN pip install --no-cache-dir uv
 WORKDIR /app
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 
-FROM python:3.12-slim AS runtime
+FROM python:3.14-slim AS runtime
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PATH="/app/.venv/bin:$PATH"
 RUN useradd --create-home --uid 1000 app
 WORKDIR /app
