@@ -1,22 +1,29 @@
 """
 Backend database models mirroring the PostgreSQL / Supabase schema.
+
+Source of truth for the schema: supabase/migrations/ (applied with
+`supabase db push`). backend/db/schema.sql is the same final schema as one
+script, for a fresh project set up through the SQL Editor.
+
+Enum values match the CHECK constraints in the database and the wire
+contract in llm/mindmap_llm/contracts/models.py.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from uuid import UUID
 
 
-class JobType(str, Enum):
+class JobType(StrEnum):
     GENERATE = "generate"
     REGENERATE_FULL = "regenerate_full"
     REGENERATE_NODE = "regenerate_node"
 
 
-class JobStatus(str, Enum):
+class JobStatus(StrEnum):
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
@@ -24,16 +31,37 @@ class JobStatus(str, Enum):
     REJECTED = "rejected"
 
 
-class SeedAssetType(str, Enum):
+# Terminal statuses. A job in one of these never changes again.
+TERMINAL_JOB_STATUSES: frozenset[JobStatus] = frozenset(
+    {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.REJECTED}
+)
+
+
+class SeedAssetType(StrEnum):
     PDF = "pdf"
     IMAGE = "image"
     TEXT = "text"
 
 
-class EmbeddingSource(str, Enum):
+class EmbeddingSource(StrEnum):
     UPLOADED_SEED = "uploaded_seed"
     WEB_SEARCH = "web_search"
     ARXIV = "arxiv"
+
+
+class ChatRole(StrEnum):
+    USER = "user"
+    ASSISTANT = "assistant"
+
+
+# Column limits from the schema. repository.py clips values to these so a
+# long LLM string can never make a whole worker callback fail.
+NODE_LABEL_MAX = 255
+NODE_TYPE_MAX = 50
+EDGE_LABEL_MAX = 100
+FILE_NAME_MAX = 255
+MIME_TYPE_MAX = 100
+ERROR_MESSAGE_MAX = 4000
 
 
 @dataclass

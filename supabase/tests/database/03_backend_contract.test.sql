@@ -3,8 +3,8 @@
 --
 -- Statements are PREPAREd with untyped parameters, which is what asyncpg
 -- does, so Postgres must infer every $n type exactly as it would in
--- production. Sources: backend/db/repository.py, backend/maps/routes.py,
--- backend/routes/internal.py, backend/routes/users.py, backend/services/runner.py.
+-- production. Sources: backend/db/repository.py, backend/app/maps/routes.py,
+-- backend/app/api/internal.py, backend/app/api/users.py, backend/app/services/runner.py.
 -- Runs as the migration owner (like the backend's DATABASE_URL role), so
 -- RLS does not apply here.
 -- Run with: supabase test db
@@ -185,7 +185,7 @@ select results_eq(
     $$select status::text, progress_percent from public.generation_jobs where id = 'f0000000-0000-0000-0000-000000000001'$$,
     $$values ('running', 42)$$, 'progress callback moves the job to running');
 
--- Worker: complete. Seed assets exactly as llm/seed/normalizer.py builds them.
+-- Worker: complete. Seed assets exactly as llm/mindmap_llm/seed/normalizer.py builds them.
 select lives_ok(format($$execute insert_seed('f0000000-0000-0000-0000-000000000001', 'pdf', 'notes.pdf', %L,
         'application/pdf', 'extracted pdf text', 1234, %L)$$,
     'a0000000-0000-0000-0000-000000000001/' || (select map_id from t_ids) || '/f0000000-0000-0000-0000-000000000001/0_notes.pdf',

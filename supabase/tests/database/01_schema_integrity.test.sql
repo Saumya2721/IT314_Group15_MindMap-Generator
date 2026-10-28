@@ -6,8 +6,8 @@ select plan(33);
 
 -- ---------------------------------------------------------------------
 -- Every table/column the backend reads or writes exists
--- (backend/db/repository.py, maps/routes.py, routes/internal.py,
---  routes/users.py, services/runner.py)
+-- (backend/db/repository.py, backend/app/maps/routes.py, backend/app/api/internal.py,
+--  backend/app/api/users.py, backend/app/services/runner.py)
 -- ---------------------------------------------------------------------
 select is(
     array(
@@ -87,7 +87,7 @@ select results_eq(
     $$select public, file_size_limit, allowed_mime_types from storage.buckets where id = 'seed-assets'$$,
     $$values (false, 26214400::bigint,
               array['application/pdf','image/png','image/jpeg','image/webp']::text[])$$,
-    'seed-assets bucket is private, 25 MB, PDF/PNG/JPEG/WEBP (matches backend/uploads/service.py)'
+    'seed-assets bucket is private, 25 MB, PDF/PNG/JPEG/WEBP (matches backend/app/uploads/service.py)'
 );
 
 -- ---------------------------------------------------------------------
@@ -155,7 +155,7 @@ select throws_ok(
     $$insert into public.nodes (map_id, label, background_color)
       values ('b0000000-0000-0000-0000-000000000001', 'bad colour', 'red')$$,
     '23514', null,
-    'node colours must be #RRGGBB (same rule as llm/validation/schema.py)'
+    'node colours must be #RRGGBB (same rule as llm/mindmap_llm/validation/schema.py)'
 );
 
 -- ---------------------------------------------------------------------
@@ -189,7 +189,7 @@ select lives_ok(
 );
 
 -- ---------------------------------------------------------------------
--- Seed assets (llm/contracts/models.py SeedAssetDraft)
+-- Seed assets (llm/mindmap_llm/contracts/models.py SeedAssetDraft)
 -- ---------------------------------------------------------------------
 select lives_ok(
     $$insert into public.seed_assets (generation_job_id, asset_type, content_text, file_size_bytes)
