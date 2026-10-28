@@ -14,13 +14,14 @@ supabase/
 │   ├── 20260930000100_storage_seed_assets.sql         private "seed-assets" bucket
 │   ├── 20261014000000_upgrade_profiles_rls.sql        users -> profiles, narrow RLS + column grants
 │   ├── 20261014000100_align_backend_db_contract.sql   callback_token_hash, pinecone_vector_id
-│   └── 20261015000000_sync_with_backend_contract.sql  NEW: final alignment with the backend (see below)
+│   └── 20261015000000_sync_with_backend_contract.sql  final alignment with the backend (see below)
 ├── manual/
 │   └── drop_legacy_pgvector_column.sql   OPTIONAL, DESTRUCTIVE, never run by the CLI
 ├── tests/database/      pgTAP tests, run with `supabase test db`
 │   ├── 01_schema_integrity.test.sql
 │   ├── 02_row_level_security.test.sql
-│   └── 03_backend_contract.test.sql      replays the backend's real SQL statements
+│   ├── 03_backend_contract.test.sql      replays the backend's real SQL statements
+│   └── 04_repository_hardening.test.sql  SQL added to backend/db/repository.py (duplicate edges, stale jobs, ...)
 └── seed.sql             Local seed (intentionally empty)
 ```
 
@@ -52,14 +53,18 @@ or `pending -> rejected`), and only one full-map job can be active per map.
 | Anonymous (`anon`) | anon key | Only maps marked `is_public`, plus their nodes and edges (read-only). |
 | LLM worker | none | No database access. |
 
-## What the new migration (20261015000000) changes and why
+The matching Python data-access layer is `backend/db/` (asyncpg): `repository.py`
+holds every SQL statement the backend runs, and `schema.sql` is the same final
+schema as these migrations in one script (for a fresh project set up by hand).
+
+## What migration 20261015000000 changes and why
 
 Every change is driven by the current backend/LLM code. **No table, column or row is dropped.**
 
 | Change | Why (code reference) |
 |---|---|
-| `generation_jobs.status` `varchar(20)` -> `text` | `routes/internal.py` `report_fail()` uses `$2` both as the new status and in `CASE WHEN $2 = 'rejected'`. With asyncpg, Postgres inferred `varchar` and `text` for the same parameter and refused the statement (`42P08`). **Every worker failure callback returned 500**, and the job stayed `running`, so that map was stuck with "Generation already in progress" (409). The CHECK constraint still limits the column to the five allowed values. |
-| `seed-assets` bucket limit 20 MB -> **25 MB**, MIME list = PDF/PNG/JPEG/WEBP, private | `uploads/service.py` accepts up to 25 MB (`MAX_FILE_BYTES`) and only the types `sniff_mime()` returns. Files of 20–25 MB were failing with 502. |
+| `generation_jobs.status` `varchar(20)` -> `text` | `backend/app/api/internal.py` `report_fail()` uses `$2` both as the new status and in `CASE WHEN $2 = 'rejected'`. With asyncpg, Postgres inferred `varchar` and `text` for the same parameter and refused the statement (`42P08`). **Every worker failure callback returned 500**, and the job stayed `running`, so that map was stuck with "Generation already in progress" (409). The CHECK constraint still limits the column to the five allowed values. |
+| `seed-assets` bucket limit 20 MB -> **25 MB**, MIME list = PDF/PNG/JPEG/WEBP, private | `backend/app/uploads/service.py` accepts up to 25 MB (`MAX_FILE_BYTES`) and only the types `sniff_mime()` returns. Files of 20–25 MB were failing with 502. |
 | Storage: only `seed_assets_storage_select_own` (read your own folder) | Uploads and deletes are done by the backend with the service role. |
 | `callback_token_hash` hidden from API users (column-level `GRANT SELECT`) | The column is backend-only, used to authenticate worker callbacks. Owners can still read job status and progress. |
 | Dropped the `public.match_embeddings()` RPC and its HNSW index | Retrieval moved to Pinecone. `repository.hybrid_retrieve()` raises `NotImplementedError`, so nothing called the function, and it was an unnecessary public endpoint. |
@@ -103,6 +108,7 @@ supabase test db        # runs tests/database/*.sql with pgTAP
 * `01_schema_integrity`: every column the backend uses, types, indexes, bucket config, integrity triggers, lifecycle CHECKs, cascades.
 * `02_row_level_security`: owner, other user and anonymous access, column privileges, Storage folder isolation.
 * `03_backend_contract`: the backend's SQL copied verbatim and `PREPARE`d with untyped parameters, as asyncpg does. It runs a full generate -> regenerate -> failures -> delete flow.
+* `04_repository_hardening`: the statements `backend/db/repository.py` uses to survive real worker output and crashed workers (conflict-safe thread creation, duplicate edges skipped, stale-job sweep in `has_active_job()`, lifecycle-safe `update_job_status()`, Storage keys for map deletion), plus the quick-generate and node-regeneration reads.
 
 ## Environment variables (set in `backend/.env`, never committed)
 
@@ -126,12 +132,23 @@ For local CLI Google sign-in only: `SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID` and
 * Storage bucket, RLS, policies and grants are all created by the migrations. No manual steps.
 * Realtime is not required: the frontend polls `GET /api/maps/{id}/jobs/{job_id}`.
 
-## Issues outside `supabase/` (not changed here)
+## Backend data layer (`backend/db/`) — what it handles for the database
 
-These need small code changes in `backend/` or `llm/`. The database is deliberately left strict.
+These were open issues in earlier versions of this README. They are now handled
+in `backend/db/repository.py` (no schema change needed; the database stays strict):
 
-1. **`backend/db/schema.sql` is out of date** and is still referenced as a setup script in the top-level `README.md`. It declares `generation_jobs.status VARCHAR(20)`, which reproduces the `report_fail` bug above. It also lacks the 25 MB bucket limit and the new indexes. *Minimum change:* point the README at `supabase db push`, and change `status VARCHAR(20)` to `status TEXT` in `schema.sql` (or regenerate it from the migrations).
-2. **Duplicate edges from the LLM.** `llm/validation/schema.py` does not reject two identical edges (same source, target and label), but the database does (`uq_edges_source_target_label`). Such a result makes `/internal/jobs/{id}/complete` fail with 500 and leaves the job `running`. *Minimum change:* de-duplicate edges in `resolve_to_records()`, or before `persist_generated_graph()` in `routes/internal.py`.
-3. **`node_type` length.** `nodes.node_type` is `varchar(50)`, but `NodeDraft.node_type` / `_DraftNode.node_type` are unbounded strings. *Minimum change:* add `max_length=50` to `_DraftNode.node_type`.
-4. **Storage files are not removed when a map is deleted.** `DELETE /api/maps/{id}` cascades all rows, but the files under `seed-assets/<user_id>/<map_id>/` remain. Storage objects should be removed through the Storage API, not SQL. *Minimum change:* in `delete_map`, list and `admin.storage.from_("seed-assets").remove(...)` that prefix.
-5. **Minor:** `get_or_create_chat_thread()` can race on the first request for a map (unique `chat_threads.map_id`). `INSERT ... ON CONFLICT (map_id) DO NOTHING` plus a re-select would make it idempotent.
+| Issue | Fix in `backend/db/` |
+|---|---|
+| `schema.sql` out of date (`status VARCHAR(20)` reproduced the `report_fail` 42P08 bug; old 20 MB bucket; missing indexes; `callback_token_hash` readable by API users) | `schema.sql` now equals the migrated schema (checked by building both and comparing every column, constraint, index, policy, trigger, function and grant). |
+| Duplicate edges from the LLM (`uq_edges_source_target_label`) made `/internal/jobs/{id}/complete` fail with 500 and left the job `running` | `persist_generated_graph()` drops exact duplicates and self-loops and inserts edges with `ON CONFLICT DO NOTHING`. |
+| `node_type` (varchar 50), `label` (255), edge `label` (100) and colours are unbounded in `NodeDraft` / `EdgeDraft` | Clipped / validated to the column limits before insert (invalid colours become NULL). |
+| `get_or_create_chat_thread()` race on the first request for a map | `INSERT ... ON CONFLICT (map_id) DO NOTHING` + re-select. |
+| A crashed worker (no callback) left the job `running` forever, so the map returned 409 "Generation already in progress" for good | `has_active_job()` closes generate/regenerate_full jobs older than `GENERATION_JOB_STALE_AFTER_S` (default 1800 s, well above `ARQ_JOB_TIMEOUT_S` = 300 s) in the same statement: never-started jobs become `rejected`, started ones `failed`. |
+| `update_job_status()` could write a lifecycle-invalid row (e.g. `COMPLETED` without progress 100, `FAILED` before `started_at`) | Each target status now sets exactly what `chk_generation_job_lifecycle` requires. |
+| Storage files were not removed when a map is deleted | `delete_mind_map()` deletes the map and returns its `seed-assets` keys, so a route can remove them with `admin.storage.from_("seed-assets").remove(keys)`. |
+
+## Notes for other parts of the project (not changed here)
+
+1. `backend/app/maps/routes.py` `delete_map` still runs its own `DELETE`; switching it to `db.repository.delete_mind_map()` and removing the returned keys from Storage would clean up uploaded files.
+2. `backend/Dockerfile` copies only `app/`, and `asyncpg` is not listed in `backend/pyproject.toml`; the image needs both `db/` and `asyncpg` to reach the database.
+3. The top-level and `backend/README.md` setup steps should prefer `supabase db push` over pasting `backend/db/schema.sql` (both now produce the same schema).

@@ -1,6 +1,6 @@
 -- =====================================================================
 -- Mind Map Generator — Database Schema (v3, Supabase Auth)
--- PostgreSQL 15+ on Supabase, with pgvector
+-- PostgreSQL 15+ on Supabase (vectors live in Pinecone, not pgvector)
 -- Group 15, IT314 Software Engineering
 --
 -- What changed from v2 (full list in the migration summary document):
@@ -20,10 +20,20 @@
 --     a job) failed with a CHECK violation (see section 6).
 --
 -- Unchanged from v2: every other table, column, CHECK constraint,
--- index, the pgvector/HNSW setup and all same-map integrity triggers.
+-- index and all same-map integrity triggers.
 --
--- Run this whole file once in the Supabase SQL Editor of a fresh
--- project (it runs as the "postgres" role).
+-- Source of truth: supabase/migrations/ (apply with `supabase db push`;
+-- see supabase/README.md). This file is the SAME final schema as one
+-- script, kept in sync with those migrations, for a fresh project set up
+-- by hand. Differences from a migrated database: none, except that a
+-- migrated database also keeps the deprecated, always-NULL pgvector column
+-- public.embeddings.embedding (vectors live in Pinecone).
+--
+-- Run this whole file ONCE in the Supabase SQL Editor of a FRESH project
+-- (it runs as the "postgres" role). If you do, mark the migrations as
+-- applied before any later `supabase db push`:
+--   supabase migration repair --status applied 20260930000000 20260930000100 \
+--     20261014000000 20261014000100 20261015000000
 -- =====================================================================
 
 -- On Supabase, extensions live in the "extensions" schema.
@@ -134,6 +144,8 @@ CREATE TABLE public.mind_maps (
 );
 
 CREATE INDEX idx_mind_maps_user_id_created ON public.mind_maps (user_id, created_at DESC);
+-- GET /api/maps: WHERE user_id = $1 ORDER BY updated_at DESC
+CREATE INDEX idx_mind_maps_user_id_updated ON public.mind_maps (user_id, updated_at DESC);
 
 CREATE TRIGGER trg_mind_maps_updated_at
     BEFORE UPDATE ON public.mind_maps
@@ -220,7 +232,10 @@ CREATE TABLE public.generation_jobs (
                       CHECK (job_type IN ('generate', 'regenerate_full', 'regenerate_node')),
     target_node_id    UUID,   -- FK to nodes(id) added below, after nodes exists
 
-    status            VARCHAR(20) NOT NULL DEFAULT 'pending'
+    -- TEXT, not VARCHAR: internal.report_fail() binds one parameter both as
+    -- the new status and in "CASE WHEN $2 = 'rejected'"; with a VARCHAR
+    -- column asyncpg's statement fails with 42P08 (inconsistent types).
+    status            TEXT NOT NULL DEFAULT 'pending'
                       CHECK (status IN ('pending', 'running', 'completed', 'failed', 'rejected')),
     progress_percent  INT NOT NULL DEFAULT 0 CHECK (progress_percent BETWEEN 0 AND 100),
     error_message     TEXT,
@@ -272,9 +287,16 @@ CREATE TABLE public.generation_jobs (
     )
 );
 
-CREATE INDEX idx_generation_jobs_map_id          ON public.generation_jobs (map_id);
+-- (map_id, created_at DESC) serves latest-job polling, has_active_job()
+-- and the ON DELETE CASCADE from mind_maps.
+CREATE INDEX idx_generation_jobs_map_id_created  ON public.generation_jobs (map_id, created_at DESC);
 CREATE INDEX idx_generation_jobs_status_created  ON public.generation_jobs (status, created_at);
 CREATE INDEX idx_generation_jobs_target_node_id  ON public.generation_jobs (target_node_id);
+CREATE INDEX idx_generation_jobs_triggered_by_message_id
+    ON public.generation_jobs (triggered_by_message_id);
+
+COMMENT ON COLUMN public.generation_jobs.callback_token_hash IS
+    'SHA-256 hex digest of the per-job worker callback bearer token. Backend-only; not readable by API users.';
 
 -- At most one active full-map generation/regeneration per map at a time;
 -- node-level regens may run concurrently for different nodes.
@@ -768,9 +790,15 @@ GRANT SELECT, INSERT, DELETE ON public.edges TO authenticated;
 GRANT UPDATE (source_node_id, target_node_id, label, edge_data)
     ON public.edges TO authenticated;
 
-GRANT SELECT ON public.chat_threads, public.chat_messages, public.generation_jobs,
+GRANT SELECT ON public.chat_threads, public.chat_messages,
                 public.seed_assets, public.embeddings
     TO authenticated;
+
+-- Jobs: owners may read status/progress, but never callback_token_hash
+-- (the secret the worker callbacks are authenticated with).
+GRANT SELECT (id, map_id, triggered_by_message_id, job_type, target_node_id, status,
+              progress_percent, error_message, created_at, started_at, completed_at)
+    ON public.generation_jobs TO authenticated;
 
 -- service_role (server-side only, bypasses RLS) keeps full access.
 GRANT ALL ON
@@ -787,9 +815,15 @@ TO service_role;
 -- Uploads are done by the FastAPI backend (it must parse the file anyway,
 -- DR-02); users may only READ files inside their own <user_id>/ folder.
 -- =====================================================================
-INSERT INTO storage.buckets (id, name, public)
-VALUES ('seed-assets', 'seed-assets', FALSE)
-ON CONFLICT (id) DO NOTHING;
+-- 25 MB and the MIME types match backend/app/uploads/service.py
+-- (MAX_FILE_BYTES, sniff_mime()).
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES ('seed-assets', 'seed-assets', FALSE, 26214400,
+        ARRAY['application/pdf', 'image/png', 'image/jpeg', 'image/webp'])
+ON CONFLICT (id) DO UPDATE
+    SET public             = FALSE,
+        file_size_limit    = EXCLUDED.file_size_limit,
+        allowed_mime_types = EXCLUDED.allowed_mime_types;
 
 CREATE POLICY seed_assets_storage_select_own ON storage.objects
     FOR SELECT TO authenticated

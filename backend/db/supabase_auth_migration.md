@@ -2,7 +2,16 @@
 
 Group 15 · IT314 Software Engineering
 
-Companion SQL: [mindmap_schema_supabase.sql](./mindmap_schema_supabase.sql) (replaces [mindmap_schema.sql](./mindmap_schema.sql))
+Companion SQL: [schema.sql](./schema.sql) (same final schema as [`supabase/migrations/`](../../supabase/migrations/), which is the source of truth).
+
+> **Status (Oct 2026).** This is the design record for the switch to Supabase Auth. It still describes the
+> identity model, tables and RLS correctly. Two things changed afterwards:
+> - **Vectors moved to Pinecone.** `embeddings` keeps chunk text + `pinecone_vector_id` for provenance only;
+>   the pgvector column, HNSW index and `match_embeddings()` are retired (migration `20261015000000`).
+> - **Auth goes through the FastAPI backend** (`backend/app/auth/service.py`: `/auth/login`, `/auth/signup`,
+>   `/auth/google`), which calls Supabase Auth and sets HttpOnly cookies; the frontend does not use supabase-js.
+>   The backend reaches Postgres with asyncpg (`backend/db/`), and Storage/`/me` with the service-role client.
+> Where §3–§5 below say otherwise, the code and `supabase/README.md` win.
 
 ---
 
@@ -57,15 +66,15 @@ public.mind_maps.user_id       ← the ONLY place ownership is stored
 | **seed_assets** | `generation_job_id`, `asset_type`, `storage_key`, `content_text`, … | `id` | `generation_job_id → generation_jobs` CASCADE | storage/size/checksum CHECKs | Uploaded PDFs/images/text for a seed; files in private Storage bucket |
 | **nodes** | `map_id`, `label`, `pos_x/y`, colours, `width/height`, `node_type`, `source_job_id`, `node_data` | `id` | `map_id → mind_maps` CASCADE; `source_job_id → generation_jobs` SET NULL | colour/dimension CHECKs; same-map trigger | Mind-map concepts |
 | **edges** | `map_id`, `source_node_id`, `target_node_id`, `label`, `edge_data` | `id` | `map_id → mind_maps`; both node FKs → `nodes` CASCADE | no self-loop; unique (src, tgt, label) NULLS NOT DISTINCT; same-map trigger | Relationships between nodes |
-| **embeddings** | `generation_job_id`, `map_id`, `chunk_text`, `embedding vector(1536)`, `embedding_model`, `source`, `source_url` | `id` | job → `generation_jobs` CASCADE; `map_id → mind_maps` CASCADE | source/url CHECK; HNSW cosine index; same-map trigger | RAG retrieval chunks (pgvector) |
+| **embeddings** | `generation_job_id`, `map_id`, `chunk_text`, `pinecone_vector_id`, `embedding_model`, `source`, `source_url` | `id` | job → `generation_jobs` CASCADE; `map_id → mind_maps` CASCADE | source/url CHECK; same-map trigger | Provenance of RAG chunks (vectors live in Pinecone, namespace = `map_id`) |
 
-Unchanged: every other column, CHECK constraint, index, the pgvector/HNSW index and all same-map integrity triggers.
+Unchanged: every other column, CHECK constraint, index and all same-map integrity triggers.
 
 ---
 
 ## 3. Complete SQL
 
-See **[mindmap_schema_supabase.sql](./mindmap_schema_supabase.sql)** — run it once in the Supabase SQL Editor of a fresh project. Sections:
+Preferred: `supabase db push` (applies `supabase/migrations/`). Alternative for a fresh project: run **[schema.sql](./schema.sql)** once in the Supabase SQL Editor. Sections:
 
 0. `set_updated_at` trigger · 1. `profiles` + sign-up trigger · 2. (sessions removed) · 3–10. tables · 11. same-map integrity triggers · 12. RLS helpers + policies · 13. table/column privileges · 14. private Storage bucket · 15. `langgraph` schema · 16. design notes.
 
@@ -139,7 +148,7 @@ FastAPI ──► 3. verify JWT → user_id = claims["sub"]
 
 ```python
 # auth.py
-import jwt                      # pip install "pyjwt[crypto]"
+import jwt  # pip install "pyjwt[crypto]"
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
@@ -147,15 +156,21 @@ SUPABASE_URL = settings.SUPABASE_URL
 jwks = jwt.PyJWKClient(f"{SUPABASE_URL}/auth/v1/.well-known/jwks.json")
 bearer = HTTPBearer()
 
+
 def current_user_id(cred: HTTPAuthorizationCredentials = Depends(bearer)) -> str:
     token = cred.credentials
     try:
         key = jwks.get_signing_key_from_jwt(token).key
-        claims = jwt.decode(token, key, algorithms=["ES256", "RS256"],
-                            audience="authenticated", issuer=f"{SUPABASE_URL}/auth/v1")
+        claims = jwt.decode(
+            token,
+            key,
+            algorithms=["ES256", "RS256"],
+            audience="authenticated",
+            issuer=f"{SUPABASE_URL}/auth/v1",
+        )
     except jwt.PyJWTError:
         raise HTTPException(401, "Invalid or expired token")
-    return claims["sub"]          # == auth.users.id == profiles.id
+    return claims["sub"]  # == auth.users.id == profiles.id
 ```
   *(Older projects that still use the legacy shared JWT secret verify with `algorithms=["HS256"]` and the project's JWT secret instead of JWKS. Alternative for beginners: `supabase.auth.get_user(token)` — simpler but makes a network call per request.)*
 
@@ -163,12 +178,15 @@ def current_user_id(cred: HTTPAuthorizationCredentials = Depends(bearer)) -> str
 - **Creating a mind map:**
 ```python
 @router.post("/maps")
-def create_map(body: MapIn, uid: str = Depends(current_user_id), db = Depends(get_db)):
-    map_id = db.execute(text(
-        "INSERT INTO mind_maps (user_id, title) VALUES (:uid, :title) RETURNING id"),
-        {"uid": uid, "title": body.title}).scalar_one()
-    db.execute(text("INSERT INTO chat_threads (map_id, user_id) VALUES (:m, :uid)"),
-               {"m": map_id, "uid": uid})
+def create_map(body: MapIn, uid: str = Depends(current_user_id), db=Depends(get_db)):
+    map_id = db.execute(
+        text("INSERT INTO mind_maps (user_id, title) VALUES (:uid, :title) RETURNING id"),
+        {"uid": uid, "title": body.title},
+    ).scalar_one()
+    db.execute(
+        text("INSERT INTO chat_threads (map_id, user_id) VALUES (:m, :uid)"),
+        {"m": map_id, "uid": uid},
+    )
     db.commit()
     return {"id": map_id}
 ```
@@ -176,10 +194,12 @@ def create_map(body: MapIn, uid: str = Depends(current_user_id), db = Depends(ge
 
 - **`auth.uid()` vs the backend:** `auth.uid()` reads the JWT that PostgREST puts into the DB session. A FastAPI **direct** Postgres connection has no JWT, so there `auth.uid()` is `NULL` and **RLS is bypassed** (the `postgres` role owns the tables). Therefore the backend must add `WHERE user_id = :uid` (or check map ownership) to every query. Use one reusable check:
 ```python
-def get_owned_map(map_id: UUID, uid = Depends(current_user_id), db = Depends(get_db)):
-    ok = db.execute(text("SELECT 1 FROM mind_maps WHERE id=:m AND user_id=:u"),
-                    {"m": map_id, "u": uid}).first()
-    if not ok: raise HTTPException(404, "Map not found")   # 404, don't reveal existence
+def get_owned_map(map_id: UUID, uid=Depends(current_user_id), db=Depends(get_db)):
+    ok = db.execute(
+        text("SELECT 1 FROM mind_maps WHERE id=:m AND user_id=:u"), {"m": map_id, "u": uid}
+    ).first()
+    if not ok:
+        raise HTTPException(404, "Map not found")  # 404, don't reveal existence
     return map_id
 ```
   Every route that touches nodes/edges/jobs/chat/embeddings depends on `get_owned_map`. Vector search must include `WHERE map_id = :m` (`ORDER BY embedding <=> :q LIMIT k`).
