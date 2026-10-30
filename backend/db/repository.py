@@ -6,7 +6,7 @@ All SQL operations are centralized here.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, List, Optional
+from typing import Any
 from uuid import UUID
 
 import asyncpg
@@ -49,16 +49,18 @@ def _row_to_job(row: asyncpg.Record) -> GenerationJob:
 # Mind Maps & Ownership
 # ---------------------------------------------------------------------
 
+
 async def create_mind_map(conn: asyncpg.Connection, user_id: UUID, title: str = "Untitled mind map") -> dict:
     row = await conn.fetchrow(
         "INSERT INTO public.mind_maps (user_id, title) VALUES ($1, $2) "
         "RETURNING id, title, is_public, created_at, updated_at",
-        user_id, title.strip(),
+        user_id,
+        title.strip(),
     )
     return dict(row)
 
 
-async def list_mind_maps(conn: asyncpg.Connection, user_id: UUID) -> List[dict]:
+async def list_mind_maps(conn: asyncpg.Connection, user_id: UUID) -> list[dict]:
     rows = await conn.fetch(
         "SELECT id, title, is_public, created_at, updated_at FROM public.mind_maps "
         "WHERE user_id = $1 ORDER BY updated_at DESC",
@@ -67,7 +69,7 @@ async def list_mind_maps(conn: asyncpg.Connection, user_id: UUID) -> List[dict]:
     return [dict(r) for r in rows]
 
 
-async def get_mind_map(conn: asyncpg.Connection, map_id: UUID) -> Optional[dict]:
+async def get_mind_map(conn: asyncpg.Connection, map_id: UUID) -> dict | None:
     row = await conn.fetchrow(
         "SELECT id, user_id, title, is_public, created_at, updated_at FROM public.mind_maps WHERE id = $1",
         map_id,
@@ -76,9 +78,7 @@ async def get_mind_map(conn: asyncpg.Connection, map_id: UUID) -> Optional[dict]
 
 
 async def assert_map_owner(conn: asyncpg.Connection, map_id: UUID, user_id: UUID) -> bool:
-    ok = await conn.fetchval(
-        "SELECT 1 FROM public.mind_maps WHERE id = $1 AND user_id = $2", map_id, user_id
-    )
+    ok = await conn.fetchval("SELECT 1 FROM public.mind_maps WHERE id = $1 AND user_id = $2", map_id, user_id)
     return bool(ok)
 
 
@@ -86,13 +86,15 @@ async def assert_map_owner(conn: asyncpg.Connection, map_id: UUID, user_id: UUID
 # Chat Threads & Messages
 # ---------------------------------------------------------------------
 
+
 async def get_or_create_chat_thread(conn: asyncpg.Connection, map_id: UUID, user_id: UUID) -> UUID:
     row = await conn.fetchrow("SELECT id FROM public.chat_threads WHERE map_id = $1", map_id)
     if row:
         return row["id"]
     row = await conn.fetchrow(
         "INSERT INTO public.chat_threads (map_id, user_id) VALUES ($1, $2) RETURNING id",
-        map_id, user_id,
+        map_id,
+        user_id,
     )
     return row["id"]
 
@@ -100,12 +102,14 @@ async def get_or_create_chat_thread(conn: asyncpg.Connection, map_id: UUID, user
 async def insert_chat_message(conn: asyncpg.Connection, thread_id: UUID, role: str, content: str) -> UUID:
     row = await conn.fetchrow(
         "INSERT INTO public.chat_messages (thread_id, role, content) VALUES ($1, $2, $3) RETURNING id",
-        thread_id, role, content,
+        thread_id,
+        role,
+        content,
     )
     return row["id"]
 
 
-async def get_chat_messages(conn: asyncpg.Connection, map_id: UUID) -> List[dict]:
+async def get_chat_messages(conn: asyncpg.Connection, map_id: UUID) -> list[dict]:
     rows = await conn.fetch(
         """SELECT m.id, m.role, m.content, m.created_at
              FROM public.chat_messages m JOIN public.chat_threads t ON t.id = m.thread_id
@@ -119,13 +123,16 @@ async def get_chat_messages(conn: asyncpg.Connection, map_id: UUID) -> List[dict
 # Generation Jobs
 # ---------------------------------------------------------------------
 
+
 async def has_active_job(conn: asyncpg.Connection, map_id: UUID) -> bool:
-    return bool(await conn.fetchval(
-        """SELECT 1 FROM public.generation_jobs
+    return bool(
+        await conn.fetchval(
+            """SELECT 1 FROM public.generation_jobs
             WHERE map_id = $1 AND job_type IN ('generate', 'regenerate_full')
               AND status IN ('pending', 'running') LIMIT 1""",
-        map_id,
-    ))
+            map_id,
+        )
+    )
 
 
 async def create_generation_job(
@@ -147,7 +154,12 @@ async def create_generation_job(
                 VALUES ($1, $2, $3, $4, $5, $6)
                 RETURNING *
                 """,
-                job_id, map_id, triggered_by_message_id, job_type_str, target_node_id, callback_token_hash,
+                job_id,
+                map_id,
+                triggered_by_message_id,
+                job_type_str,
+                target_node_id,
+                callback_token_hash,
             )
         else:
             row = await conn.fetchrow(
@@ -156,7 +168,11 @@ async def create_generation_job(
                 VALUES ($1, $2, $3, $4, $5)
                 RETURNING *
                 """,
-                map_id, triggered_by_message_id, job_type_str, target_node_id, callback_token_hash,
+                map_id,
+                triggered_by_message_id,
+                job_type_str,
+                target_node_id,
+                callback_token_hash,
             )
     except asyncpg.UniqueViolationError as exc:
         if "uq_generation_jobs_active_full_map" in str(exc):
@@ -210,7 +226,8 @@ async def update_job_progress(conn: asyncpg.Connection, job_id: UUID, percent: i
     percent = max(0, min(99, percent))
     await conn.execute(
         "UPDATE public.generation_jobs SET progress_percent = $2 WHERE id = $1 AND status = 'running'",
-        job_id, percent,
+        job_id,
+        percent,
     )
 
 
@@ -232,7 +249,8 @@ async def mark_job_failed(conn: asyncpg.Connection, job_id: UUID, error_message:
         SET status = 'failed', completed_at = NOW(), error_message = $2
         WHERE id = $1 AND status = 'running'
         """,
-        job_id, error_message[:4000],
+        job_id,
+        error_message[:4000],
     )
 
 
@@ -243,12 +261,12 @@ async def mark_job_rejected(conn: asyncpg.Connection, job_id: UUID, error_messag
         SET status = 'rejected', completed_at = NOW(), error_message = $2
         WHERE id = $1 AND status = 'pending'
         """,
-        job_id, error_message[:4000],
+        job_id,
+        error_message[:4000],
     )
 
 
-
-async def get_latest_job(conn: asyncpg.Connection, map_id: UUID) -> Optional[dict]:
+async def get_latest_job(conn: asyncpg.Connection, map_id: UUID) -> dict | None:
     row = await conn.fetchrow(
         """SELECT id, map_id, job_type, status, progress_percent, error_message, created_at, started_at, completed_at
              FROM public.generation_jobs WHERE map_id = $1 ORDER BY created_at DESC LIMIT 1""",
@@ -262,11 +280,12 @@ async def get_latest_job(conn: asyncpg.Connection, map_id: UUID) -> Optional[dic
     return d
 
 
-async def get_job(conn: asyncpg.Connection, map_id: UUID, job_id: UUID) -> Optional[dict]:
+async def get_job(conn: asyncpg.Connection, map_id: UUID, job_id: UUID) -> dict | None:
     row = await conn.fetchrow(
         """SELECT id, map_id, job_type, status, progress_percent, error_message, created_at, started_at, completed_at
              FROM public.generation_jobs WHERE id = $1 AND map_id = $2""",
-        job_id, map_id,
+        job_id,
+        map_id,
     )
     if not row:
         return None
@@ -280,11 +299,12 @@ async def get_job(conn: asyncpg.Connection, map_id: UUID, job_id: UUID) -> Optio
 # Graph Persistence (Nodes & Edges)
 # ---------------------------------------------------------------------
 
+
 async def persist_generated_graph(
     conn: asyncpg.Connection,
     *,
     map_id: UUID,
-    source_job_id: Optional[UUID],
+    source_job_id: UUID | None,
     nodes: list[NodeRecord],
     edges: list[EdgeRecord],
 ) -> None:
@@ -299,8 +319,17 @@ async def persist_generated_graph(
             """,
             [
                 (
-                    n.id, map_id, n.label, n.description, n.pos_x, n.pos_y,
-                    n.background_color, n.text_color, n.node_type, source_job_id, n.node_data,
+                    n.id,
+                    map_id,
+                    n.label,
+                    n.description,
+                    n.pos_x,
+                    n.pos_y,
+                    n.background_color,
+                    n.text_color,
+                    n.node_type,
+                    source_job_id,
+                    n.node_data,
                 )
                 for n in nodes
             ],
@@ -319,7 +348,7 @@ async def replace_map_graph(
     conn: asyncpg.Connection,
     *,
     map_id: UUID,
-    source_job_id: Optional[UUID],
+    source_job_id: UUID | None,
     nodes: list[NodeRecord],
     edges: list[EdgeRecord],
 ) -> None:
@@ -351,6 +380,7 @@ async def get_map_graph(conn: asyncpg.Connection, map_id: UUID) -> dict:
 # Seed Assets & Embeddings (Optional RAG persistence)
 # ---------------------------------------------------------------------
 
+
 async def insert_seed_asset(
     conn: asyncpg.Connection,
     *,
@@ -371,14 +401,24 @@ async def insert_seed_asset(
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         RETURNING *
         """,
-        generation_job_id, asset_type.value, file_name, storage_key, mime_type,
-        content_text, file_size_bytes, checksum_sha256,
+        generation_job_id,
+        asset_type.value,
+        file_name,
+        storage_key,
+        mime_type,
+        content_text,
+        file_size_bytes,
+        checksum_sha256,
     )
     return SeedAsset(
-        id=row["id"], generation_job_id=row["generation_job_id"],
-        asset_type=SeedAssetType(row["asset_type"]), file_name=row["file_name"],
-        storage_key=row["storage_key"], mime_type=row["mime_type"],
-        content_text=row["content_text"], file_size_bytes=row["file_size_bytes"],
+        id=row["id"],
+        generation_job_id=row["generation_job_id"],
+        asset_type=SeedAssetType(row["asset_type"]),
+        file_name=row["file_name"],
+        storage_key=row["storage_key"],
+        mime_type=row["mime_type"],
+        content_text=row["content_text"],
+        file_size_bytes=row["file_size_bytes"],
         checksum_sha256=row["checksum_sha256"],
     )
 
@@ -396,8 +436,14 @@ async def insert_embeddings(conn: asyncpg.Connection, records: list[EmbeddingRec
         """,
         [
             (
-                r.generation_job_id, r.map_id, r.chunk_text, r.pinecone_vector_id, r.embedding_model,
-                r.source.value, r.source_title, r.source_url,
+                r.generation_job_id,
+                r.map_id,
+                r.chunk_text,
+                r.pinecone_vector_id,
+                r.embedding_model,
+                r.source.value,
+                r.source_title,
+                r.source_url,
                 datetime.utcnow() if r.source != EmbeddingSource.UPLOADED_SEED else None,
             )
             for r in records
@@ -425,11 +471,16 @@ async def insert_embedding(
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         RETURNING id
         """,
-        generation_job_id, map_id, chunk_text, pinecone_vector_id, embedding_model,
-        source.value, source_title, source_url,
+        generation_job_id,
+        map_id,
+        chunk_text,
+        pinecone_vector_id,
+        embedding_model,
+        source.value,
+        source_title,
+        source_url,
     )
     return row["id"]
-
 
 
 async def mark_seed_asset_extracted(
@@ -446,7 +497,10 @@ async def mark_seed_asset_extracted(
             checksum_sha256 = COALESCE($4, checksum_sha256)
         WHERE id = $1
         """,
-        asset_id, content_text, file_size_bytes, checksum_sha256,
+        asset_id,
+        content_text,
+        file_size_bytes,
+        checksum_sha256,
     )
 
 
@@ -464,10 +518,15 @@ async def get_map_embeddings(conn: asyncpg.Connection, map_id: UUID) -> list[Emb
     )
     return [
         EmbeddingRecord(
-            id=r["id"], generation_job_id=r["generation_job_id"], map_id=r["map_id"],
-            chunk_text=r["chunk_text"], pinecone_vector_id=r["pinecone_vector_id"],
-            embedding_model=r["embedding_model"], source=EmbeddingSource(r["source"]),
-            source_title=r["source_title"], source_url=r["source_url"],
+            id=r["id"],
+            generation_job_id=r["generation_job_id"],
+            map_id=r["map_id"],
+            chunk_text=r["chunk_text"],
+            pinecone_vector_id=r["pinecone_vector_id"],
+            embedding_model=r["embedding_model"],
+            source=EmbeddingSource(r["source"]),
+            source_title=r["source_title"],
+            source_url=r["source_url"],
         )
         for r in rows
     ]
@@ -485,5 +544,3 @@ async def hybrid_retrieve(
     raise NotImplementedError(
         "PostgreSQL pgvector hybrid retrieval is deprecated. Vector search is now executed via PineconeVectorStore in the worker."
     )
-
-

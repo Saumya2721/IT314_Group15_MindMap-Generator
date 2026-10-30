@@ -139,7 +139,7 @@ FastAPI ──► 3. verify JWT → user_id = claims["sub"]
 
 ```python
 # auth.py
-import jwt                      # pip install "pyjwt[crypto]"
+import jwt  # pip install "pyjwt[crypto]"
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
@@ -147,15 +147,17 @@ SUPABASE_URL = settings.SUPABASE_URL
 jwks = jwt.PyJWKClient(f"{SUPABASE_URL}/auth/v1/.well-known/jwks.json")
 bearer = HTTPBearer()
 
+
 def current_user_id(cred: HTTPAuthorizationCredentials = Depends(bearer)) -> str:
     token = cred.credentials
     try:
         key = jwks.get_signing_key_from_jwt(token).key
-        claims = jwt.decode(token, key, algorithms=["ES256", "RS256"],
-                            audience="authenticated", issuer=f"{SUPABASE_URL}/auth/v1")
+        claims = jwt.decode(
+            token, key, algorithms=["ES256", "RS256"], audience="authenticated", issuer=f"{SUPABASE_URL}/auth/v1"
+        )
     except jwt.PyJWTError:
         raise HTTPException(401, "Invalid or expired token")
-    return claims["sub"]          # == auth.users.id == profiles.id
+    return claims["sub"]  # == auth.users.id == profiles.id
 ```
   *(Older projects that still use the legacy shared JWT secret verify with `algorithms=["HS256"]` and the project's JWT secret instead of JWKS. Alternative for beginners: `supabase.auth.get_user(token)` — simpler but makes a network call per request.)*
 
@@ -163,12 +165,12 @@ def current_user_id(cred: HTTPAuthorizationCredentials = Depends(bearer)) -> str
 - **Creating a mind map:**
 ```python
 @router.post("/maps")
-def create_map(body: MapIn, uid: str = Depends(current_user_id), db = Depends(get_db)):
-    map_id = db.execute(text(
-        "INSERT INTO mind_maps (user_id, title) VALUES (:uid, :title) RETURNING id"),
-        {"uid": uid, "title": body.title}).scalar_one()
-    db.execute(text("INSERT INTO chat_threads (map_id, user_id) VALUES (:m, :uid)"),
-               {"m": map_id, "uid": uid})
+def create_map(body: MapIn, uid: str = Depends(current_user_id), db=Depends(get_db)):
+    map_id = db.execute(
+        text("INSERT INTO mind_maps (user_id, title) VALUES (:uid, :title) RETURNING id"),
+        {"uid": uid, "title": body.title},
+    ).scalar_one()
+    db.execute(text("INSERT INTO chat_threads (map_id, user_id) VALUES (:m, :uid)"), {"m": map_id, "uid": uid})
     db.commit()
     return {"id": map_id}
 ```
@@ -176,10 +178,10 @@ def create_map(body: MapIn, uid: str = Depends(current_user_id), db = Depends(ge
 
 - **`auth.uid()` vs the backend:** `auth.uid()` reads the JWT that PostgREST puts into the DB session. A FastAPI **direct** Postgres connection has no JWT, so there `auth.uid()` is `NULL` and **RLS is bypassed** (the `postgres` role owns the tables). Therefore the backend must add `WHERE user_id = :uid` (or check map ownership) to every query. Use one reusable check:
 ```python
-def get_owned_map(map_id: UUID, uid = Depends(current_user_id), db = Depends(get_db)):
-    ok = db.execute(text("SELECT 1 FROM mind_maps WHERE id=:m AND user_id=:u"),
-                    {"m": map_id, "u": uid}).first()
-    if not ok: raise HTTPException(404, "Map not found")   # 404, don't reveal existence
+def get_owned_map(map_id: UUID, uid=Depends(current_user_id), db=Depends(get_db)):
+    ok = db.execute(text("SELECT 1 FROM mind_maps WHERE id=:m AND user_id=:u"), {"m": map_id, "u": uid}).first()
+    if not ok:
+        raise HTTPException(404, "Map not found")  # 404, don't reveal existence
     return map_id
 ```
   Every route that touches nodes/edges/jobs/chat/embeddings depends on `get_owned_map`. Vector search must include `WHERE map_id = :m` (`ORDER BY embedding <=> :q LIMIT k`).
