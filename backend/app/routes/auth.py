@@ -1,6 +1,5 @@
 """Authentication routes. Business logic and schemas are isolated in auth/."""
 
-
 from auth.schemas import (
     ForgotPasswordRequest,
     GoogleCallbackRequest,
@@ -38,9 +37,7 @@ def login(user: UserCredentials, response: Response):
 
 @router.get("/google", status_code=200)
 def google_login(
-    redirect_to: str | None = Query(
-        None, description="Custom redirect URL after Google sign-in"
-    ),
+    redirect_to: str | None = Query(None, description="Custom redirect URL after Google sign-in"),
 ):
     auth_url = AuthService.get_google_auth_url(redirect_to=redirect_to)
     return {"google_auth_url": auth_url}
