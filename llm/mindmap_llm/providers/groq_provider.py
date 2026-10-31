@@ -30,8 +30,7 @@ class GroqProvider(LLMProvider):
             )  # local import: don't require the SDK unless this provider is selected
         except ImportError as exc:  # pragma: no cover
             raise RuntimeError(
-                "groq package not installed. `pip install groq` "
-                "or select a different LLM_PROVIDER."
+                "groq package not installed. `pip install groq` or select a different LLM_PROVIDER."
             ) from exc
 
         client_kwargs: dict[str, Any] = {"api_key": api_key, "timeout": timeout_s}
@@ -44,9 +43,7 @@ class GroqProvider(LLMProvider):
     def name(self) -> str:
         return f"groq:{self._model}"
 
-    def _to_groq_messages(
-        self, messages: list[Message], system: str | None = None
-    ) -> list[dict[str, Any]]:
+    def _to_groq_messages(self, messages: list[Message], system: str | None = None) -> list[dict[str, Any]]:
         """Convert vendor-neutral Messages to Groq/OpenAI chat format."""
         out: list[dict[str, Any]] = []
         if system:
@@ -64,9 +61,7 @@ class GroqProvider(LLMProvider):
                 out.append({"role": m.role, "content": m.content})
         return out
 
-    def _to_groq_tools(
-        self, tools: list[ToolSpec] | None
-    ) -> list[dict[str, Any]] | None:
+    def _to_groq_tools(self, tools: list[ToolSpec] | None) -> list[dict[str, Any]] | None:
         """Convert vendor-neutral ToolSpecs to Groq/OpenAI function-calling format."""
         if not tools:
             return None

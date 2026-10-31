@@ -32,36 +32,28 @@ class LLMBackedDecisionModel(DecisionModel):
     async def health_check(self) -> bool:
         return True  # if the LLM provider is wired up, assume reachable
 
-    async def classify(
-        self, *, state: str, question: str, labels: list[str]
-    ) -> ClassifyResult:
+    async def classify(self, *, state: str, question: str, labels: list[str]) -> ClassifyResult:
         prompt = (
             f"Context:\n{state}\n\n"
             f"Question: {question}\n"
             f"Respond with ONLY one of these labels, nothing else: {', '.join(labels)}"
         )
-        resp = await self._llm.generate(
-            [Message(role="user", content=prompt)], max_tokens=20, temperature=0.0
-        )
+        resp = await self._llm.generate([Message(role="user", content=prompt)], max_tokens=20, temperature=0.0)
         raw = (resp.text or "").strip().lower()
-        chosen = next((l for l in labels if l.lower() in raw), labels[0])
+        chosen = next((lbl for lbl in labels if lbl.lower() in raw), labels[0])
         return ClassifyResult(
             label=chosen,
             confidence=0.6,  # uncalibrated — flagged lower than a real System One output
-            label_probabilities={l: (1.0 if l == chosen else 0.0) for l in labels},
+            label_probabilities={lbl: (1.0 if lbl == chosen else 0.0) for lbl in labels},
         )
 
-    async def score(
-        self, *, state: str, items: list[str], question: str
-    ) -> ScoreResult:
+    async def score(self, *, state: str, items: list[str], question: str) -> ScoreResult:
         numbered = "\n".join(f"[{i}] {item[:500]}" for i, item in enumerate(items))
         prompt = (
             f"Context:\n{state}\n\nQuestion: {question}\n\nItems:\n{numbered}\n\n"
             'Respond with ONLY a JSON array of {"index": int, "score": float 0-1}, one per item.'
         )
-        resp = await self._llm.generate(
-            [Message(role="user", content=prompt)], max_tokens=1000, temperature=0.0
-        )
+        resp = await self._llm.generate([Message(role="user", content=prompt)], max_tokens=1000, temperature=0.0)
         scores = [0.5] * len(items)
         try:
             match = re.search(r"\[.*\]", resp.text or "", re.DOTALL)
@@ -85,19 +77,15 @@ class HeuristicDecisionModel(DecisionModel):
     async def health_check(self) -> bool:
         return True
 
-    async def classify(
-        self, *, state: str, question: str, labels: list[str]
-    ) -> ClassifyResult:
+    async def classify(self, *, state: str, question: str, labels: list[str]) -> ClassifyResult:
         # Deterministic, order-preserving default: first label wins.
         return ClassifyResult(
             label=labels[0],
             confidence=1.0 / len(labels),
-            label_probabilities={l: 1.0 / len(labels) for l in labels},
+            label_probabilities={lbl: 1.0 / len(labels) for lbl in labels},
         )
 
-    async def score(
-        self, *, state: str, items: list[str], question: str
-    ) -> ScoreResult:
+    async def score(self, *, state: str, items: list[str], question: str) -> ScoreResult:
         # Simple lexical overlap between `question` and each item as a stand-in for relevance.
         q_terms = set(re.findall(r"\w+", question.lower()))
 

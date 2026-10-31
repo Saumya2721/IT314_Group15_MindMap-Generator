@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from typing import Literal, cast
 
 from contracts.models import ChunkSource
 from orchestration.deps import GenerationDeps
@@ -80,10 +81,8 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
                 ),
                 labels=DETAIL_LEVELS,
             )
-            resolved_detail = result.label
-            logger.info(
-                "Inferred detail_level=%s (confidence=%.2f)", resolved_detail, result.confidence
-            )
+            resolved_detail = cast(Literal["overview", "balanced", "detailed"], result.label)
+            logger.info("Inferred detail_level=%s (confidence=%.2f)", resolved_detail, result.confidence)
 
         web_search_available = "web_search" in deps.tools
         arxiv_available = "arxiv_search" in deps.tools
@@ -92,20 +91,14 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
         if web_search_available:
             r = await deps.decision_model.classify(
                 state=query_text[:4000],
-                question=(
-                    "Would a live web search meaningfully improve grounding "
-                    "for this mind map's content?"
-                ),
+                question=("Would a live web search meaningfully improve grounding for this mind map's content?"),
                 labels=["yes", "no"],
             )
             routing["web_search"] = r.label == "yes"
         if arxiv_available:
             r = await deps.decision_model.classify(
                 state=query_text[:4000],
-                question=(
-                    "Is this topic academic/technical enough that arXiv papers "
-                    "would add useful grounding?"
-                ),
+                question=("Is this topic academic/technical enough that arXiv papers would add useful grounding?"),
                 labels=["yes", "no"],
             )
             routing["arxiv_search"] = r.label == "yes"
@@ -127,6 +120,17 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
                 results = await tool.invoke(query=query)
             except ToolError as exc:
                 logger.warning("Tool %s failed, continuing without it: %s", tool_name, exc)
+                tool_call_log.append({"tool": tool_name, "status": "failed", "error": str(exc)})
+                continue
+            except Exception as exc:
+                # Catch unexpected errors from tool adapters (network timeouts, HTTP errors,
+                # response parse failures, etc.) — degrade gracefully rather than failing generation.
+                logger.warning(
+                    "Tool %s raised unexpected error, continuing without it: %s",
+                    tool_name,
+                    exc,
+                    exc_info=True,
+                )
                 tool_call_log.append({"tool": tool_name, "status": "failed", "error": str(exc)})
                 continue
 
@@ -177,7 +181,7 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
             temperature=0.3,
         )
         try:
-            payload = extract_json_object(response.text)
+            payload = extract_json_object(response.text or "")
         except JSONExtractionError as exc:
             return {"draft_payload": None, "validation_errors": [str(exc)]}
 
@@ -239,8 +243,7 @@ async def reconstruct_seed_from_namespace(deps: GenerationDeps, *, namespace: st
     )
     if not chunks:
         raise NoPriorSeedError(
-            f"No original seed chunks found in namespace {namespace!r} "
-            "— cannot regenerate without a seed."
+            f"No original seed chunks found in namespace {namespace!r} — cannot regenerate without a seed."
         )
     sorted_chunks = sorted(chunks, key=lambda c: getattr(c, "chunk_index", 0))
     return "\n\n".join(c.chunk_text for c in sorted_chunks)

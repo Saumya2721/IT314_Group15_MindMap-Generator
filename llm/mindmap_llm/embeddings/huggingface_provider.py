@@ -76,8 +76,7 @@ class HuggingFaceEmbeddingProvider(EmbeddingProvider):
                     seq_len = len(item)
                     hidden_dim = len(item[0])
                     pooled = [
-                        float(sum(item[step][dim] for step in range(seq_len)) / seq_len)
-                        for dim in range(hidden_dim)
+                        float(sum(item[step][dim] for step in range(seq_len)) / seq_len) for dim in range(hidden_dim)
                     ]
                     all_vectors.append(pooled)
                 else:
