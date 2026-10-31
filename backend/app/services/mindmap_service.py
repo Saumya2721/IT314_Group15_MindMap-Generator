@@ -4,13 +4,15 @@ Backend mind map service.
 Owns all database transactions, job lifecycles, chat persistence, and calls the
 decoupled LLM generator to produce and persist the graph.
 """
+
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 from uuid import UUID, uuid4
 
 import asyncpg
+from services.generator import MindMapGenerator
 
 from db.connection import transaction
 from db.models import (
@@ -29,7 +31,6 @@ from db.repository import (
     replace_map_graph,
     update_job_status,
 )
-from services.generator import MindMapGenerator
 
 logger = logging.getLogger("backend.services.mindmap_service")
 
@@ -44,12 +45,12 @@ class MindMapBackendService:
         *,
         map_id: UUID,
         user_id: UUID,
-        topic: Optional[str] = None,
-        ideas: Optional[str] = None,
-        detail_level: Optional[str] = "overview",
-        context: Optional[str] = None,
-        existing_job_id: Optional[UUID] = None,
-    ) -> Dict[str, Any]:
+        topic: str | None = None,
+        ideas: str | None = None,
+        detail_level: str | None = "overview",
+        context: str | None = None,
+        existing_job_id: UUID | None = None,
+    ) -> dict[str, Any]:
         """
         Orchestrates DB lifecycle + LLM generation:
 
@@ -61,10 +62,7 @@ class MindMapBackendService:
         6. Returns complete graph for immediate screen display / frontend.
         """
         job_id: UUID = existing_job_id or uuid4()
-        summary_msg = (
-            f"Generate mind map for topic: '{topic or 'General'}' "
-            f"(Detail: {detail_level or 'overview'})"
-        )
+        summary_msg = f"Generate mind map for topic: '{topic or 'General'}' (Detail: {detail_level or 'overview'})"
 
         # Step 1: Initialize job & chat in DB
         thread_id: UUID
@@ -89,9 +87,7 @@ class MindMapBackendService:
                 job_id = job.id
 
             # Keep the original seed so regenerate_full() can rebuild the map later.
-            seed_text = "\n\n".join(
-                p.strip() for p in (topic, ideas, context) if p and p.strip()
-            )
+            seed_text = "\n\n".join(p.strip() for p in (topic, ideas, context) if p and p.strip())
             if seed_text:
                 await insert_seed_asset(
                     conn,
@@ -105,16 +101,12 @@ class MindMapBackendService:
                     checksum_sha256=None,
                 )
 
-            await update_job_status(
-                conn, job_id=job_id, status=JobStatus.RUNNING, progress_percent=20
-            )
+            await update_job_status(conn, job_id=job_id, status=JobStatus.RUNNING, progress_percent=20)
 
         # Step 2: Call LLM generator (decoupled, zero DB overhead)
         try:
-            logger.info(
-                "Calling LLM generator for map %s, job %s...", map_id, job_id
-            )
-            graph_draft: Dict[str, Any] = await self.generator.generate(
+            logger.info("Calling LLM generator for map %s, job %s...", map_id, job_id)
+            graph_draft: dict[str, Any] = await self.generator.generate(
                 topic=topic,
                 ideas=ideas,
                 detail_level=detail_level,
@@ -132,12 +124,12 @@ class MindMapBackendService:
             raise
 
         # Step 3: Map provisional string IDs to UUIDs and prepare DB records
-        nodes_raw: List[Dict[str, Any]] = graph_draft.get("nodes", [])
-        edges_raw: List[Dict[str, Any]] = graph_draft.get("edges", [])
+        nodes_raw: list[dict[str, Any]] = graph_draft.get("nodes", [])
+        edges_raw: list[dict[str, Any]] = graph_draft.get("edges", [])
 
-        id_map: Dict[str, UUID] = {str(n["id"]): uuid4() for n in nodes_raw}
+        id_map: dict[str, UUID] = {str(n["id"]): uuid4() for n in nodes_raw}
 
-        node_records: List[NodeRecord] = []
+        node_records: list[NodeRecord] = []
         for n in nodes_raw:
             original_id = str(n["id"])
             node_id = id_map[original_id]
@@ -157,7 +149,7 @@ class MindMapBackendService:
                 )
             )
 
-        edge_records: List[EdgeRecord] = []
+        edge_records: list[EdgeRecord] = []
         for e in edges_raw:
             src = str(e.get("source"))
             tgt = str(e.get("target"))
@@ -194,16 +186,13 @@ class MindMapBackendService:
                 conn,
                 thread_id,
                 "assistant",
-                (
-                    f"Successfully generated mind map with {len(node_records)} nodes "
-                    f"and {len(edge_records)} edges."
-                ),
+                (f"Successfully generated mind map with {len(node_records)} nodes and {len(edge_records)} edges."),
             )
 
         logger.info("Successfully persisted graph for map %s (job %s)", map_id, job_id)
 
         # Step 5: Format response for frontend display
-        formatted_nodes: List[Dict[str, Any]] = [
+        formatted_nodes: list[dict[str, Any]] = [
             {
                 "id": str(n.id),
                 "original_id": n.node_data.get("original_id") if n.node_data else None,
@@ -218,7 +207,7 @@ class MindMapBackendService:
             for n in node_records
         ]
 
-        formatted_edges: List[Dict[str, Any]] = [
+        formatted_edges: list[dict[str, Any]] = [
             {
                 "id": str(e.id),
                 "source": str(e.source_node_id),
@@ -242,9 +231,9 @@ class MindMapBackendService:
         map_id: UUID,
         user_id: UUID,
         instruction: str,
-        detail_level: Optional[str] = "balanced",
-        existing_job_id: Optional[UUID] = None,
-    ) -> Dict[str, Any]:
+        detail_level: str | None = "balanced",
+        existing_job_id: UUID | None = None,
+    ) -> dict[str, Any]:
         """Regenerate an existing map with a new instruction, replacing nodes & edges."""
         job_id: UUID = existing_job_id or uuid4()
         summary_msg = f"Regenerate mind map with instruction: '{instruction}'"
@@ -269,12 +258,10 @@ class MindMapBackendService:
                 )
                 job_id = job.id
 
-            await update_job_status(
-                conn, job_id=job_id, status=JobStatus.RUNNING, progress_percent=20
-            )
+            await update_job_status(conn, job_id=job_id, status=JobStatus.RUNNING, progress_percent=20)
 
         # Rebuild the original seed saved by generate()
-        original_seed: Optional[str] = await self.pool.fetchval(
+        original_seed: str | None = await self.pool.fetchval(
             (
                 "SELECT a.content_text FROM public.seed_assets a "
                 "JOIN public.generation_jobs j ON j.id = a.generation_job_id "
@@ -285,7 +272,7 @@ class MindMapBackendService:
         )
 
         # Call LLM
-        graph_draft: Dict[str, Any] = await self.generator.generate(
+        graph_draft: dict[str, Any] = await self.generator.generate(
             topic=None if original_seed else "Mind Map",
             ideas=original_seed,
             detail_level=detail_level,
@@ -344,10 +331,7 @@ class MindMapBackendService:
                 conn,
                 thread_id,
                 "assistant",
-                (
-                    f"Regeneration complete with {len(node_records)} nodes "
-                    f"and {len(edge_records)} edges."
-                ),
+                (f"Regeneration complete with {len(node_records)} nodes and {len(edge_records)} edges."),
             )
 
         return {

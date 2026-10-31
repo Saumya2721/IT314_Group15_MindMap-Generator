@@ -3,6 +3,7 @@
 Bridges the backend in-process generation service directly to the LLM
 orchestration prompts, provider abstraction, and validation schema.
 """
+
 # ruff: noqa: E402
 from __future__ import annotations
 
@@ -10,26 +11,46 @@ import logging
 import math
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 # Ensure llm directory is in sys.path for prompt and validation helpers
 llm_dir = Path(__file__).resolve().parent.parent.parent / "llm"
 if llm_dir.exists() and str(llm_dir) not in sys.path:
     sys.path.insert(0, str(llm_dir))
 
-from orchestration.prompts import (
-    GENERATION_SYSTEM_PROMPT,
-    JSONExtractionError,
-    build_generation_user_prompt,
-    extract_json_object,
-)
-from providers.base import LLMProvider, Message
-from validation.schema import ValidationFailure, validate_draft
+try:
+    from orchestration.prompts import (
+        GENERATION_SYSTEM_PROMPT,
+        JSONExtractionError,
+        build_generation_user_prompt,
+        extract_json_object,
+    )
+    from providers.base import LLMProvider, Message
+    from validation.schema import ValidationFailure, validate_draft
+except ImportError:
+    try:
+        from mindmap_llm.orchestration.prompts import (
+            GENERATION_SYSTEM_PROMPT,
+            JSONExtractionError,
+            build_generation_user_prompt,
+            extract_json_object,
+        )
+        from mindmap_llm.providers.base import LLMProvider, Message
+        from mindmap_llm.validation.schema import ValidationFailure, validate_draft
+    except ImportError:
+        GENERATION_SYSTEM_PROMPT = ""
+        JSONExtractionError = Exception
+        build_generation_user_prompt = None
+        extract_json_object = None
+        LLMProvider = Any
+        Message = Any
+        ValidationFailure = Exception
+        validate_draft = None
 
 logger = logging.getLogger(__name__)
 
 
-def compute_layout(nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]]) -> None:
+def compute_layout(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> None:
     """Calculate 2D coordinates (pos_x, pos_y) for nodes arranged in a clean mind map layout.
 
     Places the central root node in the center (450, 300) and radiates children outward.
@@ -38,15 +59,13 @@ def compute_layout(nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]]) -> 
         return
 
     # Check if all nodes already have non-zero distinct positions
-    has_custom_positions = any(
-        float(n.get("pos_x", 0.0)) != 0.0 or float(n.get("pos_y", 0.0)) != 0.0 for n in nodes
-    )
+    has_custom_positions = any(float(n.get("pos_x", 0.0)) != 0.0 or float(n.get("pos_y", 0.0)) != 0.0 for n in nodes)
     if has_custom_positions and len(nodes) > 1:
         return
 
     # Build adjacency list supporting both source/target and source_node_id/target_node_id
-    children_map: Dict[str, List[str]] = {str(n["id"]): [] for n in nodes}
-    in_degree: Dict[str, int] = {str(n["id"]): 0 for n in nodes}
+    children_map: dict[str, list[str]] = {str(n["id"]): [] for n in nodes}
+    in_degree: dict[str, int] = {str(n["id"]): 0 for n in nodes}
     for e in edges:
         src = str(e.get("source") or e.get("source_node_id") or "")
         tgt = str(e.get("target") or e.get("target_node_id") or "")
@@ -138,18 +157,18 @@ class MindMapGenerator:
     async def generate(
         self,
         *,
-        topic: Optional[str] = None,
-        ideas: Optional[str] = None,
-        detail_level: Optional[str] = "overview",
-        context: Optional[str] = None,
-        regeneration_instruction: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        topic: str | None = None,
+        ideas: str | None = None,
+        detail_level: str | None = "overview",
+        context: str | None = None,
+        regeneration_instruction: str | None = None,
+    ) -> dict[str, Any]:
         """Generate a structured mind map draft conforming to DR-01 - DR-04."""
         seed_parts = [p.strip() for p in (topic, ideas, context) if p and p.strip()]
         seed_text = "\n\n".join(seed_parts) if seed_parts else (topic or "Mind Map")
 
         supporting_context = [context] if context else []
-        validation_errors: List[str] = []
+        validation_errors: list[str] = []
 
         last_raw_response = ""
 
@@ -191,8 +210,7 @@ class MindMapGenerator:
                         "label": n.label,
                         "description": n.description,
                         "node_type": n.node_type,
-                        "background_color": n.background_color
-                        or ("#4F46E5" if n.node_type == "root" else "#3B82F6"),
+                        "background_color": n.background_color or ("#4F46E5" if n.node_type == "root" else "#3B82F6"),
                         "text_color": n.text_color or "#FFFFFF",
                         "pos_x": getattr(n, "pos_x", 0.0),
                         "pos_y": getattr(n, "pos_y", 0.0),

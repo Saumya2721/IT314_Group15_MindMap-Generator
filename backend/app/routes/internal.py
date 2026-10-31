@@ -13,6 +13,12 @@ from typing import Any
 from uuid import UUID
 
 from contracts.models import GenerationResult
+from core.supabase import bearer
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi.security import HTTPAuthorizationCredentials
+from pydantic import BaseModel, Field, model_validator
+from services.generator import compute_layout
+
 from db.connection import transaction
 from db.models import EdgeRecord, NodeRecord, SeedAssetType
 from db.repository import (
@@ -22,9 +28,6 @@ from db.repository import (
     persist_generated_graph,
     replace_map_graph,
 )
-from fastapi import APIRouter, Header, HTTPException, Request, status
-from pydantic import BaseModel, Field, model_validator
-from services.generator import compute_layout
 
 logger = logging.getLogger(__name__)
 
@@ -32,17 +35,38 @@ router = APIRouter(prefix="/internal/jobs", tags=["Internal Worker Callbacks"])
 
 
 async def verify_callback_auth(
-    job_id: UUID, request: Request, authorization: str | None = Header(None)
+    job_id: UUID,
+    request: Request,
+    authorization: str | None = None,
+    creds: HTTPAuthorizationCredentials | None = None,
 ) -> dict:
-    """Validate the worker's Bearer token against callback_token_hash stored with the job."""
-    if not authorization or not authorization.startswith("Bearer "):
+    """Validate worker's callback token or map owner's access token."""
+    raw_token: str | None = None
+
+    if creds and creds.credentials and creds.credentials.strip():
+        raw_token = creds.credentials.strip()
+    elif authorization and authorization.strip():
+        clean_auth = authorization.strip()
+        raw_token = clean_auth[7:].strip() if clean_auth.lower().startswith("bearer ") else clean_auth
+    else:
+        # Fallback to direct request headers inspection
+        auth_hdr = request.headers.get("authorization") or request.headers.get("Authorization")
+        if auth_hdr and auth_hdr.strip():
+            clean_hdr = auth_hdr.strip()
+            raw_token = clean_hdr[7:].strip() if clean_hdr.lower().startswith("bearer ") else clean_hdr
+        elif request.cookies.get("access_token"):
+            raw_token = request.cookies.get("access_token")
+
+    if not raw_token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing or malformed Authorization header. Bearer token required.",
         )
 
-    token = authorization.split(" ", 1)[1].strip()
-    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    # Strip any enclosing quotes if user pasted JSON string
+    raw_token = raw_token.strip("\"'")
+
+    token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
 
     pool = request.app.state.pool
     if not pool:
@@ -56,24 +80,41 @@ async def verify_callback_auth(
         raise HTTPException(status_code=404, detail="Job not found")
 
     expected_hash = row["callback_token_hash"]
-    # P0 Security Fix: Never accept callbacks if callback_token_hash is NULL or empty
-    if not expected_hash:
-        logger.warning(
-            "Callback authentication rejected: job %s has no callback_token_hash configured", job_id
-        )
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Callback authentication token is not configured for this job.",
-        )
+    # Check if token matches the worker callback token hash
+    if expected_hash and secrets.compare_digest(token_hash, expected_hash):
+        return dict(row)
 
-    if not secrets.compare_digest(token_hash, expected_hash):
-        logger.warning("Callback authentication failed for job %s: invalid token", job_id)
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid callback token for this job.",
-        )
+    # Allow authenticated user who owns the map to check job status / callbacks
+    try:
+        from core.supabase import anon_client
 
-    return dict(row)
+        client = anon_client()
+        res = client.auth.get_user(raw_token)
+        if res and res.user and res.user.id:
+            owner_uid = UUID(str(res.user.id))
+            is_owner = await pool.fetchval(
+                "SELECT 1 FROM public.mind_maps WHERE id = $1 AND user_id = $2",
+                row["map_id"],
+                owner_uid,
+            )
+            if is_owner:
+                return dict(row)
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="You do not have permission to access this mind map's job.",
+                )
+    except HTTPException as http_exc:
+        if http_exc.status_code == status.HTTP_403_FORBIDDEN:
+            raise
+    except Exception as exc:
+        logger.warning("Token verification failed for job %s: %s", job_id, exc)
+
+    logger.warning("Callback authentication failed for job %s: invalid token", job_id)
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid callback token for this job.",
+    )
 
 
 class ProgressPayload(BaseModel):
@@ -83,11 +124,7 @@ class ProgressPayload(BaseModel):
     @classmethod
     def unify_fields(cls, values: Any) -> Any:
         if isinstance(values, dict):
-            val = (
-                values.get("progress_percent")
-                if "progress_percent" in values
-                else values.get("percent")
-            )
+            val = values.get("progress_percent") if "progress_percent" in values else values.get("percent")
             if val is not None:
                 return {"progress_percent": int(val)}
         return values
@@ -97,10 +134,11 @@ class ProgressPayload(BaseModel):
 async def check_job_status(
     job_id: UUID,
     request: Request,
+    creds: HTTPAuthorizationCredentials | None = Depends(bearer),
     authorization: str | None = Header(None),
 ):
-    """Worker pre-flight check to query whether job has already reached a terminal state."""
-    job_ctx = await verify_callback_auth(job_id, request, authorization)
+    """Worker pre-flight or user check to query whether job has already reached a terminal state."""
+    job_ctx = await verify_callback_auth(job_id, request, authorization, creds)
     st = job_ctx.get("status")
     return {
         "id": str(job_id),
@@ -115,6 +153,7 @@ async def report_progress(
     job_id: UUID,
     payload: ProgressPayload,
     request: Request,
+    creds: HTTPAuthorizationCredentials | None = Depends(bearer),
     authorization: str | None = Header(None),
 ):
     """Worker reports non-terminal progress milestone (authenticated, monotonic).
@@ -123,7 +162,7 @@ async def report_progress(
     - Running jobs must have started_at IS NOT NULL and progress_percent < 100.
     - Transitions pending jobs to running. 100% is exclusively set at terminal completion.
     """
-    await verify_callback_auth(job_id, request, authorization)
+    await verify_callback_auth(job_id, request, authorization, creds)
     pool = request.app.state.pool
 
     # Clamp progress_percent to max 99% during non-terminal ticks
@@ -149,10 +188,11 @@ async def report_complete(
     job_id: UUID,
     result: GenerationResult,
     request: Request,
+    creds: HTTPAuthorizationCredentials | None = Depends(bearer),
     authorization: str | None = Header(None),
 ):
     """Worker reports successful generation outcome with final nodes, edges, and seeds."""
-    job_ctx = await verify_callback_auth(job_id, request, authorization)
+    job_ctx = await verify_callback_auth(job_id, request, authorization, creds)
     pool = request.app.state.pool
 
     # Strict contract validation: assert identity and completion status
@@ -294,9 +334,7 @@ async def report_complete(
         )
 
         # Insert assistant summary message in thread
-        map_owner = await conn.fetchval(
-            "SELECT user_id FROM public.mind_maps WHERE id = $1", map_id
-        )
+        map_owner = await conn.fetchval("SELECT user_id FROM public.mind_maps WHERE id = $1", map_id)
         if map_owner:
             thread_id = await get_or_create_chat_thread(conn, map_id, map_owner)
             await insert_chat_message(
@@ -326,10 +364,11 @@ async def report_fail(
     job_id: UUID,
     result: GenerationResult,
     request: Request,
+    creds: HTTPAuthorizationCredentials | None = Depends(bearer),
     authorization: str | None = Header(None),
 ):
     """Worker reports terminal failure or rejection with strict lifecycle constraint handling."""
-    job_ctx = await verify_callback_auth(job_id, request, authorization)
+    job_ctx = await verify_callback_auth(job_id, request, authorization, creds)
     pool = request.app.state.pool
 
     # Strict contract validation: assert identity and failed/rejected status
@@ -350,9 +389,7 @@ async def report_fail(
         )
 
     # Sanitize error message to prevent leaking tracebacks, secrets, or internal paths
-    raw_message = (
-        result.error.message if result.error else "Generation failed"
-    ) or "Generation failed"
+    raw_message = (result.error.message if result.error else "Generation failed") or "Generation failed"
     clean_message = raw_message.split("\n")[0].strip()[:250] or "Generation failed unexpectedly."
 
     async with transaction(pool) as conn:
@@ -365,9 +402,7 @@ async def report_fail(
 
         # Conflict: if job already completed, reject conflicting fail callback
         if job_row["status"] == "completed":
-            logger.warning(
-                "Job %s already marked completed; rejecting conflicting fail callback.", job_id
-            )
+            logger.warning("Job %s already marked completed; rejecting conflicting fail callback.", job_id)
             raise HTTPException(
                 status_code=409,
                 detail="Cannot fail job: job has already reached terminal status 'completed'",
@@ -390,25 +425,28 @@ async def report_fail(
         # P1-6: Honor chk_generation_job_lifecycle:
         # If job already started (started_at IS NOT NULL), terminal status must be 'failed'.
         # Only jobs that never started (started_at IS NULL) can be 'rejected'.
-        if result.status == "rejected" and job_row["started_at"] is None:
-            final_status = "rejected"
-        else:
-            final_status = "failed"
-
-        await conn.execute(
-            """
-            UPDATE public.generation_jobs
-               SET status = $2,
-                   started_at = CASE WHEN $2 = 'rejected' THEN NULL ELSE COALESCE(started_at, now()) END,
-                   completed_at = now(),
-                   progress_percent = CASE WHEN $2 = 'rejected' THEN 0 ELSE LEAST(progress_percent, 99) END,
-                   error_message = $3
-             WHERE id = $1
-            """,
-            job_id,
-            final_status,
-            clean_message,
+        final_status = (
+            "rejected" if result.status == "rejected" and job_row["started_at"] is None else "failed"
         )
+
+        try:
+            await conn.execute(
+                """
+                UPDATE public.generation_jobs
+                   SET status = $2::varchar,
+                       started_at = CASE WHEN $2::varchar = 'rejected' THEN NULL ELSE COALESCE(started_at, now()) END,
+                       completed_at = now(),
+                       progress_percent = CASE WHEN $2::varchar = 'rejected' THEN 0 ELSE LEAST(progress_percent, 99) END,
+                       error_message = $3::text
+                 WHERE id = $1
+                """,
+                job_id,
+                final_status,
+                clean_message,
+            )
+        except Exception as db_exc:
+            logger.exception("Database update failed during report_fail for job %s: %s", job_id, db_exc)
+            raise HTTPException(status_code=500, detail=f"Database update failed: {db_exc}")
 
     logger.warning("Job %s marked %s: %s", job_id, final_status, clean_message)
     return {

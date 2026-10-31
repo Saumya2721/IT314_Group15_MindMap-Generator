@@ -1,11 +1,17 @@
 """ARQ Redis producer service for enqueuing mindmap generation jobs to the LLM worker."""
+
 from __future__ import annotations
 
 import logging
 from typing import Any
 
-from arq import create_pool
-from arq.connections import ArqRedis, RedisSettings
+try:
+    from arq import create_pool
+    from arq.connections import ArqRedis, RedisSettings
+except ImportError:
+    create_pool = None  # type: ignore
+    ArqRedis = Any  # type: ignore
+    RedisSettings = Any  # type: ignore
 
 from core.config import settings
 
@@ -19,6 +25,9 @@ async def create_redis_pool(redis_url: str | None = None) -> ArqRedis | None:
     backend can continue running with graceful fallbacks.
     """
     url = redis_url or settings.REDIS_URL
+    if create_pool is None:
+        logger.warning("arq library not installed; Redis queue disabled.")
+        return None
     try:
         pool = await create_pool(RedisSettings.from_dsn(url))
         logger.info("Successfully connected to Redis at %s", url)
@@ -60,7 +69,7 @@ async def enqueue_generation_job(pool: ArqRedis, request_payload: dict) -> str |
     if job_id_str:
         kwargs["_job_id"] = job_id_str
 
-    job = await pool.enqueue_job("generate_mindmap", request_payload, **kwargs)
+    job = await pool.enqueue_job("generate_mindmap", request_payload, **kwargs)  # type: ignore[arg-type]
     if job:
         logger.info("Enqueued generate_mindmap task: arq_job_id=%s", job.job_id)
         return job.job_id

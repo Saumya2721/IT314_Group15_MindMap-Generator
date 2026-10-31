@@ -2,6 +2,7 @@
 
 Extracted cleanly from mm_backend into backend.services.runner.
 """
+
 from __future__ import annotations
 
 import logging
@@ -17,11 +18,13 @@ from db.repository import ActiveJobAlreadyExists
 try:
     from seed.normalizer import NoUsableSeedContent, SeedSubmission, normalize_seed
 except ImportError:
-    class NoUsableSeedContent(Exception):
+
+    class _NoUsableSeedContentFallback(Exception):
         pass
 
-    SeedSubmission = None
-    normalize_seed = None
+    NoUsableSeedContent = _NoUsableSeedContentFallback  # type: ignore[misc]
+    SeedSubmission = None  # type: ignore[assignment,misc]
+    normalize_seed = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 
@@ -106,9 +109,7 @@ async def run_generate(app, *, map_id: UUID, user_id: UUID, submission, detail_l
         files = getattr(submission, "files", None)
         if files and normalize_seed and SeedSubmission:
             try:
-                normalized = await normalize_seed(
-                    submission=SeedSubmission(topic=None, ideas=None, files=files)
-                )
+                normalized = await normalize_seed(submission=SeedSubmission(topic=None, ideas=None, files=files))
                 context = normalized.combined_text[:MAX_CONTEXT_CHARS]
             except NoUsableSeedContent:
                 logger.warning("No usable text in uploads for map %s", map_id)
@@ -129,7 +130,9 @@ async def run_generate(app, *, map_id: UUID, user_id: UUID, submission, detail_l
         await _fail_quietly(app.state.pool, map_id, "generate")
 
 
-async def run_regenerate(app, *, map_id: UUID, user_id: UUID, instruction: str, detail_level, job_id: UUID | None = None):
+async def run_regenerate(
+    app, *, map_id: UUID, user_id: UUID, instruction: str, detail_level, job_id: UUID | None = None
+):
     try:
         service = getattr(app.state, "mindmap_service", getattr(app.state, "generation", None))
         if not service:
