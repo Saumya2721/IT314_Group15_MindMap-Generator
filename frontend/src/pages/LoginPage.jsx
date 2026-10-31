@@ -1,14 +1,15 @@
-import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext';
-import './LoginPage.css';
+import React, { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { useAuth } from '../context/AuthContext'
+import { authService } from '../services/authService'
+import './LoginPage.css'
 
 export default function LoginPage() {
-  const navigate = useNavigate();
-  const { login, register, loginWithGoogle, loading } = useAuth();
+  const navigate = useNavigate()
+  const { login, register, loginWithGoogle, loading } = useAuth()
 
   // Mode state: 'signin' or 'signup'
-  const [mode, setMode] = useState('signin');
+  const [mode, setMode] = useState('signin')
 
   // Form input fields
   const [formData, setFormData] = useState({
@@ -17,111 +18,141 @@ export default function LoginPage() {
     password: '',
     confirmPassword: '',
     rememberMe: true,
-  });
+  })
 
   // UI state for password visibility toggle
-  const [showPassword, setShowPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [showPassword, setShowPassword] = useState(false)
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false)
 
   // Validation error state
-  const [errors, setErrors] = useState({});
-  const [successMessage, setSuccessMessage] = useState('');
+  const [errors, setErrors] = useState({})
+  const [successMessage, setSuccessMessage] = useState('')
 
   // Handle generic input change
   const handleChange = (e) => {
-    const { name, value, type, checked } = e.target;
+    const { name, value, type, checked } = e.target
     setFormData((prev) => ({
       ...prev,
       [name]: type === 'checkbox' ? checked : value,
-    }));
+    }))
     // Clear field-specific error upon typing
     if (errors[name]) {
-      setErrors((prev) => ({ ...prev, [name]: '' }));
+      setErrors((prev) => ({ ...prev, [name]: '' }))
     }
-  };
+  }
 
   // Switch between Sign In and Sign Up modes
   const handleSwitchMode = (targetMode) => {
-    setMode(targetMode);
-    setErrors({});
+    setMode(targetMode)
+    setErrors({})
     if (targetMode === 'signup') {
-      setSuccessMessage('');
+      setSuccessMessage('')
       setFormData((prev) => ({
         ...prev,
         name: '',
         confirmPassword: '',
-      }));
+      }))
     }
-  };
+  }
+
+  const handleForgotPassword = async (e) => {
+    e.preventDefault()
+    setSuccessMessage('')
+    if (!formData.email.trim()) {
+      setErrors((prev) => ({
+        ...prev,
+        email: 'Enter your email address above, then click Forgot password.',
+      }))
+      return
+    }
+    try {
+      const res = await authService.forgotPassword(formData.email.trim())
+      if (res.success) {
+        setSuccessMessage(res.message || 'Password reset link sent to your email.')
+      } else {
+        setErrors((prev) => ({ ...prev, email: res.error || 'Failed to send reset email.' }))
+      }
+    } catch {
+      setErrors((prev) => ({ ...prev, email: 'Unable to request password reset.' }))
+    }
+  }
 
   // Client-side form validation
   const validateForm = () => {
-    const newErrors = {};
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const newErrors = {}
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
     // Validate email
     if (!formData.email.trim()) {
-      newErrors.email = 'Email address is required.';
+      newErrors.email = 'Email address is required.'
     } else if (!emailRegex.test(formData.email.trim())) {
-      newErrors.email = 'Please enter a valid email address.';
+      newErrors.email = 'Please enter a valid email address.'
     }
 
     // Validate password
     if (!formData.password) {
-      newErrors.password = 'Password is required.';
+      newErrors.password = 'Password is required.'
     } else if (formData.password.length < 6) {
-      newErrors.password = 'Password must be at least 6 characters.';
+      newErrors.password = 'Password must be at least 6 characters.'
     }
 
     // Additional validations for Sign Up
     if (mode === 'signup') {
       if (!formData.name.trim()) {
-        newErrors.name = 'Full name is required.';
+        newErrors.name = 'Full name is required.'
       }
 
       if (!formData.confirmPassword) {
-        newErrors.confirmPassword = 'Confirm your password.';
+        newErrors.confirmPassword = 'Confirm your password.'
       } else if (formData.password !== formData.confirmPassword) {
-        newErrors.confirmPassword = 'Passwords do not match.';
+        newErrors.confirmPassword = 'Passwords do not match.'
       }
     }
 
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
+    setErrors(newErrors)
+    return Object.keys(newErrors).length === 0
+  }
 
   // Submit handler
   const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (!validateForm()) return;
+    e.preventDefault()
+    if (!validateForm()) return
 
     if (mode === 'signin') {
-      const result = await login(formData.email, formData.password);
+      const result = await login(formData.email, formData.password)
       if (result && result.success) {
-        navigate('/dashboard');
+        navigate('/dashboard')
       } else {
-        setErrors({ general: result?.error || 'Authentication failed. Please check credentials.' });
+        setErrors({ general: result?.error || 'Authentication failed. Please check credentials.' })
       }
     } else {
-      const result = await register(formData.name, formData.email, formData.password);
+      const result = await register(formData.name, formData.email, formData.password)
       if (result && result.success) {
-        setSuccessMessage(result?.message || 'Account registered successfully! Please log in.');
-        setMode('signin');
+        setSuccessMessage(result?.message || 'Account registered successfully! Please log in.')
+        setMode('signin')
       } else {
-        setErrors({ general: result?.error || 'Registration failed. Please try again.' });
+        setErrors({ general: result?.error || 'Registration failed. Please try again.' })
       }
     }
-  };
+  }
 
   // Google federated sign-in handler
   const handleGoogleSignIn = async () => {
-    const result = await loginWithGoogle();
-    if (result && result.success && result.user) {
-      navigate('/dashboard');
-    } else if (result && !result.success && result.error) {
-      setErrors({ general: result.error });
+    // Persist intended return path in sessionStorage before navigating away to Google
+    const fromPath = location.state?.from?.pathname || '/dashboard'
+    try {
+      sessionStorage.setItem('mindweave_oauth_return_to', fromPath)
+    } catch (e) {
+      console.warn('Could not persist oauth return path:', e)
     }
-  };
+
+    const result = await loginWithGoogle()
+    if (result && result.success && result.user) {
+      navigate(fromPath)
+    } else if (result && !result.success && result.error) {
+      setErrors({ general: result.error })
+    }
+  }
 
   return (
     <div className="auth-container">
@@ -143,7 +174,7 @@ export default function LoginPage() {
           </div>
           <div className="archival-badge">
             <span className="badge-dot" />
-            <span>VOL. IV · ARCHIVAL SUITE</span>
+            <span>VOL. I</span>
           </div>
         </div>
 
@@ -157,7 +188,7 @@ export default function LoginPage() {
           {/* Connected Mind Map SVG Card */}
           <div className="mindmap-preview-card">
             <div className="preview-card-header">
-              <span className="preview-card-title">Topological Thought Map · Draft 04</span>
+              <span className="preview-card-title">Topological Thought Map</span>
               <div className="preview-card-palette">
                 <span className="palette-dot palette-teal" />
                 <span className="palette-dot palette-terracotta" />
@@ -221,64 +252,194 @@ export default function LoginPage() {
 
               {/* Anchor Core Node */}
               <g>
-                <rect fill="#FFFFFF" height="44" rx="4" stroke="#D0C9BA" strokeWidth="1" width="105" x="20" y="98" />
+                <rect
+                  fill="#FFFFFF"
+                  height="44"
+                  rx="4"
+                  stroke="#D0C9BA"
+                  strokeWidth="1"
+                  width="105"
+                  x="20"
+                  y="98"
+                />
                 <rect fill="#155E63" height="3.5" rx="1.5" width="105" x="20" y="98" />
                 <circle cx="72" cy="120" fill="#155E63" r="3.5" />
-                <text fill="#181d1a" fontSize="11px" fontWeight="600" textAnchor="middle" x="72" y="124" fontFamily="Plus Jakarta Sans">
+                <text
+                  fill="#181d1a"
+                  fontSize="11px"
+                  fontWeight="600"
+                  textAnchor="middle"
+                  x="72"
+                  y="124"
+                  fontFamily="Plus Jakarta Sans"
+                >
                   CORE NEXUS
                 </text>
               </g>
 
               {/* Node 1: Dialectic (Terracotta) */}
               <g>
-                <rect fill="#FFFFFF" height="40" rx="4" stroke="#D0C9BA" strokeWidth="1" width="100" x="230" y="35" />
+                <rect
+                  fill="#FFFFFF"
+                  height="40"
+                  rx="4"
+                  stroke="#D0C9BA"
+                  strokeWidth="1"
+                  width="100"
+                  x="230"
+                  y="35"
+                />
                 <rect fill="#C96B4B" height="3" rx="1.5" width="100" x="230" y="35" />
-                <text fill="#181d1a" fontSize="11px" fontWeight="500" textAnchor="middle" x="280" y="59" fontFamily="Plus Jakarta Sans">
+                <text
+                  fill="#181d1a"
+                  fontSize="11px"
+                  fontWeight="500"
+                  textAnchor="middle"
+                  x="280"
+                  y="59"
+                  fontFamily="Plus Jakarta Sans"
+                >
                   Dialectic
                 </text>
               </g>
 
               {/* Node 2: Structure (Teal) */}
               <g>
-                <rect fill="#FFFFFF" height="40" rx="4" stroke="#155E63" strokeWidth="1.5" width="105" x="230" y="100" />
+                <rect
+                  fill="#FFFFFF"
+                  height="40"
+                  rx="4"
+                  stroke="#155E63"
+                  strokeWidth="1.5"
+                  width="105"
+                  x="230"
+                  y="100"
+                />
                 <rect fill="#155E63" height="3" rx="1.5" width="105" x="230" y="100" />
-                <text fill="#155E63" fontSize="11px" fontWeight="600" textAnchor="middle" x="282.5" y="124" fontFamily="Plus Jakarta Sans">
+                <text
+                  fill="#155E63"
+                  fontSize="11px"
+                  fontWeight="600"
+                  textAnchor="middle"
+                  x="282.5"
+                  y="124"
+                  fontFamily="Plus Jakarta Sans"
+                >
                   Taxonomy
                 </text>
               </g>
 
               {/* Node 3: Intuition (Olive) */}
               <g>
-                <rect fill="#FFFFFF" height="40" rx="4" stroke="#D0C9BA" strokeWidth="1" width="100" x="230" y="165" />
+                <rect
+                  fill="#FFFFFF"
+                  height="40"
+                  rx="4"
+                  stroke="#D0C9BA"
+                  strokeWidth="1"
+                  width="100"
+                  x="230"
+                  y="165"
+                />
                 <rect fill="#899B72" height="3" rx="1.5" width="100" x="230" y="165" />
-                <text fill="#181d1a" fontSize="11px" fontWeight="500" textAnchor="middle" x="280" y="189" fontFamily="Plus Jakarta Sans">
+                <text
+                  fill="#181d1a"
+                  fontSize="11px"
+                  fontWeight="500"
+                  textAnchor="middle"
+                  x="280"
+                  y="189"
+                  fontFamily="Plus Jakarta Sans"
+                >
                   Intuition
                 </text>
               </g>
 
               {/* Leaf Nodes */}
               <g>
-                <rect fill="#FFFFFF" height="32" rx="4" stroke="#E2DCCE" width="85" x="440" y="24" />
+                <rect
+                  fill="#FFFFFF"
+                  height="32"
+                  rx="4"
+                  stroke="#E2DCCE"
+                  width="85"
+                  x="440"
+                  y="24"
+                />
                 <circle cx="448" cy="40" fill="#899B72" r="3" />
-                <text fill="#5B6362" fontSize="10px" textAnchor="middle" x="484" y="44" fontFamily="Plus Jakarta Sans">
+                <text
+                  fill="#5B6362"
+                  fontSize="10px"
+                  textAnchor="middle"
+                  x="484"
+                  y="44"
+                  fontFamily="Plus Jakarta Sans"
+                >
                   Archival Seed
                 </text>
 
-                <rect fill="#FFFFFF" height="32" rx="4" stroke="#D0C9BA" width="85" x="440" y="74" />
+                <rect
+                  fill="#FFFFFF"
+                  height="32"
+                  rx="4"
+                  stroke="#D0C9BA"
+                  width="85"
+                  x="440"
+                  y="74"
+                />
                 <rect fill="#155E63" height="2.5" rx="1" width="85" x="440" y="74" />
-                <text fill="#181d1a" fontSize="10px" fontWeight="500" textAnchor="middle" x="482.5" y="94" fontFamily="Plus Jakarta Sans">
+                <text
+                  fill="#181d1a"
+                  fontSize="10px"
+                  fontWeight="500"
+                  textAnchor="middle"
+                  x="482.5"
+                  y="94"
+                  fontFamily="Plus Jakarta Sans"
+                >
                   Ontology
                 </text>
 
-                <rect fill="#FFFFFF" height="32" rx="4" stroke="#D0C9BA" width="85" x="440" y="134" />
+                <rect
+                  fill="#FFFFFF"
+                  height="32"
+                  rx="4"
+                  stroke="#D0C9BA"
+                  width="85"
+                  x="440"
+                  y="134"
+                />
                 <rect fill="#D6A84F" height="2.5" rx="1" width="85" x="440" y="134" />
-                <text fill="#181d1a" fontSize="10px" fontWeight="500" textAnchor="middle" x="482.5" y="154" fontFamily="Plus Jakarta Sans">
+                <text
+                  fill="#181d1a"
+                  fontSize="10px"
+                  fontWeight="500"
+                  textAnchor="middle"
+                  x="482.5"
+                  y="154"
+                  fontFamily="Plus Jakarta Sans"
+                >
                   Synthesis
                 </text>
 
-                <rect fill="#FFFFFF" height="32" rx="4" stroke="#E2DCCE" width="85" x="440" y="184" />
+                <rect
+                  fill="#FFFFFF"
+                  height="32"
+                  rx="4"
+                  stroke="#E2DCCE"
+                  width="85"
+                  x="440"
+                  y="184"
+                />
                 <circle cx="448" cy="200" fill="#C96B4B" r="3" />
-                <text fill="#5B6362" fontSize="10px" textAnchor="middle" x="484" y="204" fontFamily="Plus Jakarta Sans">
+                <text
+                  fill="#5B6362"
+                  fontSize="10px"
+                  textAnchor="middle"
+                  x="484"
+                  y="204"
+                  fontFamily="Plus Jakarta Sans"
+                >
                   Draft Codex
                 </text>
               </g>
@@ -303,7 +464,7 @@ export default function LoginPage() {
         <div className="system-status-wrapper">
           <span className="system-status">
             <span className="status-online-dot" />
-            Vault Nodes Online
+            Welcome to MindWeave
           </span>
         </div>
 
@@ -312,7 +473,7 @@ export default function LoginPage() {
           {/* Header */}
           <div className="auth-header">
             <span className="auth-protocol-label">
-              {mode === 'signin' ? 'ACCESS PROTOCOL' : 'ATELIER REGISTRATION'}
+              {mode === 'signin' ? 'ACCESS PROTOCOL' : 'MINDWEAVE REGISTRATION'}
             </span>
             <h2 className="auth-title">
               {mode === 'signin' ? 'Welcome back' : 'Create an account'}
@@ -395,9 +556,14 @@ export default function LoginPage() {
                   Password
                 </label>
                 {mode === 'signin' && (
-                  <a href="#reset" className="field-link" onClick={(e) => e.preventDefault()}>
+                  <button
+                    type="button"
+                    className="field-link"
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+                    onClick={handleForgotPassword}
+                  >
                     Forgot password?
-                  </a>
+                  </button>
                 )}
               </div>
               <div className="input-wrapper">
@@ -472,7 +638,7 @@ export default function LoginPage() {
                     checked={formData.rememberMe}
                     onChange={handleChange}
                   />
-                  <span>Keep session active for 30 days</span>
+                  <span>Remember Me</span>
                 </label>
               </div>
             )}
@@ -483,8 +649,8 @@ export default function LoginPage() {
                 {loading
                   ? 'Connecting...'
                   : mode === 'signin'
-                  ? 'Log in to workspace'
-                  : 'Create atelier account'}
+                    ? 'Log in to workspace'
+                    : 'Create mindweave account'}
               </span>
               <span className="material-symbols-outlined btn-arrow-icon">arrow_forward</span>
             </button>
@@ -554,10 +720,10 @@ export default function LoginPage() {
 
         {/* Atelier Protocol Footer Badge */}
         <div className="atelier-protocol-footer">
-          <span>SECURE ATELIER PROTOCOL</span>
-          <span>EST. 2024</span>
+          <span>MINDWEAVE</span>
+          <span>All Rights Reserved. Copyright 2026</span>
         </div>
       </div>
     </div>
-  );
+  )
 }
