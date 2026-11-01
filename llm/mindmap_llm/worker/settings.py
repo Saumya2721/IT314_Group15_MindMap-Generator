@@ -12,9 +12,21 @@ pattern and avoids re-establishing HTTP connections for every task.
 from __future__ import annotations
 
 import logging
+import sys
+from pathlib import Path
+
+from dotenv import find_dotenv, load_dotenv
+
+_pkg_root = Path(__file__).resolve().parent.parent
+if str(_pkg_root) not in sys.path:
+    sys.path.insert(0, str(_pkg_root))
+
+# Load .env from llm folder and repo root
+load_dotenv(_pkg_root.parent / ".env")
+load_dotenv(_pkg_root.parent.parent / ".env")
+load_dotenv(find_dotenv())
 
 from arq.connections import RedisSettings
-
 from config import get_settings
 from embeddings.registry import get_embedding_provider
 from providers.registry import get_decision_model, get_llm_provider

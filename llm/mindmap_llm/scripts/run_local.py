@@ -23,10 +23,9 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from dotenv import load_dotenv
-
 from callback.client import NullCallbackClient
 from config import get_settings
+from dotenv import load_dotenv
 from embeddings.registry import get_embedding_provider
 from orchestration.deps import GenerationDeps
 from orchestration.graph import run_generation
@@ -63,12 +62,13 @@ async def main() -> None:
         decision_model=get_decision_model(settings, llm_fallback=llm),
         embedding_provider=get_embedding_provider(settings),
         vector_store=PineconeVectorStore(
-            api_key=settings.pinecone.api_key, index_name=settings.pinecone.index_name,
+            api_key=settings.pinecone.api_key,
+            index_name=settings.pinecone.index_name,
             dense_weight=settings.pinecone.dense_weight,
         ),
         tools=build_tool_registry(settings),
         settings=settings,
-        callback=NullCallbackClient(),
+        callback=NullCallbackClient(),  # type: ignore[arg-type]
     )
 
     map_id = uuid.UUID(args.map_id)
@@ -81,20 +81,30 @@ async def main() -> None:
             decision_model=deps.decision_model,
         )
         initial_state = {
-            "job_id": job_id, "map_id": map_id, "namespace": namespace,
-            "seed_text": normalized.combined_text, "detail_level": args.detail_level,
-            "regeneration_instruction": None, "is_regeneration": False,
+            "job_id": job_id,
+            "map_id": map_id,
+            "namespace": namespace,
+            "seed_text": normalized.combined_text,
+            "detail_level": args.detail_level,
+            "regeneration_instruction": None,
+            "is_regeneration": False,
         }
     else:
         seed_text = await reconstruct_seed_from_namespace(deps, namespace=namespace)
         initial_state = {
-            "job_id": job_id, "map_id": map_id, "namespace": namespace,
-            "seed_text": seed_text, "detail_level": args.detail_level,
-            "regeneration_instruction": args.instruction, "is_regeneration": True,
+            "job_id": job_id,
+            "map_id": map_id,
+            "namespace": namespace,
+            "seed_text": seed_text,
+            "detail_level": args.detail_level,
+            "regeneration_instruction": args.instruction,
+            "is_regeneration": True,
         }
 
     final_state = await run_generation(
-        deps, initial_state=initial_state, max_retries=settings.generation.max_generation_retries
+        deps,
+        initial_state=initial_state,  # type: ignore[arg-type]
+        max_retries=settings.generation.max_generation_retries,  # type: ignore[arg-type]
     )
     print(f"status={final_state.get('status')}")
     print(f"nodes={len(final_state.get('nodes', []))} edges={len(final_state.get('edges', []))}")

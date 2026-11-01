@@ -25,9 +25,7 @@ async def retrieve_context(
     map's namespace (RAG_Strategy.md: 'Classical RAG with hybrid
     retrieval (dense + BM25) for Sprint 1')."""
     [query_vector] = await embedding_provider.embed([query])
-    return await vector_store.query(
-        namespace=namespace, query_text=query, query_embedding=query_vector, top_k=top_k
-    )
+    return await vector_store.query(namespace=namespace, query_text=query, query_embedding=query_vector, top_k=top_k)
 
 
 async def rerank_context(

@@ -68,19 +68,21 @@ The decision model is used exclusively for fast classification and reranking, ne
 
 ## Repository Structure
 
-```
-mindmap_llm/
-├── callback/          # Internal HTTP callback client (progress, complete, fail)
-├── contracts/         # Wire contract models (GenerationRequest, GenerationResult, NodeDraft, EdgeDraft)
-├── embeddings/        # Pluggable embedding providers (HuggingFace, base interface)
-├── orchestration/     # LangGraph state machine, nodes, prompts, and dependency container
-├── providers/         # Primary LLM and decision model adapters (Groq, Jev, fallback chain)
-├── rag/               # Pinecone hybrid vector store (per-map namespace), chunking, retrieval
-├── scripts/           # Index management (create_pinecone_index.py) and local tester (run_local.py)
-├── seed/              # Document normalizers (PDF, text, OCR image parsing)
-├── tests/             # Pytest test suite with zero external dependencies
-├── tools/             # Research tools (Tavily web search, arXiv)
-└── worker/            # ARQ worker settings, signed URL file fetcher, task entry point
+```text
+llm/
+├── mindmap_llm/
+│   ├── callback/          # Internal HTTP callback client (progress, complete, fail)
+│   ├── contracts/         # Wire contract models (GenerationRequest, GenerationResult, NodeDraft, EdgeDraft)
+│   ├── embeddings/        # Pluggable embedding providers (HuggingFace, base interface)
+│   ├── orchestration/     # LangGraph state machine, nodes, prompts, and dependency container
+│   ├── providers/         # Primary LLM and decision model adapters (Groq, Jev, fallback chain)
+│   ├── rag/               # Pinecone hybrid vector store (per-map namespace), chunking, retrieval
+│   ├── scripts/           # Index management (create_pinecone_index.py) and local tester (run_local.py)
+│   ├── seed/              # Document normalizers (PDF, text, OCR image parsing)
+│   ├── tools/             # Research tools (Tavily web search, arXiv)
+│   └── worker/            # ARQ worker settings, signed URL file fetcher, task entry point
+├── tests/                 # Pytest test suite with zero external dependencies
+└── pyproject.toml         # uv dependencies & tool configuration
 ```
 
 ---
@@ -109,23 +111,23 @@ Key environment variables:
 ### 3. Initialize Pinecone Index
 Run once before first deployment to create the serverless Pinecone index with the matching vector dimension:
 ```bash
-python scripts/create_pinecone_index.py
+python mindmap_llm/scripts/create_pinecone_index.py
 ```
 
 ### 4. Run the ARQ Worker
 Start the worker listening for generation tasks:
 ```bash
-arq worker.settings.WorkerSettings
+arq mindmap_llm.worker.settings.WorkerSettings
 ```
 
 ### 5. Local Development Run (Without Redis)
 To test mind map generation locally without needing an ARQ worker or backend server:
 ```bash
 # Generate a new map
-python scripts/run_local.py generate <map-uuid> --topic "Machine Learning" --ideas "Supervised, Unsupervised, RL"
+python mindmap_llm/scripts/run_local.py generate <map-uuid> --topic "Machine Learning" --ideas "Supervised, Unsupervised, RL"
 
 # Full regeneration
-python scripts/run_local.py regenerate <map-uuid> --instruction "Expand on reinforcement learning algorithms"
+python mindmap_llm/scripts/run_local.py regenerate <map-uuid> --instruction "Expand on reinforcement learning algorithms"
 ```
 
 ---

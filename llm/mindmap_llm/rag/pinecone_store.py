@@ -74,9 +74,7 @@ class PineconeVectorStore:
         try:
             from pinecone import Pinecone
         except ImportError as exc:  # pragma: no cover
-            raise RuntimeError(
-                "pinecone package not installed. `pip install pinecone`."
-            ) from exc
+            raise RuntimeError("pinecone package not installed. `pip install pinecone`.") from exc
 
         self._pc = Pinecone(api_key=api_key)
         self._index = self._pc.Index(index_name)
@@ -87,14 +85,10 @@ class PineconeVectorStore:
         try:
             from pinecone_text.sparse import BM25Encoder
 
-            encoder = (
-                BM25Encoder.default()
-            )  # pre-fit general-English defaults; good enough to start
+            encoder = BM25Encoder.default()  # pre-fit general-English defaults; good enough to start
             return encoder
         except ImportError:
-            logger.info(
-                "pinecone-text not installed — hybrid search will fall back to dense-only."
-            )
+            logger.info("pinecone-text not installed — hybrid search will fall back to dense-only.")
             return None
         except Exception as exc:  # noqa: BLE001 - never let encoder setup break vector storage
             logger.warning(
@@ -109,9 +103,7 @@ class PineconeVectorStore:
         try:
             return self._bm25.encode_documents([text])[0]
         except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "BM25 encoding failed for one chunk, storing dense-only: %s", exc
-            )
+            logger.warning("BM25 encoding failed for one chunk, storing dense-only: %s", exc)
             return None
 
     def _sparse_query_vector(self, text: str) -> dict | None:
@@ -124,9 +116,7 @@ class PineconeVectorStore:
             return None
 
     @staticmethod
-    def _scale(
-        dense: list[float], sparse: dict | None, alpha: float
-    ) -> tuple[list[float], dict | None]:
+    def _scale(dense: list[float], sparse: dict | None, alpha: float) -> tuple[list[float], dict | None]:
         """Pinecone's documented convex-combination hybrid scaling."""
         if sparse is None:
             return dense, None
@@ -161,9 +151,7 @@ class PineconeVectorStore:
                 entry["sparse_values"] = sparse
             vectors.append(entry)
 
-        await asyncio.to_thread(
-            self._index.upsert, vectors=vectors, namespace=namespace
-        )
+        await asyncio.to_thread(self._index.upsert, vectors=vectors, namespace=namespace)
         return len(vectors)
 
     async def query(

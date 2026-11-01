@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import httpx
+from typing import Any
 
+import httpx
 from providers.base import ToolSpec
 from tools.base import Tool, ToolError, ToolResult
 
@@ -30,12 +31,13 @@ class TavilyWebSearchTool(Tool):
             },
         )
 
-    async def invoke(self, *, query: str) -> list[ToolResult]:
+    async def invoke(self, *, query: str = "", **kwargs: Any) -> list[ToolResult]:
+        query_val = query or str(kwargs.get("query", ""))
         try:
             async with httpx.AsyncClient(timeout=self._timeout_s) as client:
                 resp = await client.post(
                     "https://api.tavily.com/search",
-                    json={"api_key": self._api_key, "query": query, "max_results": self._max_results},
+                    json={"api_key": self._api_key, "query": query_val, "max_results": self._max_results},
                 )
                 resp.raise_for_status()
         except httpx.HTTPError as exc:

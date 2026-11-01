@@ -2,7 +2,7 @@
 
 Group 15, IT314 Software Engineering. Users submit raw ideas or reference material (text, PDFs, images), an LLM pipeline turns them into a mind map of nodes and edges, and the user refines the result on an interactive canvas.
 
-The repository is a foundation for the sprints in `Documentation/sprint_Grouping.md`. Product features are planned work and are not claimed as complete.
+The repository is a foundation for the sprints in `docs/requirements/sprint_Grouping.md`. Product features are planned work and are not claimed as complete.
 
 ## Layout
 
