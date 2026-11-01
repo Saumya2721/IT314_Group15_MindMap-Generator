@@ -2,16 +2,20 @@
 
 Migrated cleanly from mm_backend.maps into backend.maps.routes.
 """
+
 from __future__ import annotations
 
 import asyncio
 import hashlib
 import logging
 import secrets
-from enum import Enum
-from typing import Any, List, Optional, Union
+from enum import StrEnum
+from typing import Any
 from uuid import UUID, uuid4
 
+from contracts.models import FileRef, GenerationRequest, JobType
+from core.config import settings
+from core.supabase import admin, current_user_id
 from fastapi import (
     APIRouter,
     BackgroundTasks,
@@ -23,26 +27,19 @@ from fastapi import (
     UploadFile,
 )
 from pydantic import BaseModel, Field
+from services.queue import enqueue_generation_job, get_redis_pool
+from services.runner import limiter
+from uploads.service import delete_map_storage_files, read_uploads, store_files
 
-from contracts.models import FileRef, GenerationRequest, JobType
-from core.config import settings
-from core.supabase import admin, current_user_id
 from db.connection import transaction
 from db.repository import (
-    ActiveJobAlreadyExists,
     assert_map_owner,
     create_generation_job,
     get_chat_messages,
-    get_job as repo_get_job,
-    get_latest_job as repo_get_latest_job,
-    get_map_graph,
     get_or_create_chat_thread,
     has_active_job,
     insert_chat_message,
 )
-from services.queue import enqueue_generation_job, get_redis_pool
-from services.runner import limiter, run_generate, run_regenerate
-from uploads.service import read_uploads, store_files
 
 try:
     from seed.normalizer import SeedSubmission
@@ -50,10 +47,12 @@ except ImportError:
     from dataclasses import dataclass
 
     @dataclass
-    class SeedSubmission:
+    class _SeedSubmissionFallback:
         topic: str | None
         ideas: str | None
         files: list
+
+    SeedSubmission = _SeedSubmissionFallback  # type: ignore[misc]
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +61,7 @@ router = APIRouter(prefix="/api", tags=["Maps & generation"])
 JOB_COLS = "id, map_id, job_type, status, progress_percent, error_message, created_at, started_at, completed_at"
 
 
-class DetailLevel(str, Enum):
+class DetailLevel(StrEnum):
     overview = "overview"
     balanced = "balanced"
     detailed = "detailed"
@@ -72,20 +71,31 @@ class CreateMap(BaseModel):
     title: str = Field("Untitled mind map", min_length=1, max_length=255)
 
 
+class UpdateMap(BaseModel):
+    title: str | None = Field(None, min_length=1, max_length=255)
+    is_public: bool | None = None
+
+
 class RegenerateRequest(BaseModel):
     instruction: str = Field(..., min_length=3, max_length=2000)
-    detail_level: Optional[DetailLevel] = None
+    detail_level: DetailLevel | None = None
 
 
 class QuickGenerateRequest(BaseModel):
-    topic: Optional[str] = None
-    ideas: Optional[str] = None
-    detail_level: Optional[DetailLevel] = DetailLevel.overview
-    map_id: Optional[UUID] = None
+    topic: str | None = None
+    ideas: str | None = None
+    detail_level: DetailLevel | None = DetailLevel.overview
+    map_id: UUID | None = None
 
 
 def pool_of(request: Request):
-    return request.app.state.pool
+    pool = getattr(request.app.state, "pool", None)
+    if pool is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Database connection pool is unavailable. Please verify DATABASE_URL and Supabase project connectivity.",
+        )
+    return pool
 
 
 def job_dict(row) -> dict:
@@ -110,11 +120,62 @@ async def create_map(body: CreateMap, request: Request, uid: UUID = Depends(curr
 @router.get("/maps")
 async def list_maps(request: Request, uid: UUID = Depends(current_user_id)):
     rows = await pool_of(request).fetch(
-        "SELECT id, title, is_public, created_at, updated_at FROM public.mind_maps "
-        "WHERE user_id = $1 ORDER BY updated_at DESC",
+        """SELECT m.id, m.title, m.is_public, m.created_at, m.updated_at,
+                  (SELECT count(*)::int FROM public.nodes n WHERE n.map_id = m.id) AS node_count,
+                  (SELECT j.status FROM public.generation_jobs j WHERE j.map_id = m.id ORDER BY j.created_at DESC LIMIT 1) AS latest_job_status,
+                  (SELECT j.progress_percent::int FROM public.generation_jobs j WHERE j.map_id = m.id ORDER BY j.created_at DESC LIMIT 1) AS latest_job_progress,
+                  (SELECT j.id FROM public.generation_jobs j WHERE j.map_id = m.id ORDER BY j.created_at DESC LIMIT 1) AS latest_job_id
+           FROM public.mind_maps m
+           WHERE m.user_id = $1
+           ORDER BY m.updated_at DESC""",
         uid,
     )
     return [dict(r) for r in rows]
+
+
+@router.get("/maps/{map_id}", status_code=200)
+async def get_map(map_id: UUID, request: Request, uid: UUID = Depends(current_user_id)):
+    pool = pool_of(request)
+    is_owner = await assert_map_owner(pool, map_id, uid)
+    if not is_owner:
+        raise HTTPException(404, "Map not found")
+    row = await pool.fetchrow(
+        "SELECT id, title, is_public, created_at, updated_at FROM public.mind_maps WHERE id = $1",
+        map_id,
+    )
+    if not row:
+        raise HTTPException(404, "Map not found")
+    return dict(row)
+
+
+@router.patch("/maps/{map_id}", status_code=200)
+async def update_map(
+    map_id: UUID,
+    body: UpdateMap,
+    request: Request,
+    uid: UUID = Depends(current_user_id),
+):
+    pool = pool_of(request)
+    is_owner = await assert_map_owner(pool, map_id, uid)
+    if not is_owner:
+        raise HTTPException(404, "Map not found")
+
+    updates = []
+    args: list[Any] = [map_id]
+    if body.title is not None and body.title.strip():
+        args.append(body.title.strip())
+        updates.append(f"title = ${len(args)}")
+    if body.is_public is not None:
+        args.append(body.is_public)
+        updates.append(f"is_public = ${len(args)}")
+
+    if not updates:
+        raise HTTPException(400, "No fields to update")
+
+    updates.append("updated_at = now()")
+    sql = f"UPDATE public.mind_maps SET {', '.join(updates)} WHERE id = $1 RETURNING id, title, is_public, created_at, updated_at"
+    row = await pool.fetchrow(sql, *args)
+    return dict(row)
 
 
 # ------------------------------------------------------------------ Direct Quick Generate
@@ -242,11 +303,11 @@ async def generate(
     map_id: UUID,
     request: Request,
     background: BackgroundTasks,
-    topic: Optional[str] = Form(None),
-    ideas: Optional[str] = Form(None),
-    detail_level: Optional[DetailLevel] = Form(None),
-    file: Optional[Union[UploadFile, str]] = File(None, description="Upload a single PDF or image"),
-    files: Optional[Union[List[Union[UploadFile, str]], UploadFile, str]] = File(None, description="Or upload multiple files"),
+    topic: str | None = Form(None),
+    ideas: str | None = Form(None),
+    detail_level: DetailLevel | None = Form(None),
+    file: UploadFile | str | None = File(None, description="Upload a single PDF or image"),
+    files: list[UploadFile | str] | UploadFile | str | None = File(None, description="Or upload multiple files"),
     uid: UUID = Depends(current_user_id),
 ):
     pool = pool_of(request)
@@ -257,8 +318,14 @@ async def generate(
     topic = (topic or "").strip() or None
     ideas = (ideas or "").strip() or None
     combined_files = []
+
     def _is_file(obj: Any) -> bool:
-        return obj is not None and hasattr(obj, "filename") and hasattr(obj, "read") and bool(getattr(obj, "filename", None))
+        return (
+            obj is not None
+            and hasattr(obj, "filename")
+            and hasattr(obj, "read")
+            and bool(getattr(obj, "filename", None))
+        )
 
     if _is_file(file):
         combined_files.append(file)
@@ -303,12 +370,12 @@ async def generate(
             callback_token_hash=token_hash,
         )
 
-    stored_keys: List[str] = []
+    stored_keys: list[str] = []
     try:
         # Step 2: Store files using the exact same job_id in the storage path
         uploads = []
         if combined_files:
-            items = await read_uploads(combined_files)
+            items = await read_uploads(combined_files)  # type: ignore[arg-type]
             uploads = await store_files(uid, map_id, job_id, items)
             stored_keys = [u.storage_key for u in uploads if getattr(u, "storage_key", None)]
 
@@ -558,6 +625,20 @@ async def get_job(map_id: UUID, job_id: UUID, request: Request, uid: UUID = Depe
     return job_dict(row)
 
 
+@router.get("/jobs/{job_id}")
+async def get_job_by_id(job_id: UUID, request: Request, uid: UUID = Depends(current_user_id)):
+    """Allow user to inspect their generation job status directly using job_id."""
+    pool = pool_of(request)
+    row = await pool.fetchrow(
+        f"SELECT {JOB_COLS} FROM public.generation_jobs WHERE id = $1",
+        job_id,
+    )
+    if not row:
+        raise HTTPException(404, "Job not found")
+    await assert_map_owner(pool, row["map_id"], uid)
+    return job_dict(row)
+
+
 @router.get("/maps/{map_id}/chat")
 async def get_chat(map_id: UUID, request: Request, uid: UUID = Depends(current_user_id)):
     pool = pool_of(request)
@@ -592,5 +673,17 @@ async def delete_map(map_id: UUID, request: Request, uid: UUID = Depends(current
     is_owner = await assert_map_owner(pool, map_id, uid)
     if not is_owner:
         raise HTTPException(404, "Map not found")
+
+    # Clean up associated files in Supabase Storage before removing database record.
+    # If storage cleanup fails, abort to prevent orphaned storage objects.
+    try:
+        await delete_map_storage_files(user_id=uid, map_id=map_id, pool=pool)
+    except Exception as exc:
+        logger.error("Storage cleanup failed for map %s: %s", map_id, exc)
+        raise HTTPException(
+            status_code=502,
+            detail="Failed to clean up associated storage files. Map deletion aborted.",
+        ) from exc
+
     await pool.execute("DELETE FROM public.mind_maps WHERE id = $1", map_id)
     return {"message": "Map deleted successfully"}
