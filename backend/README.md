@@ -1,85 +1,102 @@
-# Mind Map Generator — Merged Project
+# Mind Map Generator — Backend API
 
-This repository unifies the FastAPI backend with the LLM generation engine and decoupled worker.
+FastAPI service powering the Mind Map Generator. Handles user authentication, database persistence via PostgreSQL / Supabase, seed file uploads via Supabase Storage, and generation job dispatching via Upstash Redis / ARQ.
 
-## Repository Structure
+---
+
+## Architecture & Responsibilities
+
+The backend acts as the central orchestrator and security boundary for the system:
+- **Authentication**: Dual-Defense architecture combining secure `HttpOnly` session cookies with in-memory Bearer token fallback. Integrated with Supabase GoTrue.
+- **Data Persistence**: Direct asynchronous PostgreSQL access using `asyncpg` connection pools. Manages mind maps, nodes, edges, chat threads, and job tracking.
+- **Storage Management**: Handles binary uploads (PDF, images, text) into the private Supabase Storage bucket `seed-assets` under `<user_id>/<map_id>/...` and cleans them up transactionally on map deletion.
+- **Queue Dispatcher**: Publishes `GenerationRequest` jobs to Upstash Redis for asynchronous execution by the detached ARQ worker service (`llm/`).
+- **Internal Callbacks**: Exposes token-protected `/internal/jobs/{job_id}/...` endpoints for progress updates, node/edge draft persistence, and job completion from the worker.
+
+---
+
+## Directory Structure
 
 ```text
-mindmap_generator/
-├── backend/                  # FastAPI Application
-│   ├── main.py               # Main application entry point & router registration
-│   ├── auth/                 # Supabase authentication service & schemas
-│   ├── core/                 # App configuration, security, database & Supabase client
-│   │   ├── config.py         # Application settings
-│   │   ├── database.py       # Pool alias
-│   │   ├── security.py       # Cookie management
-│   │   └── supabase.py       # Supabase Admin / Anon client & auth dependencies
-│   ├── db/                   # Database layer (PostgreSQL / Supabase asyncpg)
-│   │   ├── connection.py     # Connection pool & transaction manager
-│   │   ├── models.py         # Database model dataclasses
-│   │   └── repository.py     # Centralized SQL repository queries
-│   ├── maps/                 # Mind map routes (/api/maps, quick-generate, etc.)
-│   ├── uploads/              # File upload validation & Supabase Storage
-│   ├── services/             # Core business logic services
-│   │   ├── generator.py      # MindMapGenerator bridge to LLM engine
-│   │   ├── mindmap_service.py# MindMapBackendService (DB transactions + LLM call)
-│   │   └── runner.py         # Background execution & rate limiter
-│   ├── routes/               # API routers (auth, users, maps, internal callbacks)
-│   │   └── internal.py       # Worker callback endpoints (/internal/jobs/...)
-│   ├── static/               # Interactive Mind Map Studio web UI (index.html)
-│   └── tests/                # Backend unit & integration tests
-│
-├── llm/                      # LLM Engine & Decoupled ARQ Worker
-│   ├── config.py             # LLM, queue, RAG, and provider configurations
-│   ├── generator.py          # MindMapGenerator implementation
-│   ├── contracts/            # Wire contracts (GenerationRequest, GenerationResult, drafts)
-│   ├── providers/            # LLM provider adapters (Groq, Jev, fallback chain)
-│   ├── orchestration/        # LangGraph state machine, nodes, and prompts
-│   ├── validation/           # Schema validation rules (DR-01 to DR-04, single root, DAG)
-│   ├── seed/                 # Document normalization (PDF text, image OCR)
-│   ├── rag/                  # Pinecone hybrid vector store & retrieval
-│   ├── callback/             # HTTP callback client for decoupled worker
-│   ├── worker/               # ARQ background worker tasks
-│   └── tests/                # LLM test suite
-│
-└── requirements.txt          # Combined project dependencies
+backend/
+├── app/
+│   ├── main.py               # Application entrypoint & middleware configuration
+│   ├── auth/                 # Authentication services, schemas, and password hashing
+│   ├── core/                 # Config (settings), Supabase admin client, security helpers
+│   ├── db/                   # Connection pool management and SQL repository queries
+│   ├── contracts/            # Wire contracts (GenerationRequest, FileRef, JobType)
+│   ├── maps/                 # Map CRUD and generation trigger endpoints (/api/maps)
+│   ├── routes/               # API routers (auth, users, internal worker callbacks)
+│   ├── services/             # ARQ queue dispatcher, worker runner, mindmap service
+│   └── uploads/              # Multipart file ingestion and Supabase Storage cleanup
+├── db/
+│   └── schema.sql            # Master PostgreSQL schema definition (tables, RLS, indexes)
+├── tests/
+│   └── unit/                 # Pytest unit tests (auth, contracts, storage cleanup)
+└── pyproject.toml            # Dependencies, Ruff, Mypy, and Pytest configuration
 ```
 
-## Setup & Running
+---
 
-1. **Activate or create your virtual environment**:
-   ```bash
-   cd backend
-   .\venv\Scripts\activate   # on Windows
-   # or source venv/bin/activate on Linux/Mac
-   ```
+## Getting Started
 
-2. **Install dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
+### 1. Prerequisites
+- Python 3.12+
+- Access to Supabase PostgreSQL and Supabase Storage bucket (`seed-assets`)
+- Upstash Redis instance (for background job queue)
 
-3. **Configure Environment Variables & Database**:
-   - Copy `backend/.env.example` to `backend/.env` (and `llm/.env.example` to `llm/.env` if running the ARQ worker separately).
-   - Fill in your `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `DATABASE_URL`, and `LLM_API_KEY` (Groq).
-   - Set up your Supabase database tables by running the script at [backend/db/schema.sql](file:///c:/Users/LENOVO/Downloads/mindmap_generator/mindmap_generator/backend/db/schema.sql) in your Supabase SQL Editor.
-
-4. **Run the FastAPI server**:
-   ```bash
-   cd backend
-   python main.py
-   # or: uvicorn main:app --reload
-   ```
-
-5. **Access the application**:
-   - Web Studio UI: [http://localhost:8000/app](http://localhost:8000/app) or [http://localhost:8000/](http://localhost:8000/)
-   - Swagger OpenAPI Docs: [http://localhost:8000/docs](http://localhost:8000/docs)
-   - Health Check: [http://localhost:8000/api/health](http://localhost:8000/api/health)
-
-## Running Tests
-
-Run the full test suite (backend + LLM unit tests):
+### 2. Environment Configuration
+Copy `.env.example` to `.env` in the `backend/` directory:
 ```bash
-cd backend
-pytest tests ..\llm\tests
+cp .env.example .env
+```
+Ensure the following variables are configured:
+```ini
+DATABASE_URL=postgresql://postgres:...@...pooler.supabase.com:6543/postgres
+SUPABASE_URL=https://<your-project>.supabase.co
+SUPABASE_ANON_KEY=eyJ...
+SUPABASE_SERVICE_ROLE_KEY=eyJ...
+REDIS_URL=rediss://default:...@...upstash.io:6379
+JWT_SECRET=your-secure-jwt-secret
+INTERNAL_API_SECRET=your-worker-callback-secret
+```
+
+### 3. Running the Server
+
+Using `uv`:
+```bash
+uv sync
+uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+Or using standard Python virtual environment:
+```bash
+python -m venv .venv
+source .venv/bin/activate       # On Windows: .venv\Scripts\activate
+pip install -e .
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+- API Base: `http://localhost:8000`
+- Interactive OpenAPI Docs: `http://localhost:8000/docs`
+- Health Check: `http://localhost:8000/api/health`
+
+---
+
+## Quality & Testing Commands
+
+All quality gates must pass before submitting changes:
+
+```bash
+# 1. Format check
+python -m ruff format --check app
+
+# 2. Linter check
+python -m ruff check app
+
+# 3. Static type analysis
+python -m mypy app
+
+# 4. Unit test suite
+python -m pytest tests -q
 ```
