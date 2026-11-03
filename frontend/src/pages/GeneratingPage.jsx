@@ -670,7 +670,10 @@ export default function GeneratingPage({ initialPhase }) {
                         setGenerationError('')
                         const activeId = mapId || routeMapId
                         if (activeId) {
-                          navigate(`/editor/${activeId}`, { replace: true, state: { mode: 'editor' } })
+                          navigate(`/editor/${activeId}`, {
+                            replace: true,
+                            state: { mode: 'editor' },
+                          })
                         }
                       }}
                       style={{ fontSize: '12px', padding: '6px 12px' }}
