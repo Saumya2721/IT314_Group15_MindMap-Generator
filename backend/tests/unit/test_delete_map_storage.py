@@ -85,10 +85,12 @@ async def test_delete_map_storage_files_raises_on_storage_failure():
     mock_bucket.remove.side_effect = Exception("Supabase Storage 503 Unavailable")
     mock_storage.from_.return_value = mock_bucket
 
-    with patch("uploads.service.admin.storage", mock_storage):
-        with pytest.raises(RuntimeError, match="Storage deletion failed for keys"):
-            await delete_map_storage_files(
-                user_id=user_id,
-                map_id=map_id,
-                pool=mock_pool,
-            )
+    with (
+        patch("uploads.service.admin.storage", mock_storage),
+        pytest.raises(RuntimeError, match="Storage deletion failed for keys"),
+    ):
+        await delete_map_storage_files(
+            user_id=user_id,
+            map_id=map_id,
+            pool=mock_pool,
+        )

@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import uuid
-
 import pytest
+from validation.schema import ValidationFailure, resolve_to_records, validate_draft
 
 from tests.conftest import VALID_DRAFT_PAYLOAD
-from validation.schema import ValidationFailure, resolve_to_records, validate_draft
 
 
 def test_valid_draft_passes():

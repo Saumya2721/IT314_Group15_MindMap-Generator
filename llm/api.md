@@ -262,9 +262,7 @@ async def generate_map(
     # 2. Prevent concurrent runs on the same map
     active_job = await get_active_job(db, map_id)
     if active_job:
-        raise HTTPException(
-            status_code=409, detail="A generation job is already running for this map."
-        )
+        raise HTTPException(status_code=409, detail="A generation job is already running for this map.")
 
     # 3. Create generation_jobs row (status='pending')
     job_id = uuid.uuid4()

@@ -425,9 +425,7 @@ async def report_fail(
         # P1-6: Honor chk_generation_job_lifecycle:
         # If job already started (started_at IS NOT NULL), terminal status must be 'failed'.
         # Only jobs that never started (started_at IS NULL) can be 'rejected'.
-        final_status = (
-            "rejected" if result.status == "rejected" and job_row["started_at"] is None else "failed"
-        )
+        final_status = "rejected" if result.status == "rejected" and job_row["started_at"] is None else "failed"
 
         try:
             await conn.execute(

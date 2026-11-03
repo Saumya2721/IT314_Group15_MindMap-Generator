@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import json
 import uuid
+
 import httpx
 import pytest
-
 from callback.client import CallbackAlreadySent, JobCallbackClient, NullCallbackClient
 from contracts.models import GenerationError, GenerationResult
 

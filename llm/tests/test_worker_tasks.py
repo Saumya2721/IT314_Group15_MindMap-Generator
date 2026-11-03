@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 import uuid
-import pytest
 
+import pytest
 from config import Settings
 from contracts.models import ChunkSource, GenerationRequest, JobType
 from rag.pinecone_store import VectorChunk
+from worker.tasks import generate_mindmap
+
 from tests.conftest import (
     VALID_DRAFT_PAYLOAD,
     FakeCallbackClient,
@@ -15,7 +17,6 @@ from tests.conftest import (
     FakeLLMProvider,
     FakeVectorStore,
 )
-from worker.tasks import generate_mindmap
 
 
 class ExplodingLLM(FakeLLMProvider):

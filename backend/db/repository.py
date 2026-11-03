@@ -41,7 +41,7 @@ def _row_to_job(row: asyncpg.Record) -> GenerationJob:
         created_at=row["created_at"],
         started_at=row["started_at"],
         completed_at=row["completed_at"],
-        callback_token_hash=row["callback_token_hash"] if "callback_token_hash" in row else None,
+        callback_token_hash=row.get("callback_token_hash", None),
     )
 
 

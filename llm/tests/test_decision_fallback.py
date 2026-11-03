@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import pytest
-
 from providers.decision_fallback import HeuristicDecisionModel, LLMBackedDecisionModel
 from providers.decision_model import DecisionModelUnavailable
 from providers.registry import SafeDecisionModel
+
 from tests.conftest import FakeLLMProvider
 
 
@@ -12,7 +12,9 @@ from tests.conftest import FakeLLMProvider
 async def test_llm_backed_classify_picks_a_valid_label():
     llm = FakeLLMProvider(responses=["balanced"])
     model = LLMBackedDecisionModel(llm)
-    result = await model.classify(state="some seed text", question="detail level?", labels=["overview", "balanced", "detailed"])
+    result = await model.classify(
+        state="some seed text", question="detail level?", labels=["overview", "balanced", "detailed"]
+    )
     assert result.label == "balanced"
 
 
