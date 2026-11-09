@@ -23,11 +23,16 @@ from typing import Literal, cast
 
 from contracts.models import ChunkSource
 from orchestration.deps import GenerationDeps
+from orchestration.policy import SeedMode, plan_research
 from orchestration.prompts import (
+    DETAIL_LEVEL_QUESTION,
     GENERATION_SYSTEM_PROMPT,
     JSONExtractionError,
+    build_generation_system_prompt,
     build_generation_user_prompt,
+    estimate_tokens,
     extract_json_object,
+    size_targets,
 )
 from orchestration.state import GenerationState
 from providers.base import Message
@@ -69,42 +74,96 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
         if regen_instr:
             query_text += "\n\n" + regen_instr
 
+        enable_dynamic = deps.settings.generation.enable_dynamic_prompts
+
         resolved_detail = state.get("detail_level")
         if not resolved_detail:
-            result = await deps.decision_model.classify(
-                state=query_text[:4000],
-                question=(
+            question = (
+                DETAIL_LEVEL_QUESTION
+                if enable_dynamic
+                else (
                     "How much detail should this mind map have? "
                     "'overview' = 5-10 nodes high level, "
                     "'balanced' = 10-25 nodes with one sub-level, "
                     "'detailed' = 25-60 nodes multi-level."
-                ),
+                )
+            )
+            result = await deps.decision_model.classify(
+                state=query_text[:4000],
+                question=question,
                 labels=DETAIL_LEVELS,
             )
             resolved_detail = cast(Literal["overview", "balanced", "detailed"], result.label)
             logger.info("Inferred detail_level=%s (confidence=%.2f)", resolved_detail, result.confidence)
 
-        web_search_available = "web_search" in deps.tools
-        arxiv_available = "arxiv_search" in deps.tools
         routing: dict[str, bool] = {"web_search": False, "arxiv_search": False}
 
-        if web_search_available:
-            r = await deps.decision_model.classify(
-                state=query_text[:4000],
-                question=("Would a live web search meaningfully improve grounding for this mind map's content?"),
-                labels=["yes", "no"],
-            )
-            routing["web_search"] = r.label == "yes"
-        if arxiv_available:
-            r = await deps.decision_model.classify(
-                state=query_text[:4000],
-                question=("Is this topic academic/technical enough that arXiv papers would add useful grounding?"),
-                labels=["yes", "no"],
-            )
-            routing["arxiv_search"] = r.label == "yes"
+        if not enable_dynamic:
+            # Legacy Sprint 1 routing and sizing
+            if "web_search" in deps.tools:
+                r = await deps.decision_model.classify(
+                    state=query_text[:4000],
+                    question="Would a live web search meaningfully improve grounding for this mind map's content?",
+                    labels=["yes", "no"],
+                )
+                routing["web_search"] = r.label == "yes"
+            if "arxiv_search" in deps.tools:
+                r = await deps.decision_model.classify(
+                    state=query_text[:4000],
+                    question="Is this topic academic/technical enough that arXiv papers would add useful grounding?",
+                    labels=["yes", "no"],
+                )
+                routing["arxiv_search"] = r.label == "yes"
+
+            await deps.callback.progress(20)
+            return {"resolved_detail_level": resolved_detail, "routing_decision": routing}
+
+        available_tools = set(deps.tools.keys())
+        has_files = state.get("seed_has_files", False)
+        plan = plan_research(
+            seed_text=state["seed_text"],
+            has_files=has_files,
+            available_tools=available_tools,
+            purpose=state.get("purpose"),
+        )
+        logger.info("Research plan: %s", plan.reason)
+
+        if "web_search" in available_tools:
+            if plan.web_search is not None:
+                routing["web_search"] = plan.web_search
+            else:
+                r = await deps.decision_model.classify(
+                    state=query_text[:4000],
+                    question="Would a live web search meaningfully improve grounding for this mind map's content?",
+                    labels=["yes", "no"],
+                )
+                routing["web_search"] = r.label == "yes"
+
+        if "arxiv_search" in available_tools:
+            if plan.arxiv_search is not None:
+                routing["arxiv_search"] = plan.arxiv_search
+            else:
+                r = await deps.decision_model.classify(
+                    state=query_text[:4000],
+                    question="Is this topic academic/technical enough that arXiv papers would add useful grounding?",
+                    labels=["yes", "no"],
+                )
+                routing["arxiv_search"] = r.label == "yes"
+
+        targets = size_targets(
+            resolved_detail,
+            seed_tokens=estimate_tokens(state["seed_text"]),
+            mode=plan.mode,
+            max_output_tokens=deps.settings.llm.max_output_tokens,
+        )
 
         await deps.callback.progress(20)
-        return {"resolved_detail_level": resolved_detail, "routing_decision": routing}
+        return {
+            "resolved_detail_level": resolved_detail,
+            "routing_decision": routing,
+            "mode": plan.mode,
+            "targets": targets,
+        }
 
     async def retrieve_node(state: GenerationState) -> dict:
         query = state["seed_text"][:2000]
@@ -167,16 +226,41 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
 
     async def generate_node(state: GenerationState) -> dict:
         supporting_context = [c.record.chunk_text for c in state.get("retrieved_chunks", [])]
-        prompt = build_generation_user_prompt(
-            seed_text=state["seed_text"],
-            detail_level=state["resolved_detail_level"],
-            supporting_context=supporting_context,
-            regeneration_instruction=state.get("regeneration_instruction"),
-            previous_validation_errors=state.get("validation_errors") or None,
-        )
+        enable_dynamic = deps.settings.generation.enable_dynamic_prompts
+
+        if not enable_dynamic:
+            system_prompt = GENERATION_SYSTEM_PROMPT
+            prompt = build_generation_user_prompt(
+                seed_text=state["seed_text"],
+                detail_level=state["resolved_detail_level"],
+                supporting_context=supporting_context,
+                regeneration_instruction=state.get("regeneration_instruction"),
+                previous_validation_errors=state.get("validation_errors") or None,
+            )
+        else:
+            mode: SeedMode = state.get("mode", "document")
+            targets = state.get("targets")
+            if targets is None:
+                targets = size_targets(
+                    state.get("resolved_detail_level", "balanced"),
+                    seed_tokens=estimate_tokens(state["seed_text"]),
+                    mode=mode,
+                    max_output_tokens=deps.settings.llm.max_output_tokens,
+                )
+
+            system_prompt = build_generation_system_prompt(targets, mode)
+            prompt = build_generation_user_prompt(
+                seed_text=state["seed_text"],
+                detail_level=state["resolved_detail_level"],
+                supporting_context=supporting_context,
+                regeneration_instruction=state.get("regeneration_instruction"),
+                previous_validation_errors=state.get("validation_errors") or None,
+                mode=mode,
+            )
+
         response = await deps.llm.generate(
             [Message(role="user", content=prompt)],
-            system=GENERATION_SYSTEM_PROMPT,
+            system=system_prompt,
             max_tokens=deps.settings.llm.max_output_tokens,
             temperature=0.3,
         )

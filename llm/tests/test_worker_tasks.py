@@ -4,7 +4,7 @@ import json
 import uuid
 
 import pytest
-from config import Settings
+from config import GenerationConfig, Settings
 from contracts.models import ChunkSource, GenerationRequest, JobType
 from rag.pinecone_store import VectorChunk
 from worker.tasks import generate_mindmap
@@ -192,3 +192,61 @@ async def test_generate_mindmap_regenerate_full_no_seed_rejected():
     assert callback.fail_result is not None
     assert callback.fail_result.status == "rejected"
     assert "No original seed chunks found" in callback.fail_result.error.message
+
+
+class CapturingLLM(FakeLLMProvider):
+    def __init__(self, responses: list[str]):
+        super().__init__(responses)
+        self.systems: list[str] = []
+
+    async def generate(self, messages, *, system=None, **kwargs):
+        self.systems.append(system or "")
+        return await super().generate(messages, system=system, **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_feature_flag_dynamic_prompts_enabled():
+    payload = _build_request_payload(topic="Short topic", ideas=None)
+    callback = FakeCallbackClient()
+    llm = CapturingLLM([json.dumps(VALID_DRAFT_PAYLOAD)])
+    settings = Settings(generation=GenerationConfig(enable_dynamic_prompts=True))
+    ctx = {
+        "llm": llm,
+        "decision_model": FakeDecisionModel(),
+        "embedding_provider": FakeEmbeddingProvider(),
+        "vector_store": FakeVectorStore(),
+        "tools": {},
+        "settings": settings,
+        "callback": callback,
+    }
+
+    result = await generate_mindmap(ctx, payload)
+    assert result["status"] == "completed"
+    assert len(llm.systems) == 1
+    # Dynamic prompt has min_nodes to max_nodes and mode rule
+    assert "Mode TOPIC" in llm.systems[0] or "Mode DOCUMENT" in llm.systems[0]
+
+
+@pytest.mark.asyncio
+async def test_feature_flag_dynamic_prompts_disabled_falls_back():
+    payload = _build_request_payload(topic="Short topic", ideas=None)
+    callback = FakeCallbackClient()
+    llm = CapturingLLM([json.dumps(VALID_DRAFT_PAYLOAD)])
+    settings = Settings(generation=GenerationConfig(enable_dynamic_prompts=False))
+    ctx = {
+        "llm": llm,
+        "decision_model": FakeDecisionModel(),
+        "embedding_provider": FakeEmbeddingProvider(),
+        "vector_store": FakeVectorStore(),
+        "tools": {},
+        "settings": settings,
+        "callback": callback,
+    }
+
+    result = await generate_mindmap(ctx, payload)
+    assert result["status"] == "completed"
+    assert len(llm.systems) == 1
+    # Fallback uses static GENERATION_SYSTEM_PROMPT
+    from orchestration.prompts import GENERATION_SYSTEM_PROMPT
+
+    assert llm.systems[0] == GENERATION_SYSTEM_PROMPT

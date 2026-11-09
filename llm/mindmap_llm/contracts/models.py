@@ -73,6 +73,8 @@ class GenerationRequest(BaseModel):
     regeneration_instruction: str | None = None
 
     detail_level: DetailLevel | None = None  # None => worker infers it
+    purpose: str | None = None
+    seed_has_files: bool = False
 
     # Internal callback auth — see callback/client.py. Not a user secret;
     # scoped to this one job by the backend when it enqueues.
@@ -92,6 +94,7 @@ class NodeDraft(BaseModel):
     node_type: str = "default"
     background_color: str | None = None  # "#RRGGBB", validated by validation/schema.py
     text_color: str | None = None
+    sources: list[str] = Field(default_factory=list)
 
 
 class EdgeDraft(BaseModel):

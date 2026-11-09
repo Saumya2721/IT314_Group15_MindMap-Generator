@@ -88,3 +88,17 @@ def test_resolve_to_records_produces_valid_uuids_and_preserves_edges():
         assert e.source_node_id in node_ids
         assert e.target_node_id in node_ids
         assert e.source_node_id != e.target_node_id
+
+
+def test_draft_with_sources_resolves_properly():
+    payload = {
+        "nodes": [
+            {"id": "n1", "label": "Photosynthesis", "description": "Root", "sources": ["seed"]},
+            {"id": "n2", "label": "Light Reactions", "description": "Step 1", "sources": ["ctx:1", "general"]},
+        ],
+        "edges": [{"source": "n1", "target": "n2", "label": "includes"}],
+    }
+    draft = validate_draft(payload)
+    nodes, _ = resolve_to_records(draft)
+    assert nodes[0].sources == ["seed"]
+    assert nodes[1].sources == ["ctx:1", "general"]
