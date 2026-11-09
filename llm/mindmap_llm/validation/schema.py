@@ -49,6 +49,7 @@ class _DraftNode(BaseModel):
     background_color: str | None = None
     text_color: str | None = None
     node_type: str = "default"
+    sources: list[str] = Field(default_factory=list)
 
     @field_validator("background_color", "text_color")
     @classmethod
@@ -176,6 +177,7 @@ def resolve_to_records(draft: DraftMindMap) -> tuple[list[NodeDraft], list[EdgeD
             node_type=n.node_type,
             background_color=n.background_color,
             text_color=n.text_color,
+            sources=n.sources,
         )
         for n in draft.nodes
     ]

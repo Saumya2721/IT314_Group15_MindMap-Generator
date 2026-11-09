@@ -136,6 +136,8 @@ async def _run(request: GenerationRequest, namespace: str, deps: GenerationDeps)
             "detail_level": request.detail_level,
             "regeneration_instruction": request.regeneration_instruction,
             "is_regeneration": is_regeneration,
+            "purpose": request.purpose,
+            "seed_has_files": bool(request.files or request.seed_has_files),
         },
         max_retries=deps.settings.generation.max_generation_retries,
     )
