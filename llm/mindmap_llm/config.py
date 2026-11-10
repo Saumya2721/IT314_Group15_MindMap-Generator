@@ -144,6 +144,7 @@ class GenerationConfig:
     overview_latency_budget_s: float = field(default_factory=lambda: _get_float("OVERVIEW_LATENCY_BUDGET_S", 30.0))
     detailed_latency_budget_s: float = field(default_factory=lambda: _get_float("DETAILED_LATENCY_BUDGET_S", 180.0))
     enable_dynamic_prompts: bool = field(default_factory=lambda: _get_bool("ENABLE_DYNAMIC_PROMPTS", True))
+    thin_seed_word_threshold: int = field(default_factory=lambda: _get_int("THIN_SEED_WORD_THRESHOLD", 250))
 
 
 @dataclass(frozen=True)

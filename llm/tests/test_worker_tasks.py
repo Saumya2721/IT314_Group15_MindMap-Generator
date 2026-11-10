@@ -6,7 +6,9 @@ import uuid
 import pytest
 from config import GenerationConfig, Settings
 from contracts.models import ChunkSource, GenerationRequest, JobType
+from providers.base import ToolSpec
 from rag.pinecone_store import VectorChunk
+from tools.base import Tool, ToolResult
 from worker.tasks import generate_mindmap
 
 from tests.conftest import (
@@ -29,6 +31,8 @@ def _build_request_payload(
     topic: str | None = "Photosynthesis",
     ideas: str | None = "Light reactions, Calvin cycle",
     regeneration_instruction: str | None = None,
+    purpose: str | None = None,
+    seed_has_files: bool = False,
 ) -> dict:
     req = GenerationRequest(
         job_id=uuid.uuid4(),
@@ -37,6 +41,8 @@ def _build_request_payload(
         topic=topic,
         ideas=ideas,
         regeneration_instruction=regeneration_instruction,
+        purpose=purpose,
+        seed_has_files=seed_has_files,
         callback_base_url="https://api.test",
         callback_token="test-token",
     )
@@ -250,3 +256,82 @@ async def test_feature_flag_dynamic_prompts_disabled_falls_back():
     from orchestration.prompts import GENERATION_SYSTEM_PROMPT
 
     assert llm.systems[0] == GENERATION_SYSTEM_PROMPT
+
+
+class RecordingTool(Tool):
+    def __init__(self, name: str):
+        self._name = name
+        self.invoked = False
+        self.queries: list[str] = []
+
+    @property
+    def spec(self) -> ToolSpec:
+        return ToolSpec(name=self._name, description=f"Test tool {self._name}", parameters={})
+
+    async def invoke(self, **kwargs) -> list[ToolResult]:
+        self.invoked = True
+        self.queries.append(kwargs.get("query", ""))
+        return [ToolResult(content="Mock search result", source_title="Mock Title", source_url="https://mock.test")]
+
+
+@pytest.mark.asyncio
+async def test_routing_policy_forces_web_search_for_thin_seed():
+    payload = _build_request_payload(topic="Short topic", ideas=None)
+    callback = FakeCallbackClient()
+    llm = FakeLLMProvider([json.dumps(VALID_DRAFT_PAYLOAD)])
+    web_tool = RecordingTool("web_search")
+    ctx = {
+        "llm": llm,
+        "decision_model": FakeDecisionModel(),
+        "embedding_provider": FakeEmbeddingProvider(),
+        "vector_store": FakeVectorStore(),
+        "tools": {"web_search": web_tool},
+        "settings": Settings(),
+        "callback": callback,
+    }
+
+    result = await generate_mindmap(ctx, payload)
+    assert result["status"] == "completed"
+    assert web_tool.invoked is True
+
+
+@pytest.mark.asyncio
+async def test_routing_policy_forces_arxiv_for_research_purpose():
+    payload = _build_request_payload(topic="Neural attention mechanisms", ideas=None, purpose="research")
+    callback = FakeCallbackClient()
+    llm = FakeLLMProvider([json.dumps(VALID_DRAFT_PAYLOAD)])
+    arxiv_tool = RecordingTool("arxiv_search")
+    ctx = {
+        "llm": llm,
+        "decision_model": FakeDecisionModel(),
+        "embedding_provider": FakeEmbeddingProvider(),
+        "vector_store": FakeVectorStore(),
+        "tools": {"arxiv_search": arxiv_tool},
+        "settings": Settings(),
+        "callback": callback,
+    }
+
+    result = await generate_mindmap(ctx, payload)
+    assert result["status"] == "completed"
+    assert arxiv_tool.invoked is True
+
+
+@pytest.mark.asyncio
+async def test_routing_policy_disables_arxiv_for_brainstorm_purpose():
+    payload = _build_request_payload(topic="Weekend vacation ideas", ideas=None, purpose="brainstorm")
+    callback = FakeCallbackClient()
+    llm = FakeLLMProvider([json.dumps(VALID_DRAFT_PAYLOAD)])
+    arxiv_tool = RecordingTool("arxiv_search")
+    ctx = {
+        "llm": llm,
+        "decision_model": FakeDecisionModel(),
+        "embedding_provider": FakeEmbeddingProvider(),
+        "vector_store": FakeVectorStore(),
+        "tools": {"arxiv_search": arxiv_tool},
+        "settings": Settings(),
+        "callback": callback,
+    }
+
+    result = await generate_mindmap(ctx, payload)
+    assert result["status"] == "completed"
+    assert arxiv_tool.invoked is False

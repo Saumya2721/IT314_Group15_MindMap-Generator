@@ -125,6 +125,7 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
             has_files=has_files,
             available_tools=available_tools,
             purpose=state.get("purpose"),
+            thin_seed_word_threshold=deps.settings.generation.thin_seed_word_threshold,
         )
         logger.info("Research plan: %s", plan.reason)
 
@@ -163,6 +164,8 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
             "routing_decision": routing,
             "mode": plan.mode,
             "targets": targets,
+            "target_node_range": (targets.min_nodes, targets.max_nodes),
+            "target_max_depth": targets.max_depth,
         }
 
     async def retrieve_node(state: GenerationState) -> dict:
