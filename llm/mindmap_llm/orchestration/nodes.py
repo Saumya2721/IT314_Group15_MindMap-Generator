@@ -225,7 +225,7 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
         return {"retrieved_chunks": reranked, "tool_call_log": tool_call_log}
 
     async def generate_node(state: GenerationState) -> dict:
-        supporting_context = [c.record.chunk_text for c in state.get("retrieved_chunks", [])]
+        retrieved_chunks = state.get("retrieved_chunks", [])
         enable_dynamic = deps.settings.generation.enable_dynamic_prompts
 
         if not enable_dynamic:
@@ -233,7 +233,9 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
             prompt = build_generation_user_prompt(
                 seed_text=state["seed_text"],
                 detail_level=state["resolved_detail_level"],
-                supporting_context=supporting_context,
+                target_node_range=(10, 25),
+                target_max_depth=3,
+                supporting_context=retrieved_chunks,
                 regeneration_instruction=state.get("regeneration_instruction"),
                 previous_validation_errors=state.get("validation_errors") or None,
             )
@@ -252,7 +254,9 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
             prompt = build_generation_user_prompt(
                 seed_text=state["seed_text"],
                 detail_level=state["resolved_detail_level"],
-                supporting_context=supporting_context,
+                target_node_range=(targets.min_nodes, targets.max_nodes),
+                target_max_depth=targets.max_depth,
+                supporting_context=retrieved_chunks,
                 regeneration_instruction=state.get("regeneration_instruction"),
                 previous_validation_errors=state.get("validation_errors") or None,
                 mode=mode,
