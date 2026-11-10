@@ -4,9 +4,12 @@ import json
 import re
 from dataclasses import dataclass, replace
 from string import Template
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from orchestration.policy import SeedMode
+
+if TYPE_CHECKING:
+    from rag.retrieval import RetrievedChunk
 
 DetailLevel = Literal["overview", "balanced", "detailed"]
 
@@ -198,13 +201,22 @@ def build_generation_user_prompt(
     *,
     seed_text: str,
     detail_level: str,
-    supporting_context: list[str],
+    target_node_range: tuple[int, int] = (10, 25),
+    target_max_depth: int = 3,
+    supporting_context: list[RetrievedChunk],
     regeneration_instruction: str | None,
     previous_validation_errors: list[str] | None,
     mode: SeedMode = "document",
 ) -> str:
     heading = "Topic and ideas:" if mode == "topic" else "Seed:"
-    parts = [f"Detail level: {detail_level}", f"Mode: {mode}", "", heading, seed_text.strip()]
+    parts = [
+        f"Detail level: {detail_level}",
+        f"Mode: {mode}",
+        f"Target: {target_node_range[0]}–{target_node_range[1]} nodes, max {target_max_depth} levels deep.",
+        "",
+        heading,
+        seed_text.strip(),
+    ]
 
     if regeneration_instruction:
         parts += [
@@ -215,8 +227,27 @@ def build_generation_user_prompt(
         ]
 
     if supporting_context:
+        # Check whether any chunk carries a section_path (available after S2-L4 merges).
+        has_section_paths = any(getattr(chunk.record, "section_path", None) for chunk in supporting_context)
+        if has_section_paths:
+            parts += [
+                "",
+                "Use retrieved Section Paths as structural guidance:",
+                "- Top-level heading → primary branch off root",
+                "- Second-level heading → secondary branch",
+                "- Third-level heading or below → leaf cluster",
+            ]
         parts += ["", "Supporting context (cite as ctx:<n>):"]
-        parts += [f"[{i}] {chunk.strip()}" for i, chunk in enumerate(supporting_context, 1)]
+        for i, chunk in enumerate(supporting_context, 1):
+            section = getattr(chunk.record, "section_path", None)
+            url = getattr(chunk.record, "source_url", None)
+            header = f"[{i}]"
+            if section:
+                header += f" | Section: {section}"
+            if url:
+                header += f" | Source: {url}"
+            parts.append(header)
+            parts.append(chunk.record.chunk_text.strip())
     else:
         parts += ["", "Supporting context: none retrieved."]
 
