@@ -3,21 +3,20 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-
-from app.chat.dependencies import check_rate_limit, get_mindmap_service
-from app.chat.schemas import (
+from chat.dependencies import check_rate_limit, get_mindmap_service
+from chat.schemas import (
     ActionConfirm,
     ActionConfirmResponse,
     MessageCreate,
     MessageResponse,
 )
-from app.chat.service import (
+from chat.service import (
     confirm_proposed_action,
     get_paginated_history,
     save_message,
 )
-from app.core.supabase import get_current_user
+from core.supabase import get_current_user
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 if TYPE_CHECKING:
     from services.mindmap_service import MindMapBackendService

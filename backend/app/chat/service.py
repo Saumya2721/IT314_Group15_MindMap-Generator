@@ -1,7 +1,7 @@
 from typing import Any
 
-from app.chat.schemas import ActionConfirm, MessageCreate
-from app.core.supabase import admin
+from chat.schemas import ActionConfirm, MessageCreate
+from core.supabase import admin
 
 db = admin
 

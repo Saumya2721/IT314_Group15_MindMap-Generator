@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from fastapi import HTTPException, Request
 
 # Sliding-window rate limiter (in-memory per client/user)
-request_history = collections.defaultdict(list)
+request_history: collections.defaultdict[str, list[datetime]] = collections.defaultdict(list)
 MAX_REQUESTS_PER_MINUTE = 20
 
 
