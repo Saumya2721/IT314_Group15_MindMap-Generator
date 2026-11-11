@@ -48,7 +48,11 @@ function SnapshotFlowPreview({ snapshotData }) {
         >
           <Background color="#b0b8b6" gap={24} size={1} />
           <Controls showInteractive={false} position="bottom-right" />
-          <MiniMap nodeStrokeColor="#155E63" maskColor="rgba(240, 245, 243, 0.75)" position="bottom-left" />
+          <MiniMap
+            nodeStrokeColor="#155E63"
+            maskColor="rgba(240, 245, 243, 0.75)"
+            position="bottom-left"
+          />
         </ReactFlow>
       </ReactFlowProvider>
     </div>
@@ -56,8 +60,12 @@ function SnapshotFlowPreview({ snapshotData }) {
 }
 
 function RestoreConfirm({ snapshot, onConfirm, onCancel }) {
-  const nodeCount = Array.isArray(snapshot?.snapshot_data?.nodes) ? snapshot.snapshot_data.nodes.length : 0
-  const edgeCount = Array.isArray(snapshot?.snapshot_data?.edges) ? snapshot.snapshot_data.edges.length : 0
+  const nodeCount = Array.isArray(snapshot?.snapshot_data?.nodes)
+    ? snapshot.snapshot_data.nodes.length
+    : 0
+  const edgeCount = Array.isArray(snapshot?.snapshot_data?.edges)
+    ? snapshot.snapshot_data.edges.length
+    : 0
 
   return (
     <div className="vhp-modal-backdrop" onClick={onCancel}>
@@ -77,8 +85,8 @@ function RestoreConfirm({ snapshot, onConfirm, onCancel }) {
           </button>
         </div>
         <p className="vhp-modal-body">
-          Restoring this snapshot will replace your current graph with <strong>{nodeCount}</strong> nodes and{' '}
-          <strong>{edgeCount}</strong> edges from{' '}
+          Restoring this snapshot will replace your current graph with <strong>{nodeCount}</strong>{' '}
+          nodes and <strong>{edgeCount}</strong> edges from{' '}
           <strong>{formatRelativeTime(snapshot.created_at)}</strong>. This action cannot be undone.
         </p>
         <div className="vhp-modal-actions">
@@ -112,9 +120,7 @@ function DeleteConfirm({ snapshot, onConfirm, onCancel }) {
             </span>
           </button>
         </div>
-        <p className="vhp-modal-body">
-          Permanently delete this snapshot? This cannot be undone.
-        </p>
+        <p className="vhp-modal-body">Permanently delete this snapshot? This cannot be undone.</p>
         <div className="vhp-modal-actions">
           <Button variant="secondary" className="vhp-cancel" onClick={onCancel}>
             Cancel
@@ -265,16 +271,24 @@ export function VersionHistoryPanel({
     if (!Array.isArray(snapshots) || snapshots.length === 0) {
       return (
         <div className="vhp-empty">
-          <span className="material-symbols-outlined" style={{ fontSize: '30px', color: 'var(--outline)' }}>
+          <span
+            className="material-symbols-outlined"
+            style={{ fontSize: '30px', color: 'var(--outline)' }}
+          >
             history
           </span>
           <h4>No versions yet</h4>
           <p>
-            Once your first map is generated, a baseline snapshot is created automatically. You can also
-            capture a manual snapshot at any time.
+            Once your first map is generated, a baseline snapshot is created automatically. You can
+            also capture a manual snapshot at any time.
           </p>
           {typeof onCreateSnapshot === 'function' && (
-            <Button variant="secondary" className="vhp-action-btn" onClick={() => onCreateSnapshot(mapId)} disabled={!mapId}>
+            <Button
+              variant="secondary"
+              className="vhp-action-btn"
+              onClick={() => onCreateSnapshot(mapId)}
+              disabled={!mapId}
+            >
               Save Current Version
             </Button>
           )}
@@ -285,12 +299,20 @@ export function VersionHistoryPanel({
     return (
       <div className="vhp-list">
         {sorted.map((s) => {
-          const nodeCount = Array.isArray(s?.snapshot_data?.nodes) ? s.snapshot_data.nodes.length : 0
-          const edgeCount = Array.isArray(s?.snapshot_data?.edges) ? s.snapshot_data.edges.length : 0
+          const nodeCount = Array.isArray(s?.snapshot_data?.nodes)
+            ? s.snapshot_data.nodes.length
+            : 0
+          const edgeCount = Array.isArray(s?.snapshot_data?.edges)
+            ? s.snapshot_data.edges.length
+            : 0
           const isPreviewing = previewId === s?.id
 
           return (
-            <div key={s.id} className={`vhp-item ${isPreviewing ? 'vhp-item-active' : ''}`} data-testid="version-history-item">
+            <div
+              key={s.id}
+              className={`vhp-item ${isPreviewing ? 'vhp-item-active' : ''}`}
+              data-testid="version-history-item"
+            >
               <div className="vhp-item-main">
                 <div className="vhp-item-head">
                   <span className="vhp-version-badge">V{s.version_number}</span>
@@ -298,7 +320,8 @@ export function VersionHistoryPanel({
                 </div>
                 <div className="vhp-item-title">{s.label || `Version ${s.version_number}`}</div>
                 <div className="vhp-item-meta">
-                  {s.created_at ? formatRelativeTime(s.created_at) : ''} - {nodeCount} nodes - {edgeCount} edges
+                  {s.created_at ? formatRelativeTime(s.created_at) : ''} - {nodeCount} nodes -{' '}
+                  {edgeCount} edges
                 </div>
               </div>
               {renderRowActions(s)}
@@ -345,7 +368,12 @@ export function VersionHistoryPanel({
               </Button>
             )}
           </div>
-          <button type="button" className="vhp-icon-btn" onClick={onClose} aria-label="Close version history">
+          <button
+            type="button"
+            className="vhp-icon-btn"
+            onClick={onClose}
+            aria-label="Close version history"
+          >
             <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>
               close
             </span>
@@ -367,7 +395,12 @@ export function VersionHistoryPanel({
                   history
                 </span>
               </button>
-              <button type="button" className="vhp-icon-btn" onClick={() => setPreviewId(null)} aria-label="Close preview">
+              <button
+                type="button"
+                className="vhp-icon-btn"
+                onClick={() => setPreviewId(null)}
+                aria-label="Close preview"
+              >
                 <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>
                   close
                 </span>

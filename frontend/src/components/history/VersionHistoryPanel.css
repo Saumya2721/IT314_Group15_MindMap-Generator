@@ -13,8 +13,12 @@
 }
 
 @keyframes vhp-fade {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 .vhp-drawer {
@@ -32,8 +36,14 @@
 }
 
 @keyframes vhp-slide {
-  from { transform: translateY(20px); opacity: 0; }
-  to { transform: translateY(0); opacity: 1; }
+  from {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
 }
 
 .vhp-header {
@@ -86,7 +96,7 @@
 
 .vhp-icon-btn-danger:hover {
   background: rgba(200, 107, 75, 0.12);
-  color: #C96B4B;
+  color: #c96b4b;
 }
 
 .vhp-preview-header {
@@ -235,7 +245,7 @@
 .vhp-error {
   padding: 10px 22px;
   font-size: 12px;
-  color: #C96B4B;
+  color: #c96b4b;
   background: rgba(200, 107, 75, 0.08);
   border-bottom: 1px solid var(--surface-container-highest, #dfe4df);
 }
@@ -320,5 +330,5 @@
 }
 
 .vhp-confirm-delete {
-  color: #C96B4B;
+  color: #c96b4b;
 }
