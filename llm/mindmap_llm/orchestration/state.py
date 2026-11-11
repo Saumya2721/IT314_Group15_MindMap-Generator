@@ -27,6 +27,8 @@ class GenerationState(TypedDict, total=False):
     resolved_detail_level: DetailLevel
     mode: SeedMode
     targets: SizeTargets
+    target_node_range: tuple[int, int]
+    target_max_depth: int
     routing_decision: dict[str, bool]  # e.g. {"web_search": True, "arxiv_search": False}
     retrieved_chunks: list[RetrievedChunk]
     tool_call_log: list[dict]

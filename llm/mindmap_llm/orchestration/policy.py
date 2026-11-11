@@ -13,6 +13,9 @@ SeedMode = Literal["document", "topic"]
 # A typed seed shorter than this, with no uploaded file, is a topic.
 TOPIC_MODE_MAX_WORDS = int(os.environ.get("TOPIC_MODE_MAX_WORDS", "250"))
 
+RESEARCH_PURPOSES = {"research", "academic", "study"}
+NON_RESEARCH_PURPOSES = {"brainstorm", "casual", "personal", "general"}
+
 
 @dataclass(frozen=True)
 class ResearchPlan:
@@ -36,8 +39,9 @@ def plan_research(
     has_files: bool,
     available_tools: set[str],
     purpose: str | None = None,
+    thin_seed_word_threshold: int = TOPIC_MODE_MAX_WORDS,
 ) -> ResearchPlan:
-    mode = classify_seed_mode(seed_text, has_files=has_files)
+    mode = classify_seed_mode(seed_text, has_files=has_files, max_words=thin_seed_word_threshold)
 
     web: bool | None = None
     if mode == "topic" and "web_search" in available_tools:
@@ -45,7 +49,11 @@ def plan_research(
 
     arxiv: bool | None = None
     if "arxiv_search" in available_tools and purpose is not None:
-        arxiv = purpose == "research"
+        norm_purpose = purpose.strip().lower()
+        if norm_purpose in RESEARCH_PURPOSES:
+            arxiv = True
+        elif norm_purpose in NON_RESEARCH_PURPOSES:
+            arxiv = False
 
     reason = f"mode={mode}, purpose={purpose or 'unset'}"
     return ResearchPlan(mode=mode, web_search=web, arxiv_search=arxiv, reason=reason)
