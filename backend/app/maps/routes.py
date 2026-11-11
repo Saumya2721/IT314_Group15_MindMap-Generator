@@ -35,10 +35,14 @@ from db.connection import transaction
 from db.repository import (
     assert_map_owner,
     create_generation_job,
+    delete_map_snapshot,
     get_chat_messages,
+    get_map_snapshot,
     get_or_create_chat_thread,
     has_active_job,
     insert_chat_message,
+    list_map_snapshots,
+    restore_map_graph_from_snapshot,
 )
 
 try:
@@ -665,6 +669,67 @@ async def get_graph(map_id: UUID, request: Request, uid: UUID = Depends(current_
         map_id,
     )
     return {"nodes": [dict(n) for n in nodes], "edges": [dict(e) for e in edges]}
+
+
+# ------------------------------------------------------------------
+# Version History / Snapshots (US-04 / S2-FE7)
+# ------------------------------------------------------------------
+
+
+@router.get("/maps/{map_id}/snapshots", status_code=200)
+async def list_snapshots(map_id: UUID, request: Request, uid: UUID = Depends(current_user_id)):
+    pool = pool_of(request)
+    is_owner = await assert_map_owner(pool, map_id, uid)
+    if not is_owner:
+        raise HTTPException(404, "Map not found")
+    return await list_map_snapshots(pool, map_id)
+
+
+@router.get("/maps/{map_id}/snapshots/{snapshot_id}", status_code=200)
+async def get_snapshot(map_id: UUID, snapshot_id: UUID, request: Request, uid: UUID = Depends(current_user_id)):
+    pool = pool_of(request)
+    is_owner = await assert_map_owner(pool, map_id, uid)
+    if not is_owner:
+        raise HTTPException(404, "Map not found")
+    snapshot = await get_map_snapshot(pool, map_id, snapshot_id)
+    if not snapshot:
+        raise HTTPException(404, "Snapshot not found")
+    return snapshot
+
+
+@router.post("/maps/{map_id}/snapshots/{snapshot_id}/restore", status_code=200)
+async def restore_snapshot(
+    map_id: UUID,
+    snapshot_id: UUID,
+    request: Request,
+    uid: UUID = Depends(current_user_id),
+):
+    pool = pool_of(request)
+    is_owner = await assert_map_owner(pool, map_id, uid)
+    if not is_owner:
+        raise HTTPException(404, "Map not found")
+
+    snapshot_data = await restore_map_graph_from_snapshot(pool, map_id=map_id, snapshot_id=snapshot_id)
+    if not snapshot_data:
+        raise HTTPException(404, "Snapshot not found")
+    return {"snapshot_id": str(snapshot_id), "snapshot_data": snapshot_data}
+
+
+@router.delete("/maps/{map_id}/snapshots/{snapshot_id}", status_code=200)
+async def delete_snapshot(
+    map_id: UUID,
+    snapshot_id: UUID,
+    request: Request,
+    uid: UUID = Depends(current_user_id),
+):
+    pool = pool_of(request)
+    is_owner = await assert_map_owner(pool, map_id, uid)
+    if not is_owner:
+        raise HTTPException(404, "Map not found")
+    deleted = await delete_map_snapshot(pool, map_id=map_id, snapshot_id=snapshot_id)
+    if not deleted:
+        raise HTTPException(404, "Snapshot not found")
+    return {"message": "Snapshot deleted successfully"}
 
 
 @router.delete("/maps/{map_id}", status_code=200)

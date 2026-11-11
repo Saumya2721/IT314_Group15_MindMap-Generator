@@ -33,6 +33,8 @@ export function MindMapProvider({ children }) {
     files: [],
     filePreviews: [],
   })
+  const [snapshots, setSnapshots] = useState([])
+  const [snapshotsLoading, setSnapshotsLoading] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
 
@@ -110,6 +112,30 @@ export function MindMapProvider({ children }) {
     })
   }
 
+  // ------------------------------------------------------------------
+  // Version History / Snapshots (US-04 / S2-FE7)
+  // ------------------------------------------------------------------
+
+  const loadSnapshots = useCallback(async (mapId) => {
+    setSnapshotsLoading(true)
+    try {
+      const data = await mindMapService.getSnapshots(mapId)
+      setSnapshots(data)
+      return data
+    } catch (err) {
+      console.error('Failed to load snapshots:', err)
+      setSnapshots([])
+      return []
+    } finally {
+      setSnapshotsLoading(false)
+    }
+  }, [])
+
+  const restoreSnapshot = useCallback(async (mapId, snapshotId) => {
+    const restored = await mindMapService.restoreSnapshot(mapId, snapshotId)
+    return restored.snapshot_data || { nodes: [], edges: [] }
+  }, [])
+
   useEffect(() => {
     fetchMaps()
   }, [fetchMaps])
@@ -129,6 +155,10 @@ export function MindMapProvider({ children }) {
         deleteMap,
         toggleBookmark,
         setActiveMap,
+        snapshots,
+        snapshotsLoading,
+        loadSnapshots,
+        restoreSnapshot,
       }}
     >
       {children}

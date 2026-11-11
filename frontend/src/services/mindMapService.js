@@ -189,4 +189,73 @@ export const mindMapService = {
     }
     return res.data
   },
+
+  // ------------------------------------------------------------------
+  // Version History / Snapshots (US-04 / S2-FE7)
+  // ------------------------------------------------------------------
+
+  /**
+   * Fetch all snapshots for a map, newest first
+   * Endpoint: GET /api/maps/{map_id}/snapshots
+   */
+  async getSnapshots(mapId) {
+    const res = await apiClient.get(`/api/maps/${mapId}/snapshots`)
+    if (!res.ok) {
+      throw new Error(res.error || 'Failed to fetch snapshots')
+    }
+
+    const raw = res.data || []
+    return raw.map((s) => ({
+      id: s.id,
+      map_id: s.map_id,
+      version_number: s.version_number,
+      trigger_source: s.trigger_source,
+      trigger_job_id: s.trigger_job_id || null,
+      label: s.label || `Version ${s.version_number}`,
+      snapshot_data: s.snapshot_data || { nodes: [], edges: [] },
+      created_by: s.created_by || null,
+      created_at: s.created_at || null,
+    }))
+  },
+
+  /**
+   * Fetch a single snapshot by ID (includes snapshot_data payload)
+   * Endpoint: GET /api/maps/{map_id}/snapshots/{snapshot_id}
+   */
+  async getSnapshotDetail(mapId, snapshotId) {
+    const res = await apiClient.get(`/api/maps/${mapId}/snapshots/${snapshotId}`)
+    if (!res.ok) {
+      throw new Error(res.error || 'Failed to fetch snapshot')
+    }
+    const s = res.data
+    if (!s) throw new Error('Snapshot not found')
+    return {
+      ...s,
+      snapshot_data: s.snapshot_data || { nodes: [], edges: [] },
+    }
+  },
+
+  /**
+   * Restore a map to a previous snapshot
+   * Endpoint: POST /api/maps/{map_id}/snapshots/{snapshot_id}/restore
+   */
+  async restoreSnapshot(mapId, snapshotId) {
+    const res = await apiClient.post(`/api/maps/${mapId}/snapshots/${snapshotId}/restore`)
+    if (!res.ok) {
+      throw new Error(res.error || 'Failed to restore snapshot')
+    }
+    return res.data // { snapshot_id, snapshot_data: { nodes, edges } }
+  },
+
+  /**
+   * Delete a snapshot
+   * Endpoint: DELETE /api/maps/{map_id}/snapshots/{snapshot_id}
+   */
+  async deleteSnapshot(mapId, snapshotId) {
+    const res = await apiClient.delete(`/api/maps/${mapId}/snapshots/${snapshotId}`)
+    if (!res.ok) {
+      throw new Error(res.error || 'Failed to delete snapshot')
+    }
+    return res.data
+  },
 }

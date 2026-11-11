@@ -22,9 +22,11 @@ from services.generator import compute_layout
 from db.connection import transaction
 from db.models import EdgeRecord, NodeRecord, SeedAssetType
 from db.repository import (
+    create_map_snapshot,
     get_or_create_chat_thread,
     insert_chat_message,
     insert_seed_asset,
+    next_snapshot_version,
     persist_generated_graph,
     replace_map_graph,
 )
@@ -335,6 +337,27 @@ async def report_complete(
 
         # Insert assistant summary message in thread
         map_owner = await conn.fetchval("SELECT user_id FROM public.mind_maps WHERE id = $1", map_id)
+
+        # Record a version-history snapshot of the just-completed graph (US-04 / S2-FE7).
+        # nodes_raw / edges_raw are plain dicts (the worker's GenerationResult),
+        # which compute_layout already mutated with pos_x/pos_y. Storing them
+        # verbatim is what restore_map_graph_from_snapshot expects.
+        snapshot_version = await next_snapshot_version(conn, map_id)
+        snapshot_trigger_source = {
+            "generate": "initial_generation",
+            "regenerate_full": "full_regen",
+            "regenerate_node": "branch_regen",
+        }.get(str(job_type), "manual")
+        await create_map_snapshot(
+            conn,
+            map_id=map_id,
+            trigger_source=snapshot_trigger_source,
+            trigger_job_id=job_id,
+            snapshot_data={"nodes": nodes_raw, "edges": edges_raw},
+            label=f"Version {snapshot_version}",
+            created_by=map_owner,
+        )
+
         if map_owner:
             thread_id = await get_or_create_chat_thread(conn, map_id, map_owner)
             await insert_chat_message(
