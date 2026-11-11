@@ -1,5 +1,13 @@
-import React, { useState, useMemo, useCallback } from 'react'
-import { ReactFlow, Background, Controls, MiniMap, ReactFlowProvider } from '@xyflow/react'
+import React, { useState, useMemo, useCallback, useEffect } from 'react'
+import {
+  ReactFlow,
+  Background,
+  Controls,
+  MiniMap,
+  ReactFlowProvider,
+  useReactFlow,
+  getNodesBounds,
+} from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 
 import { RootNode } from './nodes/RootNode'
@@ -15,8 +23,41 @@ const nodeTypes = {
   conceptNode: ConceptNode,
 }
 
-function FlowCanvas({ rawNodes = [], rawEdges = [], toastMessage = '', onClearToast }) {
+/**
+ * Exportable React Flow instance wrapper.
+ * Exposes the three imperative helpers the export service needs:
+ *   - fitAllNodes(): refit the viewport so every node is visible
+ *   - getViewport(): snapshot the current viewport for later restoration
+ *   - setViewport(vp): restore a previously captured viewport
+ */
+function useExportableFlowApi(flowApiRef) {
+  const rf = useReactFlow()
+
+  useEffect(() => {
+    if (!flowApiRef) return
+    flowApiRef.current = {
+      fitAllNodes: async () => {
+        const nodes = rf.getNodes()
+        if (nodes.length === 0) return
+        const rect = getNodesBounds(nodes)
+        const padding = 80
+        const bounds = {
+          x: rect.x - padding,
+          y: rect.y - padding,
+          width: rect.width + padding * 2,
+          height: rect.height + padding * 2,
+        }
+        await rf.fitBounds(bounds, { duration: 0 })
+      },
+      getViewport: () => rf.getViewport(),
+      setViewport: (viewport) => rf.setViewport(viewport),
+    }
+  }, [rf, flowApiRef])
+}
+
+function FlowCanvas({ rawNodes = [], rawEdges = [], toastMessage = '', onClearToast, flowApiRef }) {
   const [selectedNode, setSelectedNode] = useState(null)
+  useExportableFlowApi(flowApiRef)
 
   // Transform backend graph nodes and edges into React Flow elements
   const { flowNodes, flowEdges } = useMemo(() => {
@@ -59,7 +100,7 @@ function FlowCanvas({ rawNodes = [], rawEdges = [], toastMessage = '', onClearTo
   }
 
   return (
-    <div className="canvas-viewport-container">
+    <div className="canvas-viewport-container" id="mindmap-canvas-export">
       {/* Toast Alert Feedback */}
       {toastMessage && (
         <div className="canvas-toast-alert">
@@ -135,6 +176,7 @@ export function MindMapCanvas(props) {
         rawEdges={props.rawEdges || []}
         toastMessage={props.toastMessage}
         onClearToast={props.onClearToast}
+        flowApiRef={props.flowApiRef}
       />
     </ReactFlowProvider>
   )
