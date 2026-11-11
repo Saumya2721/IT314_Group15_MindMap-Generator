@@ -271,14 +271,20 @@ class RecordingTool(Tool):
     async def invoke(self, **kwargs) -> list[ToolResult]:
         self.invoked = True
         self.queries.append(kwargs.get("query", ""))
-        return [ToolResult(content="Mock search result", source_title="Mock Title", source_url="https://mock.test")]
+        return [
+            ToolResult(
+                content="Mock search result",
+                source_title="Mock Title",
+                source_url=f"https://mock.test/{len(self.queries)}",
+            )
+        ]
 
 
 @pytest.mark.asyncio
 async def test_routing_policy_forces_web_search_for_thin_seed():
     payload = _build_request_payload(topic="Short topic", ideas=None)
     callback = FakeCallbackClient()
-    llm = FakeLLMProvider([json.dumps(VALID_DRAFT_PAYLOAD)])
+    llm = FakeLLMProvider(['["topic overview"]', json.dumps(VALID_DRAFT_PAYLOAD)])
     web_tool = RecordingTool("web_search")
     ctx = {
         "llm": llm,
@@ -299,7 +305,7 @@ async def test_routing_policy_forces_web_search_for_thin_seed():
 async def test_routing_policy_forces_arxiv_for_research_purpose():
     payload = _build_request_payload(topic="Neural attention mechanisms", ideas=None, purpose="research")
     callback = FakeCallbackClient()
-    llm = FakeLLMProvider([json.dumps(VALID_DRAFT_PAYLOAD)])
+    llm = FakeLLMProvider(['["arxiv paper query"]', json.dumps(VALID_DRAFT_PAYLOAD)])
     arxiv_tool = RecordingTool("arxiv_search")
     ctx = {
         "llm": llm,
@@ -335,3 +341,66 @@ async def test_routing_policy_disables_arxiv_for_brainstorm_purpose():
     result = await generate_mindmap(ctx, payload)
     assert result["status"] == "completed"
     assert arxiv_tool.invoked is False
+
+
+@pytest.mark.asyncio
+async def test_retrieve_node_uses_multi_query_planner_and_enforces_cap():
+    payload = _build_request_payload(topic="Distributed consensus algorithms", ideas=None)
+    callback = FakeCallbackClient()
+    planner_output = json.dumps(
+        ["raft algorithm consensus", "paxos vs raft", "byzantine fault tolerance", "etcd raft implementation"]
+    )
+    # 1st call for query planning, 2nd call for mindmap generation
+    llm = FakeLLMProvider([planner_output, json.dumps(VALID_DRAFT_PAYLOAD)])
+    web_tool = RecordingTool("web_search")
+    settings = Settings(
+        generation=GenerationConfig(
+            enable_dynamic_prompts=True,
+            research_queries_per_tool=4,
+            max_search_queries_per_tool=3,
+        )
+    )
+    ctx = {
+        "llm": llm,
+        "decision_model": FakeDecisionModel(),
+        "embedding_provider": FakeEmbeddingProvider(),
+        "vector_store": FakeVectorStore(),
+        "tools": {"web_search": web_tool},
+        "settings": settings,
+        "callback": callback,
+    }
+
+    result = await generate_mindmap(ctx, payload)
+    assert result["status"] == "completed"
+    assert web_tool.invoked is True
+    # Generated 4 queries, but capped to 3
+    assert len(web_tool.queries) == 3
+    assert web_tool.queries == ["raft algorithm consensus", "paxos vs raft", "byzantine fault tolerance"]
+
+
+@pytest.mark.asyncio
+async def test_retrieve_node_legacy_fallback_uses_single_query():
+    payload = _build_request_payload(topic="Distributed consensus algorithms", ideas=None)
+    callback = FakeCallbackClient()
+    llm = FakeLLMProvider([json.dumps(VALID_DRAFT_PAYLOAD)])
+    web_tool = RecordingTool("web_search")
+    settings = Settings(
+        generation=GenerationConfig(
+            enable_dynamic_prompts=False,
+        )
+    )
+    ctx = {
+        "llm": llm,
+        "decision_model": FakeDecisionModel(),
+        "embedding_provider": FakeEmbeddingProvider(),
+        "vector_store": FakeVectorStore(),
+        "tools": {"web_search": web_tool},
+        "settings": settings,
+        "callback": callback,
+    }
+
+    result = await generate_mindmap(ctx, payload)
+    assert result["status"] == "completed"
+    assert web_tool.invoked is True
+    # Legacy fallback executes exactly 1 query
+    assert len(web_tool.queries) == 1
