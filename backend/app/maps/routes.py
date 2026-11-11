@@ -37,8 +37,10 @@ from db.repository import (
     create_generation_job,
     delete_map_snapshot,
     get_chat_messages,
+    get_chat_thread_summary,
     get_map_snapshot,
     get_or_create_chat_thread,
+    get_recent_chat_messages,
     has_active_job,
     insert_chat_message,
     list_map_snapshots,
@@ -59,6 +61,28 @@ except ImportError:
     SeedSubmission = _SeedSubmissionFallback  # type: ignore[misc]
 
 logger = logging.getLogger(__name__)
+
+
+async def _build_memory_context_payload(conn, map_id: UUID) -> dict[str, Any] | None:
+    """Helper to assemble short-term memory context (recent window + rolling summary) for worker dispatch."""
+    try:
+        from memory.service import MemoryService
+
+        summary = await get_chat_thread_summary(conn, map_id)
+        recent_msgs = await get_recent_chat_messages(conn, map_id, limit=6)
+        if recent_msgs or summary:
+            service = MemoryService()
+            assembled = await service.build_context(
+                str(map_id),
+                recent_msgs,
+                existing_summary=summary or "",
+                window_size=6,
+            )
+            return assembled.model_dump()
+    except Exception as exc:
+        logger.debug("Memory context assembly skipped for map %s: %s", map_id, exc)
+    return None
+
 
 router = APIRouter(prefix="/api", tags=["Maps & generation"])
 
@@ -234,6 +258,7 @@ async def quick_generate(
             callback_token_hash=token_hash,
         )
 
+    mem_ctx = await _build_memory_context_payload(pool, map_id)
     gen_req = GenerationRequest(
         job_id=job_id,
         map_id=map_id,
@@ -244,6 +269,7 @@ async def quick_generate(
         detail_level=body.detail_level.value if body.detail_level else "overview",
         callback_base_url=settings.BACKEND_INTERNAL_URL,
         callback_token=callback_token,
+        memory_context=mem_ctx,
     )
     try:
         enqueued_id = await enqueue_generation_job(redis_pool, gen_req.model_dump(mode="json"))
@@ -397,6 +423,7 @@ async def generate(
             )
             for u in uploads
         ]
+        mem_ctx = await _build_memory_context_payload(pool, map_id)
         gen_req = GenerationRequest(
             job_id=job_id,
             map_id=map_id,
@@ -407,6 +434,7 @@ async def generate(
             detail_level=detail_level.value if detail_level else None,
             callback_base_url=settings.BACKEND_INTERNAL_URL,
             callback_token=callback_token,
+            memory_context=mem_ctx,
         )
         enqueued_id = await enqueue_generation_job(redis_pool, gen_req.model_dump(mode="json"))
         if not enqueued_id:
@@ -519,6 +547,7 @@ async def regenerate(
         if not redis_pool:
             raise HTTPException(503, "Generation queue service is unavailable. Redis connection is required.")
 
+        mem_ctx = await _build_memory_context_payload(pool, map_id)
         gen_req = GenerationRequest(
             job_id=job_id,
             map_id=map_id,
@@ -527,6 +556,7 @@ async def regenerate(
             detail_level=body.detail_level.value if body.detail_level else None,
             callback_base_url=settings.BACKEND_INTERNAL_URL,
             callback_token=callback_token,
+            memory_context=mem_ctx,
         )
         enqueued_id = await enqueue_generation_job(redis_pool, gen_req.model_dump(mode="json"))
         if not enqueued_id:

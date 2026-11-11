@@ -167,7 +167,8 @@ CREATE TABLE public.chat_threads (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     map_id      UUID NOT NULL UNIQUE REFERENCES public.mind_maps(id) ON DELETE CASCADE,
     user_id     UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    summary     TEXT DEFAULT NULL
 );
 
 CREATE INDEX idx_chat_threads_user_id ON public.chat_threads (user_id);
