@@ -18,6 +18,7 @@ closure over GenerationDeps. CHANGED in the worker restructure:
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Callable
 from typing import Literal, cast
 
@@ -37,7 +38,7 @@ from orchestration.prompts import (
 from orchestration.state import GenerationState
 from providers.base import Message
 from rag.ingestion import ingest_seed_text, ingest_tool_result
-from rag.retrieval import rerank_context, retrieve_context
+from rag.retrieval import RetrievedChunk, rerank_context, retrieve_context
 from seed.normalizer import NoUsableSeedContent
 from tools.base import ToolError
 from tools.research_planner import execute_research_queries, plan_research_queries
@@ -52,6 +53,47 @@ class NoPriorSeedError(NoUsableSeedContent):
     """Raised when regenerating a map but no prior seed chunks exist in Pinecone."""
 
     pass
+
+
+def _deduplicate_against_seed(
+    chunks: list[RetrievedChunk],
+    *,
+    seed_text: str,
+    threshold: float = 0.6,
+) -> list[RetrievedChunk]:
+    """Remove retrieved chunks whose substantive content is already substantially
+    present in the seed text, preventing redundant context from consuming the token budget.
+    """
+    clean_seed = seed_text.lower().strip()
+    if not clean_seed:
+        return chunks
+
+    # Content tokens of length >= 3 to avoid stop-word skew
+    seed_words = set(re.findall(r"\b[a-z0-9]{3,}\b", clean_seed))
+    if not seed_words:
+        return chunks
+
+    surviving: list[RetrievedChunk] = []
+    for chunk in chunks:
+        chunk_words = re.findall(r"\b[a-z0-9]{3,}\b", chunk.record.chunk_text.lower())
+        if not chunk_words:
+            surviving.append(chunk)
+            continue
+
+        overlap_count = sum(1 for w in chunk_words if w in seed_words)
+        overlap_ratio = overlap_count / len(chunk_words)
+
+        if overlap_ratio >= threshold:
+            logger.info(
+                "Deduplicating chunk %s (overlap=%.2f >= threshold=%.2f with seed)",
+                chunk.record.id,
+                overlap_ratio,
+                threshold,
+            )
+            continue
+        surviving.append(chunk)
+
+    return surviving
 
 
 def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
@@ -254,15 +296,64 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
             embedding_provider=deps.embedding_provider,
             top_k=deps.settings.generation.rag_top_k,
         )
+
+        # Context budgeting: scale rerank keep_k dynamically for large/small seeds
+        seed_len = len(state["seed_text"])
+        base_rerank_k = deps.settings.generation.rag_rerank_top_k
+        if not enable_dynamic:
+            keep_top_k = base_rerank_k
+        else:
+            if seed_len > 3000:
+                keep_top_k = min(base_rerank_k * 2, 16)
+            elif seed_len < 300:
+                keep_top_k = max(base_rerank_k // 2, 3)
+            else:
+                keep_top_k = base_rerank_k
+            keep_top_k = min(keep_top_k, deps.settings.generation.rag_top_k)
+
         reranked = await rerank_context(
             decision_model=deps.decision_model,
             query=query,
             candidates=candidates,
-            keep_top_k=deps.settings.generation.rag_rerank_top_k,
+            keep_top_k=keep_top_k,
+        )
+
+        # Deduplication against seed
+        if enable_dynamic:
+            surviving_chunks = _deduplicate_against_seed(
+                reranked,
+                seed_text=state["seed_text"],
+                threshold=deps.settings.generation.seed_dedup_overlap_threshold,
+            )
+        else:
+            surviving_chunks = reranked
+
+        # Observability: prompt items log
+        prompt_items_log = [
+            {
+                "chunk_index": i,
+                "source": (c.record.source.value if hasattr(c.record.source, "value") else str(c.record.source)),
+                "section_path": getattr(c.record, "section_path", None),
+                "char_length": len(c.record.chunk_text),
+                "relevance_score": round(c.relevance_score, 3),
+            }
+            for i, c in enumerate(surviving_chunks, 1)
+        ]
+        est_tokens = sum(len(c.record.chunk_text) // 4 for c in surviving_chunks)
+        logger.info(
+            "job %s: %d prompt items surviving | est. ~%d context tokens",
+            state.get("job_id"),
+            len(surviving_chunks),
+            est_tokens,
         )
 
         await deps.callback.progress(40)
-        return {"retrieved_chunks": reranked, "tool_call_log": tool_call_log}
+        return {
+            "retrieved_chunks": surviving_chunks,
+            "tool_call_log": tool_call_log,
+            "prompt_items_log": prompt_items_log,
+            "seed_length": seed_len,
+        }
 
     async def generate_node(state: GenerationState) -> dict:
         retrieved_chunks = state.get("retrieved_chunks", [])

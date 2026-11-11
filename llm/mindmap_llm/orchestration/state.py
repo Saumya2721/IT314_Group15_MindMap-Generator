@@ -32,6 +32,8 @@ class GenerationState(TypedDict, total=False):
     routing_decision: dict[str, bool]  # e.g. {"web_search": True, "arxiv_search": False}
     retrieved_chunks: list[RetrievedChunk]
     tool_call_log: list[dict]
+    seed_length: int
+    prompt_items_log: list[dict]
     draft_payload: dict | None  # raw LLM JSON output, pre-validation
     validation_errors: list[str]
     retry_count: int

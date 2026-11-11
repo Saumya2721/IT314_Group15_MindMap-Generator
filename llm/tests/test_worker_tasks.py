@@ -6,6 +6,8 @@ import uuid
 import pytest
 from config import GenerationConfig, Settings
 from contracts.models import ChunkSource, GenerationRequest, JobType
+from orchestration.deps import GenerationDeps
+from orchestration.graph import run_generation
 from providers.base import ToolSpec
 from rag.pinecone_store import VectorChunk
 from tools.base import Tool, ToolResult
@@ -404,3 +406,41 @@ async def test_retrieve_node_legacy_fallback_uses_single_query():
     assert web_tool.invoked is True
     # Legacy fallback executes exactly 1 query
     assert len(web_tool.queries) == 1
+
+
+@pytest.mark.asyncio
+async def test_generation_populates_prompt_items_log_and_seed_length():
+    callback = FakeCallbackClient()
+    llm = FakeLLMProvider([json.dumps(VALID_DRAFT_PAYLOAD)])
+    settings = Settings(
+        generation=GenerationConfig(
+            enable_dynamic_prompts=True,
+        )
+    )
+    deps = GenerationDeps(
+        settings=settings,
+        llm=llm,
+        decision_model=FakeDecisionModel(),
+        embedding_provider=FakeEmbeddingProvider(),
+        vector_store=FakeVectorStore(),
+        callback=callback,
+        tools={},
+    )
+    seed = "Photosynthesis and cellular respiration mechanisms"
+    initial_state = {
+        "job_id": uuid.uuid4(),
+        "map_id": uuid.uuid4(),
+        "namespace": "test-ns",
+        "seed_text": seed,
+        "detail_level": None,
+        "regeneration_instruction": None,
+        "is_regeneration": False,
+        "purpose": None,
+        "seed_has_files": False,
+    }
+    final_state = await run_generation(deps, initial_state=initial_state, max_retries=2)  # type: ignore[arg-type]
+    assert final_state["status"] == "completed"
+    assert "prompt_items_log" in final_state
+    assert isinstance(final_state["prompt_items_log"], list)
+    assert "seed_length" in final_state
+    assert final_state["seed_length"] == len(seed)
