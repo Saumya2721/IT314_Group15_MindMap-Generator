@@ -40,6 +40,7 @@ from rag.ingestion import ingest_seed_text, ingest_tool_result
 from rag.retrieval import rerank_context, retrieve_context
 from seed.normalizer import NoUsableSeedContent
 from tools.base import ToolError
+from tools.research_planner import execute_research_queries, plan_research_queries
 from validation.schema import ValidationFailure, resolve_to_records, validate_draft
 
 logger = logging.getLogger(__name__)
@@ -171,44 +172,80 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
     async def retrieve_node(state: GenerationState) -> dict:
         query = state["seed_text"][:2000]
         tool_call_log: list[dict] = []
+        enable_dynamic = deps.settings.generation.enable_dynamic_prompts
 
-        for tool_name in ("web_search", "arxiv_search"):
-            if not state["routing_decision"].get(tool_name):
-                continue
-            tool = deps.tools.get(tool_name)
-            if tool is None:
-                continue
-            try:
-                results = await tool.invoke(query=query)
-            except ToolError as exc:
-                logger.warning("Tool %s failed, continuing without it: %s", tool_name, exc)
-                tool_call_log.append({"tool": tool_name, "status": "failed", "error": str(exc)})
-                continue
-            except Exception as exc:
-                # Catch unexpected errors from tool adapters (network timeouts, HTTP errors,
-                # response parse failures, etc.) — degrade gracefully rather than failing generation.
-                logger.warning(
-                    "Tool %s raised unexpected error, continuing without it: %s",
-                    tool_name,
-                    exc,
-                    exc_info=True,
-                )
-                tool_call_log.append({"tool": tool_name, "status": "failed", "error": str(exc)})
-                continue
+        active_tools = [
+            t
+            for t in ("web_search", "arxiv_search")
+            if state["routing_decision"].get(t) and deps.tools.get(t) is not None
+        ]
 
-            source = ChunkSource.WEB_SEARCH if tool_name == "web_search" else ChunkSource.ARXIV
-            for r in results:
-                await ingest_tool_result(
-                    vector_store=deps.vector_store,
-                    namespace=state["namespace"],
-                    generation_job_id=state["job_id"],
-                    text=r.content,
-                    source=source,
-                    source_title=r.source_title,
-                    source_url=r.source_url,
-                    embedding_provider=deps.embedding_provider,
+        if not active_tools:
+            pass
+        elif not enable_dynamic:
+            # Legacy Sprint 1 single-query behavior
+            for tool_name in active_tools:
+                tool = deps.tools[tool_name]
+                try:
+                    results = await tool.invoke(query=query)
+                except ToolError as exc:
+                    logger.warning("Tool %s failed, continuing without it: %s", tool_name, exc)
+                    tool_call_log.append({"tool": tool_name, "status": "failed", "error": str(exc)})
+                    continue
+                except Exception as exc:
+                    logger.warning(
+                        "Tool %s raised unexpected error, continuing without it: %s",
+                        tool_name,
+                        exc,
+                        exc_info=True,
+                    )
+                    tool_call_log.append({"tool": tool_name, "status": "failed", "error": str(exc)})
+                    continue
+
+                source = ChunkSource.WEB_SEARCH if tool_name == "web_search" else ChunkSource.ARXIV
+                for r in results:
+                    await ingest_tool_result(
+                        vector_store=deps.vector_store,
+                        namespace=state["namespace"],
+                        generation_job_id=state["job_id"],
+                        text=r.content,
+                        source=source,
+                        source_title=r.source_title,
+                        source_url=r.source_url,
+                        embedding_provider=deps.embedding_provider,
+                    )
+                tool_call_log.append({"tool": tool_name, "status": "ok", "result_count": len(results)})
+        else:
+            # S2-L16: Multi-query research planner with parallel execution & quota protection
+            sub_queries = await plan_research_queries(
+                llm=deps.llm,
+                seed_text=state["seed_text"],
+                n_queries=deps.settings.generation.research_queries_per_tool,
+            )
+            logger.info("Planned %d research sub-queries: %s", len(sub_queries), sub_queries)
+
+            for tool_name in active_tools:
+                tool = deps.tools[tool_name]
+                results = await execute_research_queries(
+                    tool=tool,
+                    queries=sub_queries,
+                    max_queries=deps.settings.generation.max_search_queries_per_tool,
                 )
-            tool_call_log.append({"tool": tool_name, "status": "ok", "result_count": len(results)})
+
+                source = ChunkSource.WEB_SEARCH if tool_name == "web_search" else ChunkSource.ARXIV
+                for r in results:
+                    await ingest_tool_result(
+                        vector_store=deps.vector_store,
+                        namespace=state["namespace"],
+                        generation_job_id=state["job_id"],
+                        text=r.content,
+                        source=source,
+                        source_title=r.source_title,
+                        source_url=r.source_url,
+                        embedding_provider=deps.embedding_provider,
+                    )
+                status = "ok" if results else "failed"
+                tool_call_log.append({"tool": tool_name, "status": status, "result_count": len(results)})
 
         candidates = await retrieve_context(
             vector_store=deps.vector_store,
