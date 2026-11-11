@@ -120,6 +120,28 @@ async def get_chat_messages(conn: asyncpg.Connection, map_id: UUID) -> list[dict
     return [dict(r) for r in rows]
 
 
+async def get_chat_thread_summary(conn: asyncpg.Connection, map_id: UUID) -> str | None:
+    row = await conn.fetchrow("SELECT summary FROM public.chat_threads WHERE map_id = $1", map_id)
+    return row["summary"] if row and row["summary"] else None
+
+
+async def update_chat_thread_summary(conn: asyncpg.Connection, map_id: UUID, summary: str) -> None:
+    await conn.execute("UPDATE public.chat_threads SET summary = $2 WHERE map_id = $1", map_id, summary)
+
+
+async def get_recent_chat_messages(conn: asyncpg.Connection, map_id: UUID, limit: int = 6) -> list[dict]:
+    rows = await conn.fetch(
+        """SELECT m.id, m.role, m.content, m.created_at
+             FROM public.chat_messages m JOIN public.chat_threads t ON t.id = m.thread_id
+            WHERE t.map_id = $1
+            ORDER BY m.created_at DESC, m.id DESC
+            LIMIT $2""",
+        map_id,
+        limit,
+    )
+    return [dict(r) for r in reversed(rows)]
+
+
 # ---------------------------------------------------------------------
 # Generation Jobs
 # ---------------------------------------------------------------------

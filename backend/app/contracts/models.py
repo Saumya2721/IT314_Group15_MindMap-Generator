@@ -7,7 +7,7 @@ queue / callback boundary.
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -73,6 +73,9 @@ class GenerationRequest(BaseModel):
     # scoped to this one job by the backend when it enqueues.
     callback_base_url: str
     callback_token: str
+
+    # Short-term memory context (US-15 / S2-BE4): rolling summary + recent message turns
+    memory_context: dict[str, Any] | None = None
 
 
 # ---------------------------------------------------------------------
