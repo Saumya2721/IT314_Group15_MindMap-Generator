@@ -6,15 +6,23 @@ from core.supabase import admin
 db = admin
 
 
+def _as_dict_list(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
+
+
 def get_or_create_thread(map_id: str, user_id: str) -> str:
     """Find existing chat thread for map or create one."""
     response = db.table("chat_threads").select("id").eq("map_id", map_id).execute()
-    if response.data and len(response.data) > 0:
-        return str(response.data[0]["id"])
+    existing_threads = _as_dict_list(response.data)
+    if existing_threads:
+        return str(existing_threads[0]["id"])
 
     new_thread = db.table("chat_threads").insert({"map_id": map_id, "user_id": user_id}).execute()
-    if new_thread.data and len(new_thread.data) > 0:
-        return str(new_thread.data[0]["id"])
+    created_threads = _as_dict_list(new_thread.data)
+    if created_threads:
+        return str(created_threads[0]["id"])
     return ""
 
 
@@ -35,7 +43,8 @@ def save_message(
         "is_confirmed": is_confirmed,
     }
     response = db.table("chat_messages").insert(payload).execute()
-    msg_data = response.data[0] if response.data else payload
+    inserted_messages = _as_dict_list(response.data)
+    msg_data = inserted_messages[0] if inserted_messages else payload
     msg_data["map_id"] = message.map_id
     msg_data["user_id"] = user_id
     return msg_data
@@ -49,10 +58,11 @@ def get_paginated_history(
 ) -> list[dict[str, Any]]:
     """Retrieve paginated chat message history for a given map thread."""
     thread_resp = db.table("chat_threads").select("id").eq("map_id", map_id).execute()
-    if not thread_resp.data:
+    thread_rows = _as_dict_list(thread_resp.data)
+    if not thread_rows:
         return []
 
-    thread_id = thread_resp.data[0]["id"]
+    thread_id = thread_rows[0]["id"]
     response = (
         db.table("chat_messages")
         .select("*")
@@ -62,7 +72,7 @@ def get_paginated_history(
         .execute()
     )
 
-    records = response.data or []
+    records = _as_dict_list(response.data)
     for item in records:
         item["map_id"] = map_id
         item["user_id"] = user_id
@@ -83,17 +93,19 @@ def confirm_proposed_action(
     thread_query = (
         db.table("chat_messages").select("id, thread_id, proposed_action, is_confirmed").eq("id", message_id).execute()
     )
-    if not thread_query.data:
+    message_rows = _as_dict_list(thread_query.data)
+    if not message_rows:
         return None
 
-    msg_record = thread_query.data[0]
+    msg_record = message_rows[0]
     thread_id = msg_record.get("thread_id")
 
     map_id = None
     if thread_id:
         t_resp = db.table("chat_threads").select("id, map_id, user_id").eq("id", thread_id).execute()
-        if t_resp.data:
-            thread_data = t_resp.data[0]
+        thread_data_rows = _as_dict_list(t_resp.data)
+        if thread_data_rows:
+            thread_data = thread_data_rows[0]
             # Verify ownership if user_id is tracked on thread
             if thread_data.get("user_id") and str(thread_data.get("user_id")) != user_id:
                 return None
@@ -104,7 +116,8 @@ def confirm_proposed_action(
         db.table("chat_messages").update({"is_confirmed": confirmation.is_confirmed}).eq("id", message_id).execute()
     )
 
-    updated = response.data[0] if response.data else msg_record
+    updated_rows = _as_dict_list(response.data)
+    updated = updated_rows[0] if updated_rows else msg_record
     updated["is_confirmed"] = confirmation.is_confirmed
     updated["map_id"] = map_id
     updated["user_id"] = user_id
