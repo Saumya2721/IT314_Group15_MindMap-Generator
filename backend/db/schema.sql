@@ -834,5 +834,45 @@ REVOKE ALL ON SCHEMA langgraph FROM anon, authenticated;
 --    private.is_map_owner() check (e.g. a map_members table) rather
 --    than editing every policy.
 -- =====================================================================
+-- =====================================================================
+-- Version history: public.map_snapshots
+-- One row per generation job completion (initial generation, full regen,
+-- branch regen, or manual). snapshot_data holds the full {nodes, edges}
+-- payload for that version; version_number increments per map.
+-- =====================================================================
+create table public.map_snapshots (
+    id              uuid primary key default gen_random_uuid(),
+    map_id          uuid not null references public.mind_maps(id) on delete cascade,
+    version_number  int not null,
+    trigger_source  text not null check (
+        trigger_source in ('initial_generation', 'full_regen', 'branch_regen', 'manual')
+    ),
+    trigger_job_id  uuid references public.generation_jobs(id) on delete set null,
+    label           varchar(255),
+    snapshot_data   jsonb not null,
+    created_by      uuid references public.profiles(id) on delete set null,
+    created_at      timestamptz not null default now()
+);
+
+create index idx_map_snapshots_map_id
+    on public.map_snapshots (map_id);
+
+create unique index uq_map_snapshots_map_version
+    on public.map_snapshots (map_id, version_number);
+
+alter table public.map_snapshots enable row level security;
+
+create policy map_snapshots_select_own on public.map_snapshots
+    for select to authenticated
+    using (
+        exists (
+            select 1 from public.mind_maps m
+            where m.id = map_id and m.user_id = auth.uid()
+        )
+    );
+
+-- Writes are owned by the backend only (service-role key); no write grants
+-- for authenticated/anon are provided.
+-- =====================================================================
 -- End of schema
 -- =====================================================================

@@ -5,6 +5,7 @@ All SQL operations are centralized here.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Any
 from uuid import UUID
@@ -374,6 +375,163 @@ async def get_map_graph(conn: asyncpg.Connection, map_id: UUID) -> dict:
         "nodes": [dict(n) for n in nodes],
         "edges": [dict(e) for e in edges],
     }
+
+
+# ---------------------------------------------------------------------
+# Map Snapshots / Version History (US-04)
+# ---------------------------------------------------------------------
+
+
+async def next_snapshot_version(conn: asyncpg.Connection, map_id: UUID) -> int:
+    """Return the next snapshot version number for a map (1-based)."""
+    row = await conn.fetchrow(
+        "SELECT COALESCE(MAX(version_number), 0) + 1 AS next_v FROM public.map_snapshots WHERE map_id = $1",
+        map_id,
+    )
+    return int(row["next_v"])
+
+
+async def create_map_snapshot(
+    conn: asyncpg.Connection,
+    *,
+    map_id: UUID,
+    trigger_source: str,
+    trigger_job_id: UUID | None,
+    snapshot_data: dict,
+    label: str | None = None,
+    created_by: UUID | None = None,
+) -> dict | None:
+    """Insert a new snapshot row for a map, returning the inserted row."""
+    version = await next_snapshot_version(conn, map_id)
+    row = await conn.fetchrow(
+        """
+        INSERT INTO public.map_snapshots
+            (map_id, version_number, trigger_source, trigger_job_id,
+             label, snapshot_data, created_by)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        RETURNING id, map_id, version_number, trigger_source, trigger_job_id,
+                  label, snapshot_data, created_by, created_at
+        """,
+        map_id,
+        version,
+        trigger_source,
+        trigger_job_id,
+        label,
+        asyncpg.Json(snapshot_data),
+        created_by,
+    )
+    return dict(row) if row else None
+
+
+async def list_map_snapshots(conn: asyncpg.Connection, map_id: UUID) -> list[dict]:
+    """List all snapshots for a map, newest first (with snapshot_data payload)."""
+    rows = await conn.fetch(
+        """
+        SELECT id, map_id, version_number, trigger_source, trigger_job_id,
+               label, snapshot_data, created_by, created_at
+        FROM public.map_snapshots WHERE map_id = $1
+        ORDER BY version_number DESC
+        """,
+        map_id,
+    )
+    return [dict(r) for r in rows]
+
+
+async def get_map_snapshot(conn: asyncpg.Connection, map_id: UUID, snapshot_id: UUID) -> dict | None:
+    """Get a single snapshot including its snapshot_data payload."""
+    row = await conn.fetchrow(
+        """
+        SELECT id, map_id, version_number, trigger_source, trigger_job_id,
+               label, snapshot_data, created_by, created_at
+        FROM public.map_snapshots WHERE id = $1 AND map_id = $2
+        """,
+        snapshot_id,
+        map_id,
+    )
+    return dict(row) if row else None
+
+
+async def restore_map_graph_from_snapshot(
+    conn: asyncpg.Connection,
+    *,
+    map_id: UUID,
+    snapshot_id: UUID,
+) -> dict | None:
+    """Atomically replace a map's nodes/edges with a snapshot's stored graph.
+
+    Deletes existing edges/nodes for the map and re-inserts the snapshot's
+    nodes/edges, then returns the restored {nodes, edges}.
+    """
+    snap = await get_map_snapshot(conn, map_id, snapshot_id)
+    if not snap:
+        return None
+
+    snapshot_data = snap["snapshot_data"]
+    if isinstance(snapshot_data, str):
+        snapshot_data = json.loads(snapshot_data)
+
+    nodes_raw = snapshot_data.get("nodes", [])
+    edges_raw = snapshot_data.get("edges", [])
+
+    await conn.execute("DELETE FROM public.edges WHERE map_id = $1", map_id)
+    await conn.execute("DELETE FROM public.nodes WHERE map_id = $1", map_id)
+
+    if nodes_raw:
+        await conn.executemany(
+            """
+            INSERT INTO public.nodes
+                (id, map_id, label, description, pos_x, pos_y,
+                 background_color, text_color, node_type, source_job_id, node_data)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            """,
+            [
+                (
+                    n["id"],
+                    map_id,
+                    n.get("label"),
+                    n.get("description"),
+                    float(n.get("pos_x", 0.0)),
+                    float(n.get("pos_y", 0.0)),
+                    n.get("background_color"),
+                    n.get("text_color"),
+                    n.get("node_type", "default"),
+                    n.get("source_job_id"),
+                    n.get("node_data"),
+                )
+                for n in nodes_raw
+            ],
+        )
+    if edges_raw:
+        await conn.executemany(
+            """
+            INSERT INTO public.edges (id, map_id, source_node_id, target_node_id, label, edge_data)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            """,
+            [
+                (
+                    e["id"],
+                    map_id,
+                    e.get("source_node_id") or e.get("source"),
+                    e.get("target_node_id") or e.get("target"),
+                    e.get("label"),
+                    e.get("edge_data"),
+                )
+                for e in edges_raw
+            ],
+        )
+
+    return snapshot_data
+
+
+async def delete_map_snapshot(conn: asyncpg.Connection, map_id: UUID, snapshot_id: UUID) -> bool:
+    """Delete a snapshot row by id and map_id. Returns True if deleted."""
+    result = await conn.execute(
+        "DELETE FROM public.map_snapshots WHERE id = $1 AND map_id = $2",
+        snapshot_id,
+        map_id,
+    )
+    # asyncpg returns "DELETE 1" style result
+    return result.endswith(" 1")
 
 
 # ---------------------------------------------------------------------
