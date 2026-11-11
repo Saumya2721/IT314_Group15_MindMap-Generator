@@ -6,10 +6,8 @@ import uuid
 from unittest.mock import AsyncMock, MagicMock
 
 import main
-import pytest
-from fastapi.testclient import TestClient
-
 from core.supabase import current_user_id
+from fastapi.testclient import TestClient
 
 MAP_ID = uuid.UUID("11111111-1111-1111-1111-111111111111")
 SNAPSHOT_ID = uuid.UUID("22222222-2222-2222-2222-222222222222")
