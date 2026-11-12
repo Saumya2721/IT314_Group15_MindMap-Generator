@@ -13,11 +13,12 @@ from __future__ import annotations
 import uuid
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
 import main
+import pytest
 from core.supabase import current_user_id
-from db.repository import search_maps
 from fastapi.testclient import TestClient
+
+from db.repository import search_maps
 
 MAP_ID = uuid.UUID("11111111-1111-1111-1111-111111111111")
 UID = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
