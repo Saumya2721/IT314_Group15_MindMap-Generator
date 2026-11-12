@@ -123,19 +123,8 @@ async def _run(request: GenerationRequest, namespace: str, deps: GenerationDeps)
         seed_text = await reconstruct_seed_from_namespace(deps, namespace=namespace)
         is_regeneration = True
 
-    elif request.job_type == JobType.REGENERATE_NODE:
-        branch_label = (
-            request.branch_context.get("target_node_label", "Subtopic") if request.branch_context else "Subtopic"
-        )
-        try:
-            prior_seed = await reconstruct_seed_from_namespace(deps, namespace=namespace)
-            seed_text = f"Mind Map Context:\n{prior_seed}\n\nBranch to expand: '{branch_label}'"
-        except Exception:
-            seed_text = f"Mind map branch for: '{branch_label}'"
-        is_regeneration = True
-
     else:
-        raise NotImplementedError(f"{request.job_type} is not implemented yet")
+        raise NotImplementedError(f"{request.job_type} is not implemented yet (see llm.md section 15)")
 
     final_state = await run_generation(
         deps,
@@ -147,33 +136,20 @@ async def _run(request: GenerationRequest, namespace: str, deps: GenerationDeps)
             "detail_level": request.detail_level,
             "regeneration_instruction": request.regeneration_instruction,
             "is_regeneration": is_regeneration,
+            "purpose": request.purpose,
+            "seed_has_files": bool(request.files or request.seed_has_files),
         },
         max_retries=deps.settings.generation.max_generation_retries,
     )
 
     if final_state.get("status") == "completed":
-        out_nodes = list(final_state.get("nodes", []))
-        out_edges = list(final_state.get("edges", []))
-
-        if request.job_type == JobType.REGENERATE_NODE and request.target_node_id and out_nodes:
-            target_id = request.target_node_id
-            root_id = out_nodes[0].id
-            for n in out_nodes:
-                if n.id == root_id:
-                    n.id = target_id
-            for e in out_edges:
-                if e.source_node_id == root_id:
-                    e.source_node_id = target_id
-                if e.target_node_id == root_id:
-                    e.target_node_id = target_id
-
         return GenerationResult(
             job_id=request.job_id,
             map_id=request.map_id,
             status="completed",
             resolved_detail_level=final_state.get("resolved_detail_level"),
-            nodes=out_nodes,
-            edges=out_edges,
+            nodes=final_state.get("nodes", []),
+            edges=final_state.get("edges", []),
             seed_assets=seed_assets,
             rejected_files=rejected_files,
             tool_call_log=[ToolCallLogEntry(**e) for e in final_state.get("tool_call_log", [])],

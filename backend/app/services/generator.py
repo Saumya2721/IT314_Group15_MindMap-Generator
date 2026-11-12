@@ -13,10 +13,15 @@ import sys
 from pathlib import Path
 from typing import Any
 
-# Ensure llm directory is in sys.path for prompt and validation helpers
-llm_dir = Path(__file__).resolve().parent.parent.parent / "llm"
-if llm_dir.exists() and str(llm_dir) not in sys.path:
-    sys.path.insert(0, str(llm_dir))
+# Ensure llm and mindmap_llm directories are in sys.path for prompt and validation helpers
+for d in (
+    Path(__file__).resolve().parent.parent.parent.parent / "llm" / "mindmap_llm",
+    Path(__file__).resolve().parent.parent.parent.parent / "llm",
+    Path(__file__).resolve().parent.parent.parent / "llm" / "mindmap_llm",
+    Path(__file__).resolve().parent.parent.parent / "llm",
+):
+    if d.exists() and str(d) not in sys.path:
+        sys.path.insert(0, str(d))
 
 try:
     from orchestration.prompts import (

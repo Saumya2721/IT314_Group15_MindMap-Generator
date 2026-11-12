@@ -26,7 +26,6 @@ class JobType(StrEnum):
     GENERATE = "generate"
     REGENERATE_FULL = "regenerate_full"
     REGENERATE_NODE = "regenerate_node"
-    CHAT_TURN = "chat_turn"
 
 
 class SeedAssetType(StrEnum):
@@ -74,13 +73,16 @@ class GenerationRequest(BaseModel):
     regeneration_instruction: str | None = None
 
     detail_level: DetailLevel | None = None  # None => worker infers it
-    target_node_id: UUID | None = None
-    branch_context: dict[str, Any] | None = None
+    purpose: str | None = None
+    seed_has_files: bool = False
 
     # Internal callback auth — see callback/client.py. Not a user secret;
     # scoped to this one job by the backend when it enqueues.
     callback_base_url: str
     callback_token: str
+
+    # Short-term memory context (US-15 / S2-BE4): rolling summary + recent message turns
+    memory_context: dict[str, Any] | None = None
 
 
 # ---------------------------------------------------------------------
@@ -95,6 +97,7 @@ class NodeDraft(BaseModel):
     node_type: str = "default"
     background_color: str | None = None  # "#RRGGBB", validated by validation/schema.py
     text_color: str | None = None
+    sources: list[str] = Field(default_factory=list)
 
 
 class EdgeDraft(BaseModel):
@@ -153,45 +156,4 @@ class GenerationResult(BaseModel):
     rejected_files: list[RejectedFile] = Field(default_factory=list)
     tool_call_log: list[ToolCallLogEntry] = Field(default_factory=list)
 
-    error: GenerationError | None = None
-
-
-# ---------------------------------------------------------------------
-# Chat / Assistant Contracts (S2-BE7 Queue & Contract Extension)
-# ---------------------------------------------------------------------
-
-
-class ActionProposal(BaseModel):
-    """Structured action proposal suggested by the assistant (e.g. regenerate or edit)."""
-
-    action_type: str  # "regenerate_map", "regenerate_node", "edit_node", "general_answer"
-    target_node_id: UUID | None = None
-    instruction: str | None = None
-    description: str | None = None
-
-
-class ChatTurnRequest(BaseModel):
-    """Inbound chat turn request sent across ARQ queue to worker."""
-
-    job_id: UUID
-    map_id: UUID
-    job_type: JobType = JobType.CHAT_TURN
-    message: str
-    thread_id: UUID | None = None
-    target_node_id: UUID | None = None
-    context_window: list[dict[str, Any]] = Field(default_factory=list)
-    rolling_summary: str | None = None
-    callback_base_url: str
-    callback_token: str
-
-
-class ChatTurnResult(BaseModel):
-    """Outbound chat turn result sent back to backend internal callback."""
-
-    job_id: UUID
-    map_id: UUID
-    status: Literal["completed", "failed", "rejected"]
-    reply: str = ""
-    cited_node_ids: list[UUID] = Field(default_factory=list)
-    action_proposal: ActionProposal | None = None
     error: GenerationError | None = None

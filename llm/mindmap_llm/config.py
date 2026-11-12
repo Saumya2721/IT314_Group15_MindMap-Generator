@@ -143,6 +143,11 @@ class GenerationConfig:
     rag_rerank_top_k: int = field(default_factory=lambda: _get_int("RAG_RERANK_TOP_K", 6))
     overview_latency_budget_s: float = field(default_factory=lambda: _get_float("OVERVIEW_LATENCY_BUDGET_S", 30.0))
     detailed_latency_budget_s: float = field(default_factory=lambda: _get_float("DETAILED_LATENCY_BUDGET_S", 180.0))
+    enable_dynamic_prompts: bool = field(default_factory=lambda: _get_bool("ENABLE_DYNAMIC_PROMPTS", True))
+    thin_seed_word_threshold: int = field(default_factory=lambda: _get_int("THIN_SEED_WORD_THRESHOLD", 250))
+    research_queries_per_tool: int = field(default_factory=lambda: _get_int("RESEARCH_QUERIES_PER_TOOL", 4))
+    max_search_queries_per_tool: int = field(default_factory=lambda: _get_int("MAX_SEARCH_QUERIES_PER_TOOL", 3))
+    seed_dedup_overlap_threshold: float = field(default_factory=lambda: _get_float("SEED_DEDUP_OVERLAP_THRESHOLD", 0.6))
 
 
 @dataclass(frozen=True)
