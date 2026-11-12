@@ -874,6 +874,37 @@ create policy map_snapshots_select_own on public.map_snapshots
 
 -- Writes are owned by the backend only (service-role key); no write grants
 -- for authenticated/anon are provided.
+
+-- =====================================================================
+-- TABLE: memories (User & Map-level Long-term Memories, S3-BE6)
+-- =====================================================================
+
+CREATE TABLE IF NOT EXISTS public.memories (
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id       UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+    map_id        UUID REFERENCES public.mind_maps(id) ON DELETE CASCADE,
+    content       TEXT NOT NULL,
+    category      VARCHAR(50) NOT NULL DEFAULT 'general',
+    scope         VARCHAR(20) NOT NULL DEFAULT 'global' CHECK (scope IN ('global', 'map')),
+    is_active     BOOLEAN NOT NULL DEFAULT true,
+    content_hash  VARCHAR(64) NOT NULL,
+    metadata      JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT chk_map_scope CHECK (
+        (scope = 'global' AND map_id IS NULL) OR
+        (scope = 'map' AND map_id IS NOT NULL)
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_memories_user_id ON public.memories(user_id);
+CREATE INDEX IF NOT EXISTS idx_memories_map_id ON public.memories(map_id);
+CREATE INDEX IF NOT EXISTS idx_memories_scope ON public.memories(scope);
+CREATE INDEX IF NOT EXISTS idx_memories_user_hash ON public.memories(user_id, content_hash);
+CREATE INDEX IF NOT EXISTS idx_memories_active ON public.memories(is_active);
+
+ALTER TABLE public.memories ENABLE ROW LEVEL SECURITY;
+
 -- =====================================================================
 -- End of schema
 -- =====================================================================
