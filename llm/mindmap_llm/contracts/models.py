@@ -26,6 +26,7 @@ class JobType(StrEnum):
     GENERATE = "generate"
     REGENERATE_FULL = "regenerate_full"
     REGENERATE_NODE = "regenerate_node"
+    CHAT_TURN = "chat_turn"
 
 
 class SeedAssetType(StrEnum):
@@ -76,12 +77,46 @@ class GenerationRequest(BaseModel):
     purpose: str | None = None
     seed_has_files: bool = False
 
+    # Target node for node regeneration (US-06 / S2-BE7)
+    target_node_id: UUID | None = None
+    instruction: str | None = None
+
     # Internal callback auth — see callback/client.py. Not a user secret;
     # scoped to this one job by the backend when it enqueues.
     callback_base_url: str
     callback_token: str
 
     # Short-term memory context (US-15 / S2-BE4): rolling summary + recent message turns
+    memory_context: dict[str, Any] | None = None
+
+
+# ---------------------------------------------------------------------
+# Specialized Inbound Models (S2-BE7)
+# ---------------------------------------------------------------------
+
+
+class RegenerateNodeRequest(BaseModel):
+    job_id: UUID
+    map_id: UUID
+    target_node_id: UUID
+    job_type: JobType = JobType.REGENERATE_NODE
+    instruction: str | None = None
+    existing_node_label: str | None = None
+    existing_node_description: str | None = None
+    context: str | None = None
+    callback_base_url: str
+    callback_token: str
+    memory_context: dict[str, Any] | None = None
+
+
+class ChatTurnRequest(BaseModel):
+    job_id: UUID
+    map_id: UUID
+    job_type: JobType = JobType.CHAT_TURN
+    message: str
+    thread_id: UUID | None = None
+    callback_base_url: str
+    callback_token: str
     memory_context: dict[str, Any] | None = None
 
 
@@ -156,4 +191,25 @@ class GenerationResult(BaseModel):
     rejected_files: list[RejectedFile] = Field(default_factory=list)
     tool_call_log: list[ToolCallLogEntry] = Field(default_factory=list)
 
+    error: GenerationError | None = None
+
+
+class RegenerateNodeResult(BaseModel):
+    job_id: UUID
+    map_id: UUID
+    target_node_id: UUID
+    status: Literal["completed", "failed", "rejected"]
+    replacement_node: NodeDraft | None = None
+    new_subnodes: list[NodeDraft] = Field(default_factory=list)
+    new_edges: list[EdgeDraft] = Field(default_factory=list)
+    error: GenerationError | None = None
+
+
+class ChatTurnResult(BaseModel):
+    job_id: UUID
+    map_id: UUID
+    status: Literal["completed", "failed", "rejected"]
+    assistant_message: str | None = None
+    summary: str | None = None
+    proposed_action: dict[str, Any] | None = None
     error: GenerationError | None = None
