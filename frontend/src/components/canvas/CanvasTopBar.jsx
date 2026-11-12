@@ -1,4 +1,5 @@
 import React from 'react'
+import { SaveStatusBadge } from './SaveStatusBadge'
 import './CanvasTopBar.css'
 
 export function CanvasTopBar({
@@ -18,7 +19,8 @@ export function CanvasTopBar({
   onRedo,
   viewMode = 'canvas',
   onViewModeChange,
-  isSaving = false,
+  saveStatus = 'saved',
+  onSaveRetry,
 }) {
   return (
     <div className="canvas-top-bar">
@@ -38,7 +40,7 @@ export function CanvasTopBar({
 
         <span className="canvas-bar-divider" />
 
-        <div className="canvas-title-group">
+        <span className="canvas-title-group">
           <input
             type="text"
             className="canvas-title-input"
@@ -47,14 +49,8 @@ export function CanvasTopBar({
             onBlur={onTitleBlur}
             placeholder="Untitled Map"
           />
-          <span className="canvas-save-status">
-            <span
-              className="save-dot"
-              style={{ backgroundColor: isSaving ? '#C96B4B' : '#155e63' }}
-            />
-            <span>{isSaving ? 'Saving...' : 'Saved'}</span>
-          </span>
-        </div>
+          <SaveStatusBadge status={saveStatus} onRetry={onSaveRetry} />
+        </span>
       </div>
 
       {/* Right: View Mode Toggle & Canvas Actions */}

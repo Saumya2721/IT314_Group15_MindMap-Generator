@@ -37,6 +37,10 @@ export function MindMapProvider({ children }) {
   const [snapshotsLoading, setSnapshotsLoading] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchResults, setSearchResults] = useState(null)
+  const [searchLoading, setSearchLoading] = useState(false)
+  const [searchError, setSearchError] = useState(null)
 
   const fetchMaps = useCallback(async () => {
     setLoading(true)
@@ -55,6 +59,33 @@ export function MindMapProvider({ children }) {
       return []
     } finally {
       setLoading(false)
+    }
+  }, [])
+
+  const searchMindMaps = useCallback(async (q, limit = 20) => {
+    const trimmed = (q || '').trim()
+    if (!trimmed) {
+      setSearchResults(null)
+      setSearchLoading(false)
+      setSearchError(null)
+      return []
+    }
+    setSearchLoading(true)
+    setSearchError(null)
+    try {
+      const data = await mindMapService.searchMaps(trimmed, limit)
+      const mapped = data.map((m) => ({
+        ...m,
+        bookmarked: getStoredBookmarks().includes(m.id),
+      }))
+      setSearchResults(mapped)
+      return mapped
+    } catch (err) {
+      setSearchError(err.message || 'Failed to search mind maps')
+      setSearchResults([])
+      return []
+    } finally {
+      setSearchLoading(false)
     }
   }, [])
 
@@ -159,6 +190,12 @@ export function MindMapProvider({ children }) {
         snapshotsLoading,
         loadSnapshots,
         restoreSnapshot,
+        searchQuery,
+        setSearchQuery,
+        searchResults,
+        searchLoading,
+        searchError,
+        searchMindMaps,
       }}
     >
       {children}

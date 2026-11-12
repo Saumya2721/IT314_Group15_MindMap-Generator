@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { CanvasTopBar } from './CanvasTopBar'
 import { MindMapCanvas } from './MindMapCanvas'
 import { NodeInspector } from './NodeInspector'
@@ -9,29 +9,19 @@ import { useCanvasState } from './useCanvasState'
 import { useCommentsChat } from './useCommentsChat'
 import { useExportHistory } from './useExportHistory'
 import { useMindMap } from '../../context/MindMapContext'
+import { useSaveStatus } from './useSaveStatus'
 import '../../pages/GeneratingPage.css'
-
-/**
- * EditorWorkspace
- *
- * Dedicated workspace encapsulating the React Flow canvas, top bar,
- * inspectors, outline view, and modal dialogs. Extracted from GeneratingPage.jsx
- * as part of Issue #104.
- *
- * Uses isolated state hooks for:
- * - FE-1: Canvas and undo/redo (useCanvasState)
- * - FE-2: Comments and chat (useCommentsChat)
- * - FE-3: Export and history (useExportHistory)
- */
 export function EditorWorkspace({
   mapId,
   initialTitle = 'Mind Map',
   initialNodes = [],
   initialEdges = [],
+  initialViewport = null,
   onTitleChange = null,
   onTitleBlur = null,
   onBack = null,
   onRegenerate = null,
+  onViewportChange = null,
   toastMessage = '',
   onClearToast = null,
   canvasState: customCanvasState = null,
@@ -42,7 +32,6 @@ export function EditorWorkspace({
 
   // Map Title & Saving State
   const [mapTitle, setMapTitle] = useState(initialTitle)
-  const [isSaving, setIsSaving] = useState(false)
 
   // Local Toast State
   const [localToast, setLocalToast] = useState('')
@@ -66,6 +55,43 @@ export function EditorWorkspace({
   })
   const canvas = customCanvasState || defaultCanvas
   const { setGraphData } = canvas
+
+  // S2-FE5 / US-08: autosave persistence callback (latest title/viewport)
+  const persistCurrentState = useCallback(async () => {
+    if (!mapId) return
+    try {
+      await updateMap(mapId, { title: mapTitle.trim() })
+    } catch (err) {
+      console.warn('Failed to autosave title:', err)
+      throw err
+    }
+  }, [mapId, mapTitle, updateMap])
+
+  // S2-FE5 / US-08: autosave status machine for the editor header
+  const autosave = useSaveStatus(persistCurrentState, { debounceMs: 300 })
+  const { scheduleSave } = autosave
+  const saveStatus = autosave.status
+
+  // S2-FE5 / US-08: autosave title changes (debounced 300ms)
+  useEffect(() => {
+    if (!mapId || !mapTitle.trim()) return
+    scheduleSave()
+  }, [mapTitle, mapId, scheduleSave])
+
+  // S2-FE5 / US-08: autosave node positions/viewport on graph change
+  useEffect(() => {
+    if (!mapId || canvas.nodes.length === 0) return
+    scheduleSave()
+  }, [canvas.nodes, mapId, scheduleSave])
+
+  // S2-FE5 / US-08: autosave viewport changes (debounced 500ms inside hook)
+  const handleViewportChange = useCallback(
+    (viewport) => {
+      if (!onViewportChange || !viewport) return
+      onViewportChange(viewport)
+    },
+    [onViewportChange],
+  )
 
   // Synchronize canvas if initialNodes or initialEdges update externally
   useEffect(() => {
@@ -119,14 +145,7 @@ export function EditorWorkspace({
       return
     }
     if (!mapId || !mapTitle.trim()) return
-    setIsSaving(true)
-    try {
-      await updateMap(mapId, { title: mapTitle.trim() })
-    } catch (err) {
-      console.warn('Failed to auto-save title:', err)
-    } finally {
-      setIsSaving(false)
-    }
+    await autosave.flushSave()
   }
 
   // Share handler
@@ -224,7 +243,10 @@ export function EditorWorkspace({
         }}
         viewMode={canvas.viewMode}
         onViewModeChange={canvas.setViewMode}
-        isSaving={isSaving}
+        saveStatus={saveStatus}
+        onSaveRetry={() => {
+          void autosave.retry()
+        }}
       />
 
       {/* Visual Canvas or Outline Mode */}
@@ -287,6 +309,8 @@ export function EditorWorkspace({
           toastMessage={activeToast}
           onClearToast={onClearToast || (() => setLocalToast(''))}
           flowApiRef={flowApiRef}
+          initialViewport={initialViewport}
+          onViewportChange={handleViewportChange}
         />
       )}
 

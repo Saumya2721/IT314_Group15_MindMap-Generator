@@ -24,6 +24,7 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Query,
     Request,
     UploadFile,
 )
@@ -83,6 +84,7 @@ from db.repository import (
     list_map_snapshots,
     list_node_comments,
     restore_map_snapshot,
+    search_maps,
     update_map_edge,
     update_map_node,
     update_node_comment,
@@ -121,6 +123,9 @@ class CreateMap(BaseModel):
 class UpdateMap(BaseModel):
     title: str | None = Field(None, min_length=1, max_length=255)
     is_public: bool | None = None
+    view_x: float | None = Field(None, description="Canvas horizontal viewport coordinate")
+    view_y: float | None = Field(None, description="Canvas vertical viewport coordinate")
+    view_zoom: float | None = Field(None, gt=0, description="Canvas zoom level for the persisted viewport")
 
 
 class RegenerateRequest(BaseModel):
@@ -165,18 +170,36 @@ async def create_map(body: CreateMap, request: Request, uid: UUID = Depends(curr
 
 
 @router.get("/maps")
-async def list_maps(request: Request, uid: UUID = Depends(current_user_id)):
-    rows = await pool_of(request).fetch(
-        """SELECT m.id, m.title, m.is_public, m.created_at, m.updated_at,
-                  (SELECT count(*)::int FROM public.nodes n WHERE n.map_id = m.id) AS node_count,
-                  (SELECT j.status FROM public.generation_jobs j WHERE j.map_id = m.id ORDER BY j.created_at DESC LIMIT 1) AS latest_job_status,
-                  (SELECT j.progress_percent::int FROM public.generation_jobs j WHERE j.map_id = m.id ORDER BY j.created_at DESC LIMIT 1) AS latest_job_progress,
-                  (SELECT j.id FROM public.generation_jobs j WHERE j.map_id = m.id ORDER BY j.created_at DESC LIMIT 1) AS latest_job_id
-           FROM public.mind_maps m
-           WHERE m.user_id = $1
-           ORDER BY m.updated_at DESC""",
-        uid,
-    )
+async def list_maps(
+    request: Request,
+    q: str | None = Query(
+        None,
+        max_length=255,
+        description="Optional case-insensitive search term matched against map title and description",
+    ),
+    limit: int = Query(
+        20,
+        ge=1,
+        le=100,
+        description="Maximum number of results to return when searching",
+    ),
+    uid: UUID = Depends(current_user_id),
+):
+    pool = pool_of(request)
+    if q and q.strip():
+        rows = await search_maps(pool, uid, q, limit)
+    else:
+        rows = await pool.fetch(
+            """SELECT m.id, m.title, m.is_public, m.created_at, m.updated_at,
+                      (SELECT count(*)::int FROM public.nodes n WHERE n.map_id = m.id) AS node_count,
+                      (SELECT j.status FROM public.generation_jobs j WHERE j.map_id = m.id ORDER BY j.created_at DESC LIMIT 1) AS latest_job_status,
+                      (SELECT j.progress_percent::int FROM public.generation_jobs j WHERE j.map_id = m.id ORDER BY j.created_at DESC LIMIT 1) AS latest_job_progress,
+                      (SELECT j.id FROM public.generation_jobs j WHERE j.map_id = m.id ORDER BY j.created_at DESC LIMIT 1) AS latest_job_id
+               FROM public.mind_maps m
+               WHERE m.user_id = $1
+               ORDER BY m.updated_at DESC""",
+            uid,
+        )
     return [dict(r) for r in rows]
 
 
@@ -187,7 +210,7 @@ async def get_map(map_id: UUID, request: Request, uid: UUID = Depends(current_us
     if not is_owner:
         raise HTTPException(404, "Map not found")
     row = await pool.fetchrow(
-        "SELECT id, title, is_public, created_at, updated_at FROM public.mind_maps WHERE id = $1",
+        "SELECT id, title, is_public, created_at, updated_at, view_x, view_y, view_zoom FROM public.mind_maps WHERE id = $1",
         map_id,
     )
     if not row:
@@ -215,6 +238,15 @@ async def update_map(
     if body.is_public is not None:
         args.append(body.is_public)
         updates.append(f"is_public = ${len(args)}")
+    if body.view_x is not None:
+        args.append(body.view_x)
+        updates.append(f"view_x = ${len(args)}")
+    if body.view_y is not None:
+        args.append(body.view_y)
+        updates.append(f"view_y = ${len(args)}")
+    if body.view_zoom is not None:
+        args.append(body.view_zoom)
+        updates.append(f"view_zoom = ${len(args)}")
 
     if not updates:
         raise HTTPException(400, "No fields to update")

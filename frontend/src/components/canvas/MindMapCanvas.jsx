@@ -15,6 +15,7 @@ import { BranchNode } from './nodes/BranchNode'
 import { ConceptNode } from './nodes/ConceptNode'
 import { NodeInspector } from './NodeInspector'
 import { adaptBackendGraphToFlow } from '../../utils/graphAdapter'
+import { useCanvasViewport } from './useCanvasViewport'
 import './MindMapCanvas.css'
 
 const nodeTypes = {
@@ -55,7 +56,14 @@ function useExportableFlowApi(flowApiRef) {
   }, [rf, flowApiRef])
 }
 
-function FlowCanvas({ rawNodes = [], rawEdges = [], toastMessage = '', onClearToast, flowApiRef }) {
+function FlowCanvas({
+  rawNodes = [],
+  rawEdges = [],
+  toastMessage = '',
+  onClearToast,
+  flowApiRef,
+  onCaptureViewport,
+}) {
   const [selectedNode, setSelectedNode] = useState(null)
   useExportableFlowApi(flowApiRef)
 
@@ -63,6 +71,15 @@ function FlowCanvas({ rawNodes = [], rawEdges = [], toastMessage = '', onClearTo
   const { flowNodes, flowEdges } = useMemo(() => {
     return adaptBackendGraphToFlow(rawNodes, rawEdges)
   }, [rawNodes, rawEdges])
+
+  // Capture the current viewport after the graph is (re)rendered so the
+  // parent can persist it (S2-FE5 / US-08).
+  useEffect(() => {
+    if (onCaptureViewport) {
+      const id = requestAnimationFrame(() => onCaptureViewport())
+      return () => cancelAnimationFrame(id)
+    }
+  }, [flowNodes, flowEdges, onCaptureViewport])
 
   // Handle node selection
   const handleNodeClick = useCallback((event, node) => {
@@ -169,6 +186,14 @@ function FlowCanvas({ rawNodes = [], rawEdges = [], toastMessage = '', onClearTo
 }
 
 export function MindMapCanvas(props) {
+  const { initialViewport = null, onViewportChange = null, flowApiRef = null } = props
+
+  const { capture } = useCanvasViewport({
+    initialViewport,
+    flowApiRef,
+    onViewportChange,
+  })
+
   return (
     <ReactFlowProvider>
       <FlowCanvas
@@ -176,7 +201,8 @@ export function MindMapCanvas(props) {
         rawEdges={props.rawEdges || []}
         toastMessage={props.toastMessage}
         onClearToast={props.onClearToast}
-        flowApiRef={props.flowApiRef}
+        flowApiRef={flowApiRef}
+        onCaptureViewport={capture}
       />
     </ReactFlowProvider>
   )
