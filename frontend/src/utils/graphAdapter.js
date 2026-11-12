@@ -4,7 +4,7 @@
  * Preserves cross-links without collapsing multi-parent nodes.
  */
 
-export function adaptBackendGraphToFlow(rawNodes = [], rawEdges = []) {
+export function adaptBackendGraphToFlow(rawNodes = [], rawEdges = [], options = {}) {
   if (!rawNodes || rawNodes.length === 0) {
     return { flowNodes: [], flowEdges: [] }
   }
@@ -163,6 +163,10 @@ export function adaptBackendGraphToFlow(rawNodes = [], rawEdges = []) {
         nodeData: n.node_data || {},
         incomingEdges: parentsMap.get(id) || [],
         outgoingEdges: childrenMap.get(id) || [],
+        isEditing: options.editingNodeId ? String(options.editingNodeId) === id : false,
+        onStartEditing: options.onStartEditing,
+        onSaveLabel: options.onSaveLabel,
+        onCancelEditing: options.onCancelEditing,
       },
     }
   })
