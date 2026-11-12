@@ -174,7 +174,7 @@ export function VersionHistoryPanel({
     setRestoringId(confirmRestoreId)
     setActionError('')
     try {
-      const result = await onRestore(mapId, confirmRestoreId)
+      await onRestore(mapId, confirmRestoreId)
       setRestoringId(null)
       setConfirmRestoreId(null)
       if (onClose) onClose()

@@ -1,6 +1,6 @@
 import React from 'react'
 
-export function MindMapNode({ label, type = 'default' }) {
+export function MindMapNode({ label, _type = 'default' }) {
   return (
     <div
       style={{

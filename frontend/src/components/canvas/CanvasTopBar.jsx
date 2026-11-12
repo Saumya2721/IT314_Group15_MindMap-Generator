@@ -10,6 +10,12 @@ export function CanvasTopBar({
   onShare,
   onExport,
   onRegenerate,
+  onHistory,
+  onToggleChat,
+  canUndo = false,
+  canRedo = false,
+  onUndo,
+  onRedo,
   viewMode = 'canvas',
   onViewModeChange,
   isSaving = false,
@@ -53,6 +59,36 @@ export function CanvasTopBar({
 
       {/* Right: View Mode Toggle & Canvas Actions */}
       <div className="canvas-bar-right">
+        {/* Undo / Redo Controls (FE-1) */}
+        {onUndo && (
+          <button
+            type="button"
+            className="btn-canvas-action"
+            onClick={onUndo}
+            disabled={!canUndo}
+            title="Undo (Ctrl+Z)"
+            aria-label="Undo canvas change"
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>
+              undo
+            </span>
+          </button>
+        )}
+        {onRedo && (
+          <button
+            type="button"
+            className="btn-canvas-action"
+            onClick={onRedo}
+            disabled={!canRedo}
+            title="Redo (Ctrl+Y)"
+            aria-label="Redo canvas change"
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>
+              redo
+            </span>
+          </button>
+        )}
+
         {/* Canvas / Outline Toggle */}
         <div className="view-mode-switcher">
           <button
@@ -86,6 +122,22 @@ export function CanvasTopBar({
           </button>
         )}
 
+        {/* History / Snapshots Button (FE-3) */}
+        {onHistory && (
+          <button
+            type="button"
+            className="btn-canvas-action"
+            onClick={onHistory}
+            title="Version History & Snapshots"
+            aria-label="Version history"
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>
+              history
+            </span>
+            <span>History</span>
+          </button>
+        )}
+
         {/* Share Button */}
         <button type="button" className="btn-canvas-action" onClick={onShare}>
           <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>
@@ -101,6 +153,21 @@ export function CanvasTopBar({
           </span>
           <span>Export</span>
         </button>
+
+        {/* Chat Drawer Toggle (FE-2) */}
+        {onToggleChat && (
+          <button
+            type="button"
+            className="btn-canvas-action"
+            onClick={onToggleChat}
+            title="AI Chat & Discussion"
+            aria-label="Toggle chat"
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>
+              chat
+            </span>
+          </button>
+        )}
 
         {/* Add Node Button */}
         {onAddNode && (
