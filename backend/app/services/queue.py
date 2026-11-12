@@ -71,6 +71,40 @@ async def enqueue_generation_job(pool: ArqRedis, request_payload: dict) -> str |
 
     job = await pool.enqueue_job("generate_mindmap", request_payload, **kwargs)  # type: ignore[arg-type]
     if job:
-        logger.info("Enqueued generate_mindmap task: arq_job_id=%s", job.job_id)
+        logger.info(
+            "Enqueued generate_mindmap task: arq_job_id=%s, type=%s",
+            job.job_id,
+            request_payload.get("job_type", "generate"),
+        )
+        return job.job_id
+    return None
+
+
+async def enqueue_node_regeneration_job(pool: ArqRedis, request_payload: dict) -> str | None:
+    """Enqueue a 'regenerate_node' task on the ARQ queue (S2-BE7)."""
+    request_payload["job_type"] = "regenerate_node"
+    job_id_str = str(request_payload.get("job_id")) if request_payload.get("job_id") else None
+    kwargs = {}
+    if job_id_str:
+        kwargs["_job_id"] = job_id_str
+
+    job = await pool.enqueue_job("generate_mindmap", request_payload, **kwargs)  # type: ignore[arg-type]
+    if job:
+        logger.info("Enqueued regenerate_node task: arq_job_id=%s", job.job_id)
+        return job.job_id
+    return None
+
+
+async def enqueue_chat_turn_job(pool: ArqRedis, request_payload: dict) -> str | None:
+    """Enqueue a 'chat_turn' task on the ARQ queue (S2-BE7)."""
+    request_payload["job_type"] = "chat_turn"
+    job_id_str = str(request_payload.get("job_id")) if request_payload.get("job_id") else None
+    kwargs = {}
+    if job_id_str:
+        kwargs["_job_id"] = job_id_str
+
+    job = await pool.enqueue_job("generate_mindmap", request_payload, **kwargs)  # type: ignore[arg-type]
+    if job:
+        logger.info("Enqueued chat_turn task: arq_job_id=%s", job.job_id)
         return job.job_id
     return None

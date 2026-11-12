@@ -40,11 +40,13 @@ from maps.routes import router as maps_router
 
 # API routers
 from routes.auth import router as auth_router
+from routes.internal import chat_callback_router
 from routes.internal import router as internal_router
 from routes.users import router as users_router
 from services.generator import MindMapGenerator
 from services.mindmap_service import MindMapBackendService
 from services.queue import close_redis_pool, create_redis_pool
+from snapshots.routes import router as snapshots_router
 
 from db.connection import create_db_pool
 
@@ -162,6 +164,8 @@ app.include_router(users_router, prefix="/api/users")
 app.include_router(users_router, include_in_schema=False)
 app.include_router(maps_router)
 app.include_router(internal_router)
+app.include_router(chat_callback_router)
+app.include_router(snapshots_router)
 
 
 @app.get("/", include_in_schema=False)

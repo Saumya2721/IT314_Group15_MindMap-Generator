@@ -219,7 +219,7 @@ CREATE TABLE public.generation_jobs (
     triggered_by_message_id UUID REFERENCES public.chat_messages(id) ON DELETE SET NULL,
 
     job_type          VARCHAR(20) NOT NULL DEFAULT 'generate'
-                      CHECK (job_type IN ('generate', 'regenerate_full', 'regenerate_node')),
+                      CHECK (job_type IN ('generate', 'regenerate_full', 'regenerate_node', 'chat_turn')),
     target_node_id    UUID,   -- FK to nodes(id) added below, after nodes exists
 
     status            VARCHAR(20) NOT NULL DEFAULT 'pending'
