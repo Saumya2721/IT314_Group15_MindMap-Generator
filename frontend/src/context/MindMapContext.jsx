@@ -24,7 +24,7 @@ function setStoredBookmarks(ids) {
 export function MindMapProvider({ children }) {
   const [maps, setMaps] = useState([])
   const [activeMap, setActiveMap] = useState(null)
-  const [bookmarkedIds, setBookmarkedIds] = useState(getStoredBookmarks)
+  const [, setBookmarkedIds] = useState(getStoredBookmarks)
   const [draftMap, setDraftMap] = useState({
     title: '',
     topic: '',
