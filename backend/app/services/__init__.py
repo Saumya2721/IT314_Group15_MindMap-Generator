@@ -1,7 +1,1 @@
-"""Contracts package marker."""
-
-__all__ = []
-
-
-# Intentionally left blank.
-
+"""Business logic and services."""

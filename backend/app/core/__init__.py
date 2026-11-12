@@ -1,7 +1,1 @@
-"""Database package marker."""
-
-__all__ = []
-
-
-# Intentionally left blank.
-
+"""Core application configuration and database utilities."""

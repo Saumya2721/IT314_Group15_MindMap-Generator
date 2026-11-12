@@ -120,6 +120,28 @@ async def get_chat_messages(conn: asyncpg.Connection, map_id: UUID) -> list[dict
     return [dict(r) for r in rows]
 
 
+async def get_chat_thread_summary(conn: asyncpg.Connection, map_id: UUID) -> str | None:
+    row = await conn.fetchrow("SELECT summary FROM public.chat_threads WHERE map_id = $1", map_id)
+    return row["summary"] if row and row["summary"] else None
+
+
+async def update_chat_thread_summary(conn: asyncpg.Connection, map_id: UUID, summary: str) -> None:
+    await conn.execute("UPDATE public.chat_threads SET summary = $2 WHERE map_id = $1", map_id, summary)
+
+
+async def get_recent_chat_messages(conn: asyncpg.Connection, map_id: UUID, limit: int = 6) -> list[dict]:
+    rows = await conn.fetch(
+        """SELECT m.id, m.role, m.content, m.created_at
+             FROM public.chat_messages m JOIN public.chat_threads t ON t.id = m.thread_id
+            WHERE t.map_id = $1
+            ORDER BY m.created_at DESC, m.id DESC
+            LIMIT $2""",
+        map_id,
+        limit,
+    )
+    return [dict(r) for r in reversed(rows)]
+
+
 # ---------------------------------------------------------------------
 # Generation Jobs
 # ---------------------------------------------------------------------
@@ -1045,8 +1067,11 @@ async def restore_map_snapshot(
     await conn.execute("DELETE FROM public.edges WHERE map_id = $1", map_id)
     await conn.execute("DELETE FROM public.nodes WHERE map_id = $1", map_id)
 
-    raw_nodes = snapshot["nodes_snapshot"]
-    raw_edges = snapshot["edges_snapshot"]
+    raw_nodes = snapshot.get("nodes_snapshot")
+    raw_edges = snapshot.get("edges_snapshot")
+    if raw_nodes is None and isinstance(snapshot.get("snapshot_data"), dict):
+        raw_nodes = snapshot["snapshot_data"].get("nodes")
+        raw_edges = snapshot["snapshot_data"].get("edges")
 
     if isinstance(raw_nodes, str):
         raw_nodes = json.loads(raw_nodes)
@@ -1111,7 +1136,18 @@ async def restore_map_snapshot(
         "version": new_version,
         "nodes_restored": len(raw_nodes),
         "edges_restored": len(raw_edges),
+        "snapshot_data": {"nodes": raw_nodes, "edges": raw_edges},
     }
+
+
+async def delete_map_snapshot(conn: asyncpg.Connection, *, map_id: UUID, snapshot_id: UUID) -> bool:
+    """Delete an immutable snapshot of a mind map."""
+    res = await conn.execute(
+        "DELETE FROM public.map_snapshots WHERE map_id = $1 AND id = $2",
+        map_id,
+        snapshot_id,
+    )
+    return res == "DELETE 1" or (isinstance(res, str) and res.startswith("DELETE ") and res != "DELETE 0")
 
 
 async def has_active_node_job(conn: asyncpg.Connection, map_id: UUID, node_id: UUID) -> bool:

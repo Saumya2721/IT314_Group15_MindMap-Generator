@@ -66,6 +66,7 @@ from db.repository import (
     create_node_comment,
     delete_map_edge,
     delete_map_node,
+    delete_map_snapshot,
     delete_node_comment,
     get_chat_messages,
     get_edge_by_id,
@@ -1573,7 +1574,16 @@ async def list_snapshots_endpoint(
         raise HTTPException(404, "Map not found")
 
     snapshots = await list_map_snapshots(pool, map_id)
-    return [SnapshotResponse(**s) for s in snapshots]
+    result = []
+    for s in snapshots:
+        d = dict(s)
+        if "snapshot_data" in d and ("nodes_count" not in d or d["nodes_count"] == 0):
+            snap_data = d.get("snapshot_data") or {}
+            if isinstance(snap_data, dict):
+                d.setdefault("nodes_count", len(snap_data.get("nodes", [])))
+                d.setdefault("edges_count", len(snap_data.get("edges", [])))
+        result.append(SnapshotResponse(**d))
+    return result
 
 
 @router.get(
@@ -1596,8 +1606,12 @@ async def get_snapshot_endpoint(
     if not snapshot:
         raise HTTPException(404, "Snapshot not found")
 
-    raw_nodes = snapshot["nodes_snapshot"]
-    raw_edges = snapshot["edges_snapshot"]
+    raw_nodes = snapshot.get("nodes_snapshot")
+    raw_edges = snapshot.get("edges_snapshot")
+    if not raw_nodes and isinstance(snapshot.get("snapshot_data"), dict):
+        raw_nodes = snapshot["snapshot_data"].get("nodes")
+        raw_edges = snapshot["snapshot_data"].get("edges")
+
     if isinstance(raw_nodes, str):
         raw_nodes = json.loads(raw_nodes)
     if isinstance(raw_edges, str):
@@ -1608,12 +1622,15 @@ async def get_snapshot_endpoint(
         "map_id": snapshot["map_id"],
         "trigger_job_id": snapshot.get("trigger_job_id"),
         "target_node_id": snapshot.get("target_node_id"),
-        "reason": snapshot["reason"],
+        "reason": snapshot.get("reason") or "Manual snapshot",
         "nodes_count": len(raw_nodes or []),
         "edges_count": len(raw_edges or []),
         "created_at": snapshot["created_at"],
         "nodes_snapshot": raw_nodes or [],
         "edges_snapshot": raw_edges or [],
+        "snapshot_data": snapshot.get("snapshot_data") or {"nodes": raw_nodes or [], "edges": raw_edges or []},
+        "version_number": snapshot.get("version_number"),
+        "label": snapshot.get("label"),
     }
 
 
@@ -1639,6 +1656,13 @@ async def restore_snapshot_endpoint(
         except ValueError as exc:
             raise HTTPException(404, str(exc))
 
+    if isinstance(result, dict) and "snapshot_data" not in result:
+        snapshot = await get_map_snapshot(pool, map_id, snapshot_id)
+        if snapshot:
+            r_nodes = snapshot.get("nodes_snapshot") or []
+            r_edges = snapshot.get("edges_snapshot") or []
+            result["snapshot_data"] = {"nodes": r_nodes, "edges": r_edges}
+
     return result
 
 
@@ -1663,6 +1687,29 @@ async def restore_snapshot_direct(
         request=request,
         uid=uid,
     )
+
+
+@router.delete(
+    "/maps/{map_id}/snapshots/{snapshot_id}",
+    status_code=200,
+)
+async def delete_snapshot_endpoint(
+    map_id: UUID,
+    snapshot_id: UUID,
+    request: Request,
+    uid: UUID = Depends(current_user_id),
+):
+    """Delete a specific immutable snapshot of a mind map."""
+    pool = pool_of(request)
+    is_owner = await assert_map_owner(pool, map_id, uid)
+    if not is_owner:
+        raise HTTPException(404, "Map not found")
+
+    deleted = await delete_map_snapshot(pool, map_id=map_id, snapshot_id=snapshot_id)
+    if not deleted:
+        raise HTTPException(404, "Snapshot not found")
+
+    return {"message": "Snapshot deleted successfully"}
 
 
 @router.delete("/maps/{map_id}", status_code=200)

@@ -39,6 +39,17 @@ def _mock_pool(owner: bool = True) -> MagicMock:
     pool.fetchrow = AsyncMock(return_value=None)
     pool.execute = AsyncMock(return_value="DELETE 1")
     pool.executemany = AsyncMock()
+
+    mock_tx = MagicMock()
+    mock_tx.__aenter__ = AsyncMock(return_value=pool)
+    mock_tx.__aexit__ = AsyncMock(return_value=None)
+    pool.transaction = MagicMock(return_value=mock_tx)
+
+    mock_acquire = MagicMock()
+    mock_acquire.__aenter__ = AsyncMock(return_value=pool)
+    mock_acquire.__aexit__ = AsyncMock(return_value=None)
+    pool.acquire.return_value = mock_acquire
+
     return pool
 
 

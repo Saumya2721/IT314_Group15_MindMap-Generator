@@ -1,7 +1,3 @@
-"""Maps package marker."""
+"""Shared wire contract definitions for the Mind Map Generator."""
 
-__all__ = []
-
-
-# Intentionally left blank.
-
+from __future__ import annotations
