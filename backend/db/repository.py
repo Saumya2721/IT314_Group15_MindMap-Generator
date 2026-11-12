@@ -400,163 +400,6 @@ async def get_map_graph(conn: asyncpg.Connection, map_id: UUID) -> dict:
 
 
 # ---------------------------------------------------------------------
-# Map Snapshots / Version History (US-04)
-# ---------------------------------------------------------------------
-
-
-async def next_snapshot_version(conn: asyncpg.Connection, map_id: UUID) -> int:
-    """Return the next snapshot version number for a map (1-based)."""
-    row = await conn.fetchrow(
-        "SELECT COALESCE(MAX(version_number), 0) + 1 AS next_v FROM public.map_snapshots WHERE map_id = $1",
-        map_id,
-    )
-    return int(row["next_v"])
-
-
-async def create_map_snapshot(
-    conn: asyncpg.Connection,
-    *,
-    map_id: UUID,
-    trigger_source: str,
-    trigger_job_id: UUID | None,
-    snapshot_data: dict,
-    label: str | None = None,
-    created_by: UUID | None = None,
-) -> dict | None:
-    """Insert a new snapshot row for a map, returning the inserted row."""
-    version = await next_snapshot_version(conn, map_id)
-    row = await conn.fetchrow(
-        """
-        INSERT INTO public.map_snapshots
-            (map_id, version_number, trigger_source, trigger_job_id,
-             label, snapshot_data, created_by)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
-        RETURNING id, map_id, version_number, trigger_source, trigger_job_id,
-                  label, snapshot_data, created_by, created_at
-        """,
-        map_id,
-        version,
-        trigger_source,
-        trigger_job_id,
-        label,
-        asyncpg.Json(snapshot_data),
-        created_by,
-    )
-    return dict(row) if row else None
-
-
-async def list_map_snapshots(conn: asyncpg.Connection, map_id: UUID) -> list[dict]:
-    """List all snapshots for a map, newest first (with snapshot_data payload)."""
-    rows = await conn.fetch(
-        """
-        SELECT id, map_id, version_number, trigger_source, trigger_job_id,
-               label, snapshot_data, created_by, created_at
-        FROM public.map_snapshots WHERE map_id = $1
-        ORDER BY version_number DESC
-        """,
-        map_id,
-    )
-    return [dict(r) for r in rows]
-
-
-async def get_map_snapshot(conn: asyncpg.Connection, map_id: UUID, snapshot_id: UUID) -> dict | None:
-    """Get a single snapshot including its snapshot_data payload."""
-    row = await conn.fetchrow(
-        """
-        SELECT id, map_id, version_number, trigger_source, trigger_job_id,
-               label, snapshot_data, created_by, created_at
-        FROM public.map_snapshots WHERE id = $1 AND map_id = $2
-        """,
-        snapshot_id,
-        map_id,
-    )
-    return dict(row) if row else None
-
-
-async def restore_map_graph_from_snapshot(
-    conn: asyncpg.Connection,
-    *,
-    map_id: UUID,
-    snapshot_id: UUID,
-) -> dict | None:
-    """Atomically replace a map's nodes/edges with a snapshot's stored graph.
-
-    Deletes existing edges/nodes for the map and re-inserts the snapshot's
-    nodes/edges, then returns the restored {nodes, edges}.
-    """
-    snap = await get_map_snapshot(conn, map_id, snapshot_id)
-    if not snap:
-        return None
-
-    snapshot_data = snap["snapshot_data"]
-    if isinstance(snapshot_data, str):
-        snapshot_data = json.loads(snapshot_data)
-
-    nodes_raw = snapshot_data.get("nodes", [])
-    edges_raw = snapshot_data.get("edges", [])
-
-    await conn.execute("DELETE FROM public.edges WHERE map_id = $1", map_id)
-    await conn.execute("DELETE FROM public.nodes WHERE map_id = $1", map_id)
-
-    if nodes_raw:
-        await conn.executemany(
-            """
-            INSERT INTO public.nodes
-                (id, map_id, label, description, pos_x, pos_y,
-                 background_color, text_color, node_type, source_job_id, node_data)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-            """,
-            [
-                (
-                    n["id"],
-                    map_id,
-                    n.get("label"),
-                    n.get("description"),
-                    float(n.get("pos_x", 0.0)),
-                    float(n.get("pos_y", 0.0)),
-                    n.get("background_color"),
-                    n.get("text_color"),
-                    n.get("node_type", "default"),
-                    n.get("source_job_id"),
-                    n.get("node_data"),
-                )
-                for n in nodes_raw
-            ],
-        )
-    if edges_raw:
-        await conn.executemany(
-            """
-            INSERT INTO public.edges (id, map_id, source_node_id, target_node_id, label, edge_data)
-            VALUES ($1, $2, $3, $4, $5, $6)
-            """,
-            [
-                (
-                    e["id"],
-                    map_id,
-                    e.get("source_node_id") or e.get("source"),
-                    e.get("target_node_id") or e.get("target"),
-                    e.get("label"),
-                    e.get("edge_data"),
-                )
-                for e in edges_raw
-            ],
-        )
-
-    return snapshot_data
-
-
-async def delete_map_snapshot(conn: asyncpg.Connection, map_id: UUID, snapshot_id: UUID) -> bool:
-    """Delete a snapshot row by id and map_id. Returns True if deleted."""
-    result = await conn.execute(
-        "DELETE FROM public.map_snapshots WHERE id = $1 AND map_id = $2",
-        snapshot_id,
-        map_id,
-    )
-    # asyncpg returns "DELETE 1" style result
-    return result.endswith(" 1")
-
-
-# ---------------------------------------------------------------------
 # Seed Assets & Embeddings (Optional RAG persistence)
 # ---------------------------------------------------------------------
 
@@ -724,3 +567,698 @@ async def hybrid_retrieve(
     raise NotImplementedError(
         "PostgreSQL pgvector hybrid retrieval is deprecated. Vector search is now executed via PineconeVectorStore in the worker."
     )
+
+
+# ---------------------------------------------------------------------
+# Optimistic Versioning & Graph Editing
+# ---------------------------------------------------------------------
+
+
+class OptimisticConcurrencyError(Exception):
+    """Raised when an update fails because the map's current version does not match the expected version."""
+
+    def __init__(self, current_version: int, expected_version: int) -> None:
+        self.current_version = current_version
+        self.expected_version = expected_version
+        super().__init__(
+            f"Optimistic lock conflict: map current version is {current_version}, but expected {expected_version}"
+        )
+
+
+async def get_map_version(conn: asyncpg.Connection, map_id: UUID) -> int:
+    """Retrieve the current optimistic version of a mind map."""
+    val = await conn.fetchval(
+        "SELECT COALESCE(version, 1) FROM public.mind_maps WHERE id = $1",
+        map_id,
+    )
+    return int(val) if val is not None else 1
+
+
+async def check_and_bump_map_version(
+    conn: asyncpg.Connection,
+    map_id: UUID,
+    expected_version: int | None = None,
+) -> int:
+    """Check optimistic version and increment atomically.
+
+    Raises OptimisticConcurrencyError if expected_version is provided and does not match.
+    """
+    if expected_version is not None:
+        new_v = await conn.fetchval(
+            """
+            UPDATE public.mind_maps
+            SET version = COALESCE(version, 1) + 1, updated_at = NOW()
+            WHERE id = $1 AND COALESCE(version, 1) = $2
+            RETURNING version
+            """,
+            map_id,
+            expected_version,
+        )
+        if new_v is None:
+            actual_v = await conn.fetchval(
+                "SELECT COALESCE(version, 1) FROM public.mind_maps WHERE id = $1",
+                map_id,
+            )
+            if actual_v is None:
+                raise ValueError("Map not found")
+            raise OptimisticConcurrencyError(
+                current_version=int(actual_v),
+                expected_version=expected_version,
+            )
+        return int(new_v)
+
+    new_v = await conn.fetchval(
+        """
+        UPDATE public.mind_maps
+        SET version = COALESCE(version, 1) + 1, updated_at = NOW()
+        WHERE id = $1
+        RETURNING version
+        """,
+        map_id,
+    )
+    if new_v is None:
+        raise ValueError("Map not found")
+    return int(new_v)
+
+
+# ---------------------------------------------------------------------
+# Node CRUD Operations
+# ---------------------------------------------------------------------
+
+
+async def get_node_by_id(conn: asyncpg.Connection, map_id: UUID, node_id: UUID) -> dict | None:
+    row = await conn.fetchrow(
+        """
+        SELECT id, map_id, label, description, pos_x, pos_y, background_color, text_color,
+               width, height, node_type, source_job_id, node_data, created_at, updated_at
+        FROM public.nodes
+        WHERE id = $1 AND map_id = $2
+        """,
+        node_id,
+        map_id,
+    )
+    return dict(row) if row else None
+
+
+async def list_map_nodes(conn: asyncpg.Connection, map_id: UUID) -> list[dict]:
+    rows = await conn.fetch(
+        """
+        SELECT id, map_id, label, description, pos_x, pos_y, background_color, text_color,
+               width, height, node_type, source_job_id, node_data, created_at, updated_at
+        FROM public.nodes
+        WHERE map_id = $1
+        ORDER BY created_at ASC
+        """,
+        map_id,
+    )
+    return [dict(r) for r in rows]
+
+
+async def create_map_node(
+    conn: asyncpg.Connection,
+    *,
+    node_id: UUID,
+    map_id: UUID,
+    label: str,
+    description: str | None = None,
+    pos_x: float = 0.0,
+    pos_y: float = 0.0,
+    background_color: str | None = None,
+    text_color: str | None = None,
+    width: float | None = None,
+    height: float | None = None,
+    node_type: str = "default",
+    source_job_id: UUID | None = None,
+    node_data: dict | None = None,
+) -> dict:
+    row = await conn.fetchrow(
+        """
+        INSERT INTO public.nodes
+            (id, map_id, label, description, pos_x, pos_y,
+             background_color, text_color, width, height, node_type, source_job_id, node_data)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        RETURNING id, map_id, label, description, pos_x, pos_y,
+                  background_color, text_color, width, height, node_type,
+                  source_job_id, node_data, created_at, updated_at
+        """,
+        node_id,
+        map_id,
+        label,
+        description,
+        pos_x,
+        pos_y,
+        background_color,
+        text_color,
+        width,
+        height,
+        node_type,
+        source_job_id,
+        node_data,
+    )
+    return dict(row)
+
+
+async def update_map_node(
+    conn: asyncpg.Connection,
+    map_id: UUID,
+    node_id: UUID,
+    updates: dict[str, Any],
+) -> dict | None:
+    if not updates:
+        return await get_node_by_id(conn, map_id, node_id)
+
+    parts: list[str] = []
+    args: list[Any] = [node_id, map_id]
+
+    allowed_cols = {
+        "label",
+        "description",
+        "pos_x",
+        "pos_y",
+        "background_color",
+        "text_color",
+        "width",
+        "height",
+        "node_type",
+        "node_data",
+    }
+
+    for col, val in updates.items():
+        if col in allowed_cols:
+            args.append(val)
+            parts.append(f"{col} = ${len(args)}")
+
+    if not parts:
+        return await get_node_by_id(conn, map_id, node_id)
+
+    parts.append("updated_at = NOW()")
+    sql = f"""
+        UPDATE public.nodes
+        SET {", ".join(parts)}
+        WHERE id = $1 AND map_id = $2
+        RETURNING id, map_id, label, description, pos_x, pos_y,
+                  background_color, text_color, width, height, node_type,
+                  source_job_id, node_data, created_at, updated_at
+    """
+    row = await conn.fetchrow(sql, *args)
+    return dict(row) if row else None
+
+
+async def delete_map_node(
+    conn: asyncpg.Connection,
+    map_id: UUID,
+    node_id: UUID,
+    node_ids_to_delete: set[UUID] | None = None,
+) -> list[UUID]:
+    targets = list(node_ids_to_delete) if node_ids_to_delete else [node_id]
+    await conn.execute(
+        "DELETE FROM public.nodes WHERE map_id = $1 AND id = ANY($2::uuid[])",
+        map_id,
+        targets,
+    )
+    return targets
+
+
+# ---------------------------------------------------------------------
+# Edge CRUD Operations
+# ---------------------------------------------------------------------
+
+
+async def get_edge_by_id(conn: asyncpg.Connection, map_id: UUID, edge_id: UUID) -> dict | None:
+    row = await conn.fetchrow(
+        """
+        SELECT id, map_id, source_node_id, target_node_id, label, edge_data, created_at
+        FROM public.edges
+        WHERE id = $1 AND map_id = $2
+        """,
+        edge_id,
+        map_id,
+    )
+    return dict(row) if row else None
+
+
+async def list_map_edges(conn: asyncpg.Connection, map_id: UUID) -> list[dict]:
+    rows = await conn.fetch(
+        """
+        SELECT id, map_id, source_node_id, target_node_id, label, edge_data, created_at
+        FROM public.edges
+        WHERE map_id = $1
+        ORDER BY created_at ASC
+        """,
+        map_id,
+    )
+    return [dict(r) for r in rows]
+
+
+async def create_map_edge(
+    conn: asyncpg.Connection,
+    *,
+    edge_id: UUID,
+    map_id: UUID,
+    source_node_id: UUID,
+    target_node_id: UUID,
+    label: str | None = None,
+    edge_data: dict | None = None,
+) -> dict:
+    row = await conn.fetchrow(
+        """
+        INSERT INTO public.edges (id, map_id, source_node_id, target_node_id, label, edge_data)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING id, map_id, source_node_id, target_node_id, label, edge_data, created_at
+        """,
+        edge_id,
+        map_id,
+        source_node_id,
+        target_node_id,
+        label,
+        edge_data,
+    )
+    return dict(row)
+
+
+async def update_map_edge(
+    conn: asyncpg.Connection,
+    map_id: UUID,
+    edge_id: UUID,
+    updates: dict[str, Any],
+) -> dict | None:
+    if not updates:
+        return await get_edge_by_id(conn, map_id, edge_id)
+
+    parts: list[str] = []
+    args: list[Any] = [edge_id, map_id]
+
+    if "label" in updates:
+        args.append(updates["label"])
+        parts.append(f"label = ${len(args)}")
+
+    if "edge_data" in updates:
+        args.append(updates["edge_data"])
+        parts.append(f"edge_data = ${len(args)}")
+
+    if not parts:
+        return await get_edge_by_id(conn, map_id, edge_id)
+
+    sql = f"""
+        UPDATE public.edges
+        SET {", ".join(parts)}
+        WHERE id = $1 AND map_id = $2
+        RETURNING id, map_id, source_node_id, target_node_id, label, edge_data, created_at
+    """
+    row = await conn.fetchrow(sql, *args)
+    return dict(row) if row else None
+
+
+async def delete_map_edge(conn: asyncpg.Connection, map_id: UUID, edge_id: UUID) -> bool:
+    res = await conn.execute(
+        "DELETE FROM public.edges WHERE id = $1 AND map_id = $2",
+        edge_id,
+        map_id,
+    )
+    return bool(res.endswith("1"))
+
+
+# ---------------------------------------------------------------------
+# S2-BE2: Node Comments
+# ---------------------------------------------------------------------
+
+
+async def create_node_comment(
+    conn: asyncpg.Connection,
+    *,
+    map_id: UUID,
+    node_id: UUID,
+    user_id: UUID,
+    content: str,
+) -> dict:
+    row = await conn.fetchrow(
+        """
+        INSERT INTO public.node_comments (map_id, node_id, user_id, content)
+        VALUES ($1, $2, $3, $4)
+        RETURNING id, map_id, node_id, user_id, content, created_at, updated_at
+        """,
+        map_id,
+        node_id,
+        user_id,
+        content.strip(),
+    )
+    return dict(row)
+
+
+async def list_node_comments(
+    conn: asyncpg.Connection,
+    map_id: UUID,
+    node_id: UUID,
+) -> list[dict]:
+    rows = await conn.fetch(
+        """
+        SELECT id, map_id, node_id, user_id, content, created_at, updated_at
+        FROM public.node_comments
+        WHERE map_id = $1 AND node_id = $2
+        ORDER BY created_at ASC
+        """,
+        map_id,
+        node_id,
+    )
+    return [dict(r) for r in rows]
+
+
+async def get_node_comment(
+    conn: asyncpg.Connection,
+    map_id: UUID,
+    comment_id: UUID,
+) -> dict | None:
+    row = await conn.fetchrow(
+        """
+        SELECT id, map_id, node_id, user_id, content, created_at, updated_at
+        FROM public.node_comments
+        WHERE map_id = $1 AND id = $2
+        """,
+        map_id,
+        comment_id,
+    )
+    return dict(row) if row else None
+
+
+async def update_node_comment(
+    conn: asyncpg.Connection,
+    map_id: UUID,
+    comment_id: UUID,
+    content: str,
+) -> dict | None:
+    row = await conn.fetchrow(
+        """
+        UPDATE public.node_comments
+        SET content = $3, updated_at = NOW()
+        WHERE map_id = $1 AND id = $2
+        RETURNING id, map_id, node_id, user_id, content, created_at, updated_at
+        """,
+        map_id,
+        comment_id,
+        content.strip(),
+    )
+    return dict(row) if row else None
+
+
+async def delete_node_comment(
+    conn: asyncpg.Connection,
+    map_id: UUID,
+    comment_id: UUID,
+) -> bool:
+    res = await conn.execute(
+        "DELETE FROM public.node_comments WHERE map_id = $1 AND id = $2",
+        map_id,
+        comment_id,
+    )
+    return bool(res.endswith("1"))
+
+
+# ---------------------------------------------------------------------
+# S2-BE2: Snapshots & Branch Resolution
+# ---------------------------------------------------------------------
+
+
+async def create_map_snapshot(
+    conn: asyncpg.Connection,
+    *,
+    map_id: UUID,
+    trigger_job_id: UUID | None = None,
+    target_node_id: UUID | None = None,
+    reason: str = "pre_regeneration",
+) -> UUID:
+    """Save an immutable snapshot of nodes and edges before partial/full regeneration."""
+    nodes = await list_map_nodes(conn, map_id)
+    edges = await list_map_edges(conn, map_id)
+
+    clean_nodes = [{k: str(v) if isinstance(v, (UUID, datetime)) else v for k, v in n.items()} for n in nodes]
+    clean_edges = [{k: str(v) if isinstance(v, (UUID, datetime)) else v for k, v in e.items()} for e in edges]
+
+    snapshot_id = await conn.fetchval(
+        """
+        INSERT INTO public.map_snapshots
+            (map_id, trigger_job_id, target_node_id, reason, nodes_snapshot, edges_snapshot)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING id
+        """,
+        map_id,
+        trigger_job_id,
+        target_node_id,
+        reason,
+        clean_nodes,
+        clean_edges,
+    )
+    return snapshot_id
+
+
+async def list_map_snapshots(conn: asyncpg.Connection, map_id: UUID) -> list[dict]:
+    rows = await conn.fetch(
+        """
+        SELECT id, map_id, trigger_job_id, target_node_id, reason,
+               jsonb_array_length(nodes_snapshot) AS nodes_count,
+               jsonb_array_length(edges_snapshot) AS edges_count,
+               created_at
+        FROM public.map_snapshots
+        WHERE map_id = $1
+        ORDER BY created_at DESC
+        """,
+        map_id,
+    )
+    return [dict(r) for r in rows]
+
+
+async def get_map_snapshot(conn: asyncpg.Connection, map_id: UUID, snapshot_id: UUID) -> dict | None:
+    row = await conn.fetchrow(
+        """
+        SELECT id, map_id, trigger_job_id, target_node_id, reason,
+               nodes_snapshot, edges_snapshot, created_at
+        FROM public.map_snapshots
+        WHERE map_id = $1 AND id = $2
+        """,
+        map_id,
+        snapshot_id,
+    )
+    return dict(row) if row else None
+
+
+async def restore_map_snapshot(
+    conn: asyncpg.Connection,
+    *,
+    map_id: UUID,
+    snapshot_id: UUID,
+) -> dict[str, Any]:
+    """Restore mind map graph state to the specified snapshot.
+
+    1. Retrieves the snapshot.
+    2. Takes an automatic safety snapshot of current graph state before overwriting.
+    3. Replaces all nodes and edges with snapshot data.
+    4. Bumps map version atomically.
+    """
+    snapshot = await get_map_snapshot(conn, map_id, snapshot_id)
+    if not snapshot:
+        raise ValueError(f"Snapshot {snapshot_id} not found for map {map_id}")
+
+    # Create safety snapshot of current state before restoring
+    await create_map_snapshot(
+        conn,
+        map_id=map_id,
+        reason=f"Safety snapshot before restoring snapshot {snapshot_id}",
+    )
+
+    await conn.execute("DELETE FROM public.edges WHERE map_id = $1", map_id)
+    await conn.execute("DELETE FROM public.nodes WHERE map_id = $1", map_id)
+
+    raw_nodes = snapshot.get("nodes_snapshot")
+    raw_edges = snapshot.get("edges_snapshot")
+    if raw_nodes is None and isinstance(snapshot.get("snapshot_data"), dict):
+        raw_nodes = snapshot["snapshot_data"].get("nodes")
+        raw_edges = snapshot["snapshot_data"].get("edges")
+
+    if isinstance(raw_nodes, str):
+        raw_nodes = json.loads(raw_nodes)
+    if isinstance(raw_edges, str):
+        raw_edges = json.loads(raw_edges)
+
+    raw_nodes = raw_nodes or []
+    raw_edges = raw_edges or []
+
+    if raw_nodes:
+        await conn.executemany(
+            """
+            INSERT INTO public.nodes
+                (id, map_id, label, description, pos_x, pos_y,
+                 background_color, text_color, width, height, node_type, source_job_id, node_data)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            """,
+            [
+                (
+                    UUID(str(n["id"])),
+                    map_id,
+                    n["label"],
+                    n.get("description"),
+                    float(n.get("pos_x", 0.0)),
+                    float(n.get("pos_y", 0.0)),
+                    n.get("background_color"),
+                    n.get("text_color"),
+                    float(n["width"]) if n.get("width") is not None else None,
+                    float(n["height"]) if n.get("height") is not None else None,
+                    n.get("node_type", "default"),
+                    UUID(str(n["source_job_id"])) if n.get("source_job_id") else None,
+                    n.get("node_data"),
+                )
+                for n in raw_nodes
+            ],
+        )
+
+    if raw_edges:
+        await conn.executemany(
+            """
+            INSERT INTO public.edges (id, map_id, source_node_id, target_node_id, label, edge_data)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            """,
+            [
+                (
+                    UUID(str(e["id"])),
+                    map_id,
+                    UUID(str(e.get("source_node_id") or e.get("source"))),
+                    UUID(str(e.get("target_node_id") or e.get("target"))),
+                    e.get("label"),
+                    e.get("edge_data"),
+                )
+                for e in raw_edges
+            ],
+        )
+
+    new_version = await check_and_bump_map_version(conn, map_id)
+    return {
+        "status": "restored",
+        "map_id": map_id,
+        "snapshot_id": snapshot_id,
+        "version": new_version,
+        "nodes_restored": len(raw_nodes),
+        "edges_restored": len(raw_edges),
+        "snapshot_data": {"nodes": raw_nodes, "edges": raw_edges},
+    }
+
+
+async def delete_map_snapshot(conn: asyncpg.Connection, *, map_id: UUID, snapshot_id: UUID) -> bool:
+    """Delete an immutable snapshot of a mind map."""
+    res = await conn.execute(
+        "DELETE FROM public.map_snapshots WHERE map_id = $1 AND id = $2",
+        map_id,
+        snapshot_id,
+    )
+    return res == "DELETE 1" or (isinstance(res, str) and res.startswith("DELETE ") and res != "DELETE 0")
+
+
+async def has_active_node_job(conn: asyncpg.Connection, map_id: UUID, node_id: UUID) -> bool:
+    """Check if an active node regeneration job is already pending or running for this node."""
+    val = await conn.fetchval(
+        """
+        SELECT 1 FROM public.generation_jobs
+        WHERE map_id = $1 AND target_node_id = $2
+          AND job_type = 'regenerate_node'
+          AND status IN ('pending', 'running')
+        LIMIT 1
+        """,
+        map_id,
+        node_id,
+    )
+    return bool(val)
+
+
+async def replace_node_branch(
+    conn: asyncpg.Connection,
+    *,
+    map_id: UUID,
+    target_node_id: UUID,
+    source_job_id: UUID,
+    new_nodes: list[NodeRecord],
+    new_edges: list[EdgeRecord],
+) -> None:
+    """Regenerate only affected descendants while preserving the rest of the mind map.
+
+    1. Identifies all existing descendants downstream of target_node_id.
+    2. Removes old descendant nodes (and their connecting edges).
+    3. Preserves existing incoming edges into target_node_id from its parent.
+    4. Inserts new branch nodes and edges.
+    5. Updates map version and timestamp.
+    """
+    edges = await list_map_edges(conn, map_id)
+    from maps.graph_validator import get_node_descendant_ids
+
+    descendant_ids = get_node_descendant_ids(edges, target_node_id)
+
+    # Delete existing descendant nodes (PostgreSQL CASCADE will drop their internal edges)
+    if descendant_ids:
+        await conn.execute(
+            "DELETE FROM public.nodes WHERE map_id = $1 AND id = ANY($2::uuid[])",
+            map_id,
+            list(descendant_ids),
+        )
+
+    # Delete any outgoing edges that originated from target_node_id
+    await conn.execute(
+        "DELETE FROM public.edges WHERE map_id = $1 AND source_node_id = $2",
+        map_id,
+        target_node_id,
+    )
+
+    # Insert newly generated branch nodes (skip target_node_id if already present in new_nodes)
+    branch_nodes_to_insert = [n for n in new_nodes if n.id != target_node_id]
+    if branch_nodes_to_insert:
+        await conn.executemany(
+            """
+            INSERT INTO public.nodes
+                (id, map_id, label, description, pos_x, pos_y,
+                 background_color, text_color, node_type, source_job_id, node_data)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            """,
+            [
+                (
+                    n.id,
+                    map_id,
+                    n.label,
+                    n.description,
+                    n.pos_x,
+                    n.pos_y,
+                    n.background_color,
+                    n.text_color,
+                    n.node_type,
+                    source_job_id,
+                    n.node_data,
+                )
+                for n in branch_nodes_to_insert
+            ],
+        )
+
+    # If the generator updated target_node itself (e.g. title or description refinement)
+    target_node_record = next((n for n in new_nodes if n.id == target_node_id), None)
+    if target_node_record:
+        await conn.execute(
+            """
+            UPDATE public.nodes
+            SET label = COALESCE($3, label),
+                description = COALESCE($4, description),
+                source_job_id = $5,
+                updated_at = NOW()
+            WHERE id = $1 AND map_id = $2
+            """,
+            target_node_id,
+            map_id,
+            target_node_record.label,
+            target_node_record.description,
+            source_job_id,
+        )
+
+    # Insert newly generated edges
+    if new_edges:
+        await conn.executemany(
+            """
+            INSERT INTO public.edges (id, map_id, source_node_id, target_node_id, label, edge_data)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            """,
+            [(e.id, map_id, e.source_node_id, e.target_node_id, e.label, e.edge_data) for e in new_edges],
+        )
+
+    # Bump map version atomically
+    await check_and_bump_map_version(conn, map_id)

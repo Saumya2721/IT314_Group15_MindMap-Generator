@@ -12,7 +12,7 @@ import secrets
 from typing import Any
 from uuid import UUID
 
-from contracts.models import GenerationResult
+from contracts.models import GenerationResult, JobType
 from core.supabase import bearer
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials
@@ -22,14 +22,13 @@ from services.generator import compute_layout
 from db.connection import transaction
 from db.models import EdgeRecord, NodeRecord, SeedAssetType
 from db.repository import (
-    create_map_snapshot,
     get_chat_messages,
     get_or_create_chat_thread,
     insert_chat_message,
     insert_seed_asset,
-    next_snapshot_version,
     persist_generated_graph,
     replace_map_graph,
+    replace_node_branch,
     update_chat_thread_summary,
 )
 
@@ -225,7 +224,7 @@ async def report_complete(
     # Idempotent lock and check
     async with transaction(pool) as conn:
         job_row = await conn.fetchrow(
-            "SELECT id, map_id, job_type, status, started_at FROM public.generation_jobs WHERE id = $1 FOR UPDATE",
+            "SELECT id, map_id, job_type, target_node_id, status, started_at FROM public.generation_jobs WHERE id = $1 FOR UPDATE",
             job_id,
         )
         if not job_row:
@@ -306,7 +305,19 @@ async def report_complete(
             )
 
         # Persist / replace graph
-        if job_type in ("regenerate_full", "regenerate"):
+        if job_type in ("regenerate_node", JobType.REGENERATE_NODE):
+            target_node_id = job_row["target_node_id"]
+            if not target_node_id:
+                raise HTTPException(500, "Node regeneration job missing target_node_id")
+            await replace_node_branch(
+                conn,
+                map_id=map_id,
+                target_node_id=target_node_id,
+                source_job_id=job_id,
+                new_nodes=node_records,
+                new_edges=edge_records,
+            )
+        elif job_type in ("regenerate_full", "regenerate", JobType.REGENERATE_FULL):
             await replace_map_graph(
                 conn,
                 map_id=map_id,
@@ -339,27 +350,6 @@ async def report_complete(
 
         # Insert assistant summary message in thread
         map_owner = await conn.fetchval("SELECT user_id FROM public.mind_maps WHERE id = $1", map_id)
-
-        # Record a version-history snapshot of the just-completed graph (US-04 / S2-FE7).
-        # nodes_raw / edges_raw are plain dicts (the worker's GenerationResult),
-        # which compute_layout already mutated with pos_x/pos_y. Storing them
-        # verbatim is what restore_map_graph_from_snapshot expects.
-        snapshot_version = await next_snapshot_version(conn, map_id)
-        snapshot_trigger_source = {
-            "generate": "initial_generation",
-            "regenerate_full": "full_regen",
-            "regenerate_node": "branch_regen",
-        }.get(str(job_type), "manual")
-        await create_map_snapshot(
-            conn,
-            map_id=map_id,
-            trigger_source=snapshot_trigger_source,
-            trigger_job_id=job_id,
-            snapshot_data={"nodes": nodes_raw, "edges": edges_raw},
-            label=f"Version {snapshot_version}",
-            created_by=map_owner,
-        )
-
         if map_owner:
             thread_id = await get_or_create_chat_thread(conn, map_id, map_owner)
             await insert_chat_message(
@@ -482,6 +472,7 @@ async def report_fail(
 # ---------------------------------------------------------------------
 # Internal Chat Completion Callbacks (S2-BE4 / US-15)
 # ---------------------------------------------------------------------
+
 
 chat_callback_router = APIRouter(prefix="/internal/chat", tags=["Internal Chat Callbacks"])
 

@@ -70,8 +70,9 @@ class GenerationRequest(BaseModel):
     purpose: str | None = None
     seed_has_files: bool = False
 
-    # Target node for node regeneration (US-06 / S2-BE7)
+    # Node-level regeneration (US-06 / S2-BE2 / S2-BE7):
     target_node_id: UUID | None = None
+    branch_context: dict[str, Any] | None = None
     instruction: str | None = None
 
     # Internal callback auth — see callback/client.py. Not a user secret;
@@ -102,12 +103,26 @@ class RegenerateNodeRequest(BaseModel):
     memory_context: dict[str, Any] | None = None
 
 
+class ActionProposal(BaseModel):
+    """Structured action proposal suggested by the assistant (e.g. regenerate or edit)."""
+
+    action_type: str  # "regenerate_map", "regenerate_node", "edit_node", "general_answer"
+    target_node_id: UUID | None = None
+    instruction: str | None = None
+    description: str | None = None
+
+
 class ChatTurnRequest(BaseModel):
+    """Inbound chat turn request sent across ARQ queue to worker."""
+
     job_id: UUID
     map_id: UUID
     job_type: JobType = JobType.CHAT_TURN
     message: str
     thread_id: UUID | None = None
+    target_node_id: UUID | None = None
+    context_window: list[dict[str, Any]] = Field(default_factory=list)
+    rolling_summary: str | None = None
     callback_base_url: str
     callback_token: str
     memory_context: dict[str, Any] | None = None
@@ -182,6 +197,7 @@ class GenerationResult(BaseModel):
     seed_assets: list[SeedAssetDraft] = Field(default_factory=list)
     rejected_files: list[RejectedFile] = Field(default_factory=list)
     tool_call_log: list[ToolCallLogEntry] = Field(default_factory=list)
+    quality_warnings: list[str] = Field(default_factory=list)
 
     error: GenerationError | None = None
 
@@ -198,9 +214,14 @@ class RegenerateNodeResult(BaseModel):
 
 
 class ChatTurnResult(BaseModel):
+    """Outbound chat turn result sent back to backend internal callback."""
+
     job_id: UUID
     map_id: UUID
     status: Literal["completed", "failed", "rejected"]
+    reply: str = ""
+    cited_node_ids: list[UUID] = Field(default_factory=list)
+    action_proposal: ActionProposal | None = None
     assistant_message: str | None = None
     summary: str | None = None
     proposed_action: dict[str, Any] | None = None

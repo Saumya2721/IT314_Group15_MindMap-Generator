@@ -42,7 +42,7 @@ from rag.retrieval import RetrievedChunk, rerank_context, retrieve_context
 from seed.normalizer import NoUsableSeedContent
 from tools.base import ToolError
 from tools.research_planner import execute_research_queries, plan_research_queries
-from validation.schema import ValidationFailure, resolve_to_records, validate_draft
+from validation.schema import ValidationFailure, resolve_to_records, run_quality_checks, validate_draft
 
 logger = logging.getLogger(__name__)
 
@@ -410,8 +410,21 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
     async def validate_node(state: GenerationState) -> dict:
         payload = state.get("draft_payload")
         retry_count = state.get("retry_count", 0)
+        max_retries = state.get("_max_retries", deps.settings.generation.max_generation_retries)
+        enable_dynamic = deps.settings.generation.enable_dynamic_prompts
 
+        # If payload is missing but we have a prior valid draft, preserve it
         if payload is None:
+            if state.get("best_valid_draft") is not None:
+                draft = state["best_valid_draft"]
+                supporting_chunks = state.get("retrieved_chunks", [])
+                nodes, edges = resolve_to_records(draft, supporting_context=supporting_chunks)
+                return {
+                    "nodes": nodes,
+                    "edges": edges,
+                    "quality_warnings": state.get("quality_warnings", []),
+                    "validation_errors": [],
+                }
             return {
                 "validation_errors": state.get("validation_errors", ["No draft produced"]),
                 "retry_count": retry_count + 1,
@@ -420,11 +433,64 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
         try:
             draft = validate_draft(payload)
         except ValidationFailure as exc:
+            if state.get("best_valid_draft") is not None and retry_count >= max_retries:
+                draft = state["best_valid_draft"]
+                supporting_chunks = state.get("retrieved_chunks", [])
+                nodes, edges = resolve_to_records(draft, supporting_context=supporting_chunks)
+                return {
+                    "nodes": nodes,
+                    "edges": edges,
+                    "quality_warnings": state.get("quality_warnings", []),
+                    "validation_errors": [],
+                }
             return {"validation_errors": exc.errors, "retry_count": retry_count + 1}
 
-        nodes, edges = resolve_to_records(draft)
+        # If dynamic prompts / quality gate is disabled, skip quality checks (Sprint 1 fallback)
+        supporting_chunks = state.get("retrieved_chunks", [])
+        if not enable_dynamic:
+            nodes, edges = resolve_to_records(draft, supporting_context=supporting_chunks)
+            await deps.callback.progress(85)
+            return {"nodes": nodes, "edges": edges, "validation_errors": []}
+
+        # Run soft quality gate
+        report = run_quality_checks(
+            draft,
+            target_node_range=state.get("target_node_range", (10, 25)),
+            target_max_depth=state.get("target_max_depth", 3),
+            supporting_context=supporting_chunks,
+        )
+
+        # If quality failed and retries remain: retry with feedback
+        if not report.passed and retry_count < max_retries:
+            logger.info(
+                "Quality gate failed (retry %d/%d): %s",
+                retry_count + 1,
+                max_retries,
+                report.warnings,
+            )
+            return {
+                "best_valid_draft": draft,
+                "quality_warnings": report.warnings,
+                "validation_errors": report.warnings,
+                "retry_count": retry_count + 1,
+            }
+
+        # Soft gate: accept draft (either it passed or retries were exhausted)
+        if not report.passed:
+            logger.warning(
+                "Accepting draft despite quality gate warnings after %d retries: %s",
+                retry_count,
+                report.warnings,
+            )
+
+        nodes, edges = resolve_to_records(draft, supporting_context=supporting_chunks)
         await deps.callback.progress(85)
-        return {"nodes": nodes, "edges": edges, "validation_errors": []}
+        return {
+            "nodes": nodes,
+            "edges": edges,
+            "quality_warnings": report.warnings,
+            "validation_errors": [],
+        }
 
     async def finalize_success_node(state: GenerationState) -> dict:
         """No I/O — just marks the state terminal. worker/tasks.py reports

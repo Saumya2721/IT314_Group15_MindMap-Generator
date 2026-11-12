@@ -25,15 +25,6 @@ class JobStatus(StrEnum):
     REJECTED = "rejected"
 
 
-class SnapshotTriggerSource(StrEnum):
-    """How a mind map snapshot was created (version history)."""
-
-    INITIAL_GENERATION = "initial_generation"
-    FULL_REGEN = "full_regen"
-    BRANCH_REGEN = "branch_regen"
-    MANUAL = "manual"
-
-
 class SeedAssetType(StrEnum):
     PDF = "pdf"
     IMAGE = "image"
@@ -119,16 +110,3 @@ class ChatMessage:
     thread_id: UUID
     role: str  # "user" | "assistant"
     content: str
-
-
-@dataclass
-class MapSnapshot:
-    id: UUID
-    map_id: UUID
-    version_number: int
-    trigger_source: str
-    trigger_job_id: UUID | None
-    label: str | None
-    snapshot_data: dict
-    created_by: UUID | None
-    created_at: datetime

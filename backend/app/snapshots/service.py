@@ -132,25 +132,33 @@ async def restore_snapshot_by_version_or_id(
         if not snap:
             return None
 
-        restored_data = await restore_snapshot_data_to_map(conn, map_id, snap["snapshot_data"])
+        raw_snap_data = snap.get("snapshot_data")
+        if raw_snap_data is None:
+            raw_snap_data = {
+                "nodes": snap.get("nodes_snapshot") or [],
+                "edges": snap.get("edges_snapshot") or [],
+            }
 
-        snap_row = await create_map_snapshot(
+        restored_data = await restore_snapshot_data_to_map(conn, map_id, raw_snap_data)
+
+        snap_result = await create_map_snapshot(
             conn,
             map_id=map_id,
-            trigger_source="manual",
-            trigger_job_id=None,
-            label=f"Restored from version {snap['version_number']}",
-            snapshot_data=restored_data,
-            created_by=user_id,
+            reason=f"Restored from version {snap.get('version_number', identifier)}",
         )
 
-        new_version = snap_row["version_number"] if snap_row else snap["version_number"] + 1
-        new_snap_id = snap_row["id"] if snap_row else snap["id"]
+        old_version = snap.get("version_number", 1)
+        if isinstance(snap_result, dict):
+            new_version = snap_result.get("version_number", old_version + 1)
+            new_snap_id = snap_result.get("id", snap.get("id"))
+        else:
+            new_version = old_version + 1 if isinstance(old_version, int) else 2
+            new_snap_id = snap_result or snap.get("id")
 
         return {
             "status": "restored",
             "map_id": str(map_id),
-            "restored_version": snap["version_number"],
+            "restored_version": old_version,
             "new_version": new_version,
             "snapshot_id": str(new_snap_id),
             "snapshot_data": restored_data,

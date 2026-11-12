@@ -12,9 +12,8 @@ app_dir = Path(__file__).resolve().parent
 backend_dir = app_dir.parent
 repo_root = backend_dir.parent
 llm_root = repo_root / "llm"
-llm_pkg = llm_root / "mindmap_llm"
 
-for p in (app_dir, backend_dir, llm_root, llm_pkg):
+for p in (app_dir, backend_dir, llm_root):
     if p.exists() and str(p) not in sys.path:
         sys.path.insert(0, str(p))
 
@@ -33,15 +32,13 @@ load_dotenv(find_dotenv())
 # Backend configuration and database
 # Backward-compatible exports
 from auth.schemas import SignupRequest, UserCredentials  # noqa: F401
-
-# API routers
-from chat.routes import router as chat_router
 from core.config import settings as app_settings
 from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from maps.routes import router as maps_router
-from memory.routes import router as memory_router
+
+# API routers
 from routes.auth import router as auth_router
 from routes.internal import chat_callback_router
 from routes.internal import router as internal_router
@@ -166,10 +163,6 @@ app.include_router(auth_router, include_in_schema=False)
 app.include_router(users_router, prefix="/api/users")
 app.include_router(users_router, include_in_schema=False)
 app.include_router(maps_router)
-app.include_router(chat_router, prefix="/api")
-app.include_router(chat_router, include_in_schema=False)
-app.include_router(memory_router, prefix="/api")
-app.include_router(memory_router, include_in_schema=False)
 app.include_router(internal_router)
 app.include_router(chat_callback_router)
 app.include_router(snapshots_router)
