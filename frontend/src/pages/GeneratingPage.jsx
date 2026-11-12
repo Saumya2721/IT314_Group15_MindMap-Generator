@@ -7,6 +7,8 @@ import { AppFooter } from '../components/layout/AppFooter'
 import { ArchivalStepper } from '../components/generator/ArchivalStepper'
 import { CanvasTopBar } from '../components/canvas/CanvasTopBar'
 import { MindMapCanvas } from '../components/canvas/MindMapCanvas'
+import { ExportModal } from '../components/canvas/ExportModal'
+import { exportMindMap } from '../services/exportService'
 import './GeneratingPage.css'
 
 export default function GeneratingPage({ initialPhase }) {
@@ -66,6 +68,13 @@ export default function GeneratingPage({ initialPhase }) {
   const [showRegenModal, setShowRegenModal] = useState(false)
   const [regenInstruction, setRegenInstruction] = useState('')
   const [regenDetailLevel, setRegenDetailLevel] = useState('overview')
+
+  // Export modal state (S2-FE6)
+  const [showExportModal, setShowExportModal] = useState(false)
+  const [isExporting, setIsExporting] = useState(false)
+  const [exportProgress, setExportProgress] = useState(0)
+  const [exportError, setExportError] = useState('')
+  const flowApiRef = useRef(null)
 
   // Toast feedback
   const [toastMessage, setToastMessage] = useState('')
@@ -390,28 +399,44 @@ export default function GeneratingPage({ initialPhase }) {
     }
   }
 
-  // Export handler: downloads JSON graph
+  // Export handler: opens the PDF / PNG export dialog (S2-FE6 / US-07)
   const handleExport = () => {
+    setExportError('')
+    setExportProgress(0)
+    setShowExportModal(true)
+  }
+
+  // Export confirmation: rasterizes the map and downloads the requested file
+  const handleExportConfirm = async (options = {}) => {
+    setIsExporting(true)
+    setExportError('')
+    setExportProgress(0)
+
     try {
-      const exportData = {
-        title: mapTitle,
-        nodes: graphNodes,
-        edges: rawEdges,
-        exportedAt: new Date().toISOString(),
-      }
-      const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `${(mapTitle || 'mindmap').toLowerCase().replace(/\s+/g, '_')}_graph.json`
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      URL.revokeObjectURL(url)
-      showToast('Knowledge graph exported as JSON.')
-    } catch {
-      showToast('Export failed.')
+      const result = await exportMindMap({
+        mapTitle,
+        options,
+        flowApi: flowApiRef.current,
+        onProgress: setExportProgress,
+      })
+
+      setShowExportModal(false)
+      setIsExporting(false)
+      setExportProgress(0)
+      showToast(`${result.format.toUpperCase()} exported successfully.`)
+    } catch (err) {
+      setIsExporting(false)
+      setExportProgress(0)
+      setExportError(err?.message || 'Export failed. Please try again.')
     }
+  }
+
+  // Close export modal from within the dialog
+  const handleExportModalClose = () => {
+    if (isExporting) return
+    setShowExportModal(false)
+    setExportError('')
+    setExportProgress(0)
   }
 
   // Share handler
@@ -527,6 +552,7 @@ export default function GeneratingPage({ initialPhase }) {
             rawEdges={rawEdges}
             toastMessage={toastMessage}
             onClearToast={() => setToastMessage('')}
+            flowApiRef={flowApiRef}
           />
         )}
 
@@ -603,6 +629,18 @@ export default function GeneratingPage({ initialPhase }) {
               </form>
             </div>
           </div>
+        )}
+
+        {/* Export Mind Map Modal (S2-FE6 / US-07) */}
+        {showExportModal && (
+          <ExportModal
+            mapTitle={mapTitle}
+            onClose={handleExportModalClose}
+            onExport={handleExportConfirm}
+            isExporting={isExporting}
+            progress={exportProgress}
+            errorMessage={exportError}
+          />
         )}
       </div>
     )
