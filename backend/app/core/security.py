@@ -1,3 +1,4 @@
+from typing import Literal, cast
 
 from core.config import settings
 from fastapi import Response
@@ -10,13 +11,14 @@ def set_auth_cookies(
     expires_in: int = 3600,
 ) -> None:
     """Set secure, HttpOnly cookies for access and refresh tokens."""
+    samesite_val = cast(Literal["lax", "strict", "none"], settings.COOKIE_SAMESITE)
     response.set_cookie(
         key=settings.COOKIE_ACCESS_TOKEN_KEY,
         value=access_token,
         max_age=expires_in,
         httponly=True,
         secure=settings.COOKIE_SECURE,
-        samesite=settings.COOKIE_SAMESITE,
+        samesite=samesite_val,
         domain=settings.COOKIE_DOMAIN,
         path="/",
     )
@@ -29,7 +31,7 @@ def set_auth_cookies(
             max_age=refresh_max_age,
             httponly=True,
             secure=settings.COOKIE_SECURE,
-            samesite=settings.COOKIE_SAMESITE,
+            samesite=samesite_val,
             domain=settings.COOKIE_DOMAIN,
             path="/",
         )

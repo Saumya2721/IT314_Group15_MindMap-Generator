@@ -1,8 +1,11 @@
+import logging
 from typing import Any
 
 from core.config import settings
 from core.supabase import admin, anon_client
 from fastapi import HTTPException
+
+logger = logging.getLogger(__name__)
 
 
 class AuthService:
@@ -12,7 +15,7 @@ class AuthService:
         if name:
             payload["options"] = {"data": {"name": name, "full_name": name}}
         try:
-            res = anon_client().auth.sign_up(payload)
+            res = anon_client().auth.sign_up(payload)  # type: ignore[arg-type]
         except Exception as e:
             raise HTTPException(status_code=400, detail=str(e))
         if res.user is None:
@@ -27,9 +30,11 @@ class AuthService:
     def login(email: str, password: str) -> dict[str, Any]:
         try:
             res = anon_client().auth.sign_in_with_password({"email": email, "password": password})
-        except Exception:
+        except Exception as e:
+            logger.warning("Supabase login failed for %s: %s", email, e)
             raise HTTPException(status_code=401, detail="Invalid Email or Password")
         if not res.session or not res.user:
+            logger.warning("Supabase sign-in succeeded but returned no session for %s", email)
             raise HTTPException(status_code=401, detail="Invalid Email or Password")
         return {
             "access_token": res.session.access_token,
@@ -54,8 +59,8 @@ class AuthService:
     def exchange_code_for_session(code: str) -> dict[str, Any]:
         """Exchange OAuth auth code (returned in callback) for user session tokens."""
         try:
-            res = anon_client().auth.exchange_code_for_session({"auth_code": code})
-            if not res or not res.session:
+            res = anon_client().auth.exchange_code_for_session({"auth_code": code})  # type: ignore[typeddict-item,arg-type]
+            if not res or not res.session or not res.user:
                 raise HTTPException(status_code=400, detail="Failed to exchange authorization code")
             return {
                 "access_token": res.session.access_token,
@@ -67,18 +72,14 @@ class AuthService:
         except HTTPException:
             raise
         except Exception as e:
-            raise HTTPException(
-                status_code=400, detail=f"Google authentication exchange failed: {str(e)}"
-            )
+            raise HTTPException(status_code=400, detail=f"Google authentication exchange failed: {str(e)}")
 
     @staticmethod
     def forgot_password(email: str, redirect_to: str | None = None) -> dict[str, Any]:
         """Send password reset email to user."""
         target_redirect = redirect_to or f"{settings.FRONTEND_URL}/reset-password"
         try:
-            anon_client().auth.reset_password_for_email(
-                email, options={"redirect_to": target_redirect}
-            )
+            anon_client().auth.reset_password_for_email(email, options={"redirect_to": target_redirect})
             return {"message": "Password reset instructions sent to your email."}
         except Exception as e:
             raise HTTPException(status_code=400, detail=str(e))
@@ -94,11 +95,12 @@ class AuthService:
                 raise HTTPException(status_code=401, detail="Invalid or expired reset token")
 
             # Use admin client to safely update the user password by ID
-            admin.auth.admin.update_user_by_id(res.user.id, {"password": new_password})
+            admin.auth.admin.update_user_by_id(str(res.user.id), {"password": new_password})
             return {"message": "Password has been successfully reset. You can now log in."}
         except HTTPException:
             raise
         except Exception as e:
+            logger.error("Password reset failed for user %s: %s", getattr(res, "user", None), e, exc_info=True)
             raise HTTPException(status_code=400, detail=f"Password reset failed: {str(e)}")
 
     @staticmethod
@@ -106,7 +108,7 @@ class AuthService:
         """Obtain a new access token using a valid refresh token."""
         try:
             res = anon_client().auth.refresh_session(refresh_token)
-            if not res or not res.session:
+            if not res or not res.session or not res.user:
                 raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
             return {
                 "access_token": res.session.access_token,

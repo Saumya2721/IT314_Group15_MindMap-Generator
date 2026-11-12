@@ -1,9 +1,13 @@
 """Tests for backend MindMapGenerator, layout computation, and health routes."""
+
+import main
 import pytest
 from fastapi.testclient import TestClient
 
-import main
-from providers.base import LLMProvider, LLMResponse
+try:
+    from mindmap_llm.providers.base import LLMProvider, LLMResponse
+except ImportError:
+    from providers.base import LLMProvider, LLMResponse
 from services.generator import MindMapGenerator, compute_layout
 
 

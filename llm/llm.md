@@ -25,51 +25,54 @@ If the decision model is unavailable or unconfigured, the generator LLM (and the
 
 ## 2. Repository Layout
 
-```
-config.py                  All settings loaded from environment variables (frozen dataclasses)
-worker/
-  settings.py              ARQ WorkerSettings (Redis connection, on_startup client initialization)
-  tasks.py                 generate_mindmap(): ARQ entry point, error handling, terminal callbacks
-  files.py                 fetch_all(): downloads raw file bytes from backend signed URLs
-contracts/
-  models.py                Typed Pydantic wire contracts: GenerationRequest, GenerationResult, NodeDraft, etc.
-callback/
-  client.py                JobCallbackClient: HTTP POST client for /progress, /complete, /fail
-orchestration/
-  graph.py                 LangGraph definition + retry loop + run_generation()
-  nodes.py                 Pipeline node functions (ingest, route, retrieve, generate, validate)
-  state.py                 GenerationState TypedDict flowing through the LangGraph nodes
-  deps.py                  GenerationDeps: bundles LLM, decision model, vector store, tools, callback
-  prompts.py               System/user prompt builders + tolerant JSON extraction
-providers/
-  base.py                  LLMProvider abstract interface (+ Message, ToolSpec, LLMResponse)
-  groq_provider.py         Groq adapter (OpenAI-compatible chat completions)
-  decision_model.py        DecisionModel interface (classify / score / health_check)
-  jev_provider.py          Jev System One adapter (HTTP, short timeout)
-  decision_fallback.py     LLMBackedDecisionModel and HeuristicDecisionModel fallbacks
-  registry.py              Factory functions & SafeDecisionModel fallback cascade
-embeddings/
-  base.py                  EmbeddingProvider interface (dimension + model_name contract)
-  huggingface_provider.py  Hugging Face Inference API adapter (intfloat/e5-large-v2, 1024 dims)
-  registry.py              get_embedding_provider()
-rag/
-  pinecone_store.py        PineconeVectorStore: namespace-isolated hybrid (dense + BM25) search
-  ingestion.py             chunk_text (paragraph-aware chunker), ingest_seed_text, ingest_tool_result
-  retrieval.py             retrieve_context (hybrid query), rerank_context (decision model scoring)
-seed/
-  extractors.py            PDF extraction (pypdf), image OCR (pytesseract/PIL), text normalizer
-  normalizer.py            normalize_seed: parses files/text into NormalizedSeed + SeedAssetDrafts
-tools/
-  base.py                  Tool interface, ToolResult, ToolError
-  arxiv_tool.py            arXiv Atom API search
-  web_search_tool.py       Tavily search API
-  registry.py              build_tool_registry()
-validation/
-  schema.py                Pydantic draft models + domain rules (DR-01..08) + UUID assigner
-scripts/
-  create_pinecone_index.py One-time Pinecone index setup (sets metric to dotproduct)
-  run_local.py             Local CLI runner (bypasses Redis for testing)
-tests/                     Comprehensive unit & integration test suite (pytest)
+```text
+llm/
+├── mindmap_llm/
+│   ├── config.py              All settings loaded from environment variables (frozen dataclasses)
+│   ├── worker/
+│   │   ├── settings.py        ARQ WorkerSettings (Redis connection, on_startup client initialization)
+│   │   ├── tasks.py           generate_mindmap(): ARQ entry point, error handling, terminal callbacks
+│   │   └── files.py           fetch_all(): downloads raw file bytes from backend signed URLs
+│   ├── contracts/
+│   │   └── models.py          Typed Pydantic wire contracts: GenerationRequest, GenerationResult, NodeDraft, etc.
+│   ├── callback/
+│   │   └── client.py          JobCallbackClient: HTTP POST client for /progress, /complete, /fail
+│   ├── orchestration/
+│   │   ├── graph.py           LangGraph definition + retry loop + run_generation()
+│   │   ├── nodes.py           Pipeline node functions (ingest, route, retrieve, generate, validate)
+│   │   ├── state.py           GenerationState TypedDict flowing through the LangGraph nodes
+│   │   ├── deps.py            GenerationDeps: bundles LLM, decision model, vector store, tools, callback
+│   │   └── prompts.py         System/user prompt builders + tolerant JSON extraction
+│   ├── providers/
+│   │   ├── base.py            LLMProvider abstract interface (+ Message, ToolSpec, LLMResponse)
+│   │   ├── groq_provider.py   Groq adapter (OpenAI-compatible chat completions)
+│   │   ├── decision_model.py  DecisionModel interface (classify / score / health_check)
+│   │   ├── jev_provider.py    Jev System One adapter (HTTP, short timeout)
+│   │   ├── decision_fallback.py LLMBackedDecisionModel and HeuristicDecisionModel fallbacks
+│   │   └── registry.py        Factory functions & SafeDecisionModel fallback cascade
+│   ├── embeddings/
+│   │   ├── base.py            EmbeddingProvider interface (dimension + model_name contract)
+│   │   ├── huggingface_provider.py Hugging Face Inference API adapter (intfloat/e5-large-v2, 1024 dims)
+│   │   └── registry.py        get_embedding_provider()
+│   ├── rag/
+│   │   ├── pinecone_store.py  PineconeVectorStore: namespace-isolated hybrid (dense + BM25) search
+│   │   ├── ingestion.py       chunk_text (paragraph-aware chunker), ingest_seed_text, ingest_tool_result
+│   │   └── retrieval.py       retrieve_context (hybrid query), rerank_context (decision model scoring)
+│   ├── seed/
+│   │   ├── extractors.py      PDF extraction (pypdf), image OCR (pytesseract/PIL), text normalizer
+│   │   └── normalizer.py      normalize_seed: parses files/text into NormalizedSeed + SeedAssetDrafts
+│   ├── tools/
+│   │   ├── base.py            Tool interface, ToolResult, ToolError
+│   │   ├── arxiv_tool.py      arXiv Atom API search
+│   │   ├── web_search_tool.py Tavily search API
+│   │   └── registry.py        build_tool_registry()
+│   ├── validation/
+│   │   └── schema.py          Pydantic draft models + domain rules (DR-01..08) + UUID assigner
+│   └── scripts/
+│       ├── create_pinecone_index.py One-time Pinecone index setup (sets metric to dotproduct)
+│       └── run_local.py       Local CLI runner (bypasses Redis for testing)
+├── tests/                     Comprehensive unit & integration test suite (pytest)
+└── pyproject.toml             uv dependencies & configuration
 ```
 
 **Design Rule**: Orchestration code never imports third-party vendor SDKs directly. All models, tools, vector stores, and callbacks are passed in as dependencies via `GenerationDeps`.
@@ -197,18 +200,18 @@ Vector storage is managed by [`rag/pinecone_store.py`](./rag/pinecone_store.py):
 ### 1. One-Time Pinecone Index Creation
 Before running the worker for the first time:
 ```powershell
-python scripts/create_pinecone_index.py
+python mindmap_llm/scripts/create_pinecone_index.py
 ```
 
 ### 2. Start the Production ARQ Worker
 ```powershell
-arq worker.settings.WorkerSettings
+arq mindmap_llm.worker.settings.WorkerSettings
 ```
 
 ### 3. Local Run Without Redis / Queue
 To test the full LangGraph pipeline locally without running Redis or the backend:
 ```powershell
-python scripts/run_local.py generate 00000000-0000-0000-0000-000000000001 --topic "Machine Learning" --ideas "Supervised, Unsupervised, Reinforcement"
+python mindmap_llm/scripts/run_local.py generate 00000000-0000-0000-0000-000000000001 --topic "Machine Learning" --ideas "Supervised, Unsupervised, Reinforcement"
 ```
 
 ### 4. Run the Pytest Test Suite

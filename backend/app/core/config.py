@@ -27,7 +27,7 @@ class AppConfig:
     COOKIE_REFRESH_TOKEN_KEY: str = "refresh_token"
     COOKIE_SECURE: bool = os.getenv("COOKIE_SECURE", "false").lower() in ("true", "1")
     COOKIE_SAMESITE: str = os.getenv("COOKIE_SAMESITE", "lax")  # 'lax', 'strict', or 'none'
-    COOKIE_DOMAIN: str = os.getenv("COOKIE_DOMAIN", None)
+    COOKIE_DOMAIN: str | None = os.getenv("COOKIE_DOMAIN") or None
 
 
 settings = AppConfig()

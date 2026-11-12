@@ -27,6 +27,5 @@ def get_embedding_provider(settings: Settings) -> EmbeddingProvider:
 
     # Add new vendors here, e.g. "openai", "cohere", etc.
     raise ValueError(
-        f"Unknown EMBEDDING_PROVIDER={provider!r}. "
-        "Supported providers: 'fastembed', 'local', 'huggingface'."
+        f"Unknown EMBEDDING_PROVIDER={provider!r}. Supported providers: 'fastembed', 'local', 'huggingface'."
     )

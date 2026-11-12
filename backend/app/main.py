@@ -5,20 +5,38 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
+from dotenv import find_dotenv, load_dotenv
+
+# Configure Python import paths & load environment variables
+app_dir = Path(__file__).resolve().parent
+backend_dir = app_dir.parent
+repo_root = backend_dir.parent
+llm_root = repo_root / "llm"
+
+for p in (app_dir, backend_dir, llm_root):
+    if p.exists() and str(p) not in sys.path:
+        sys.path.insert(0, str(p))
+
+# Search and load .env in all known locations
+for env_candidate in (
+    app_dir / ".env",
+    backend_dir / ".env",
+    repo_root / ".env",
+    repo_root / "llm" / ".env",
+):
+    if env_candidate.exists():
+        load_dotenv(env_candidate)
+
+load_dotenv(find_dotenv())
+
 # Backend configuration and database
 # Backward-compatible exports
 from auth.schemas import SignupRequest, UserCredentials  # noqa: F401
-
-# LLM module and services
-from config import get_settings as get_llm_settings
 from core.config import settings as app_settings
-from db.connection import create_db_pool
-from dotenv import find_dotenv, load_dotenv
 from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from maps.routes import router as maps_router
-from providers.registry import get_llm_provider
 
 # API routers
 from routes.auth import router as auth_router
@@ -28,29 +46,9 @@ from services.generator import MindMapGenerator
 from services.mindmap_service import MindMapBackendService
 from services.queue import close_redis_pool, create_redis_pool
 
+from db.connection import create_db_pool
+
 logger = logging.getLogger("backend.main")
-
-# Configure Python import paths & load environment variables
-backend_dir = Path(__file__).resolve().parent
-project_dir = backend_dir.parent
-llm_dir = project_dir / "llm"
-
-# Search and load .env in all known locations
-for env_candidate in (
-    backend_dir / ".env",
-    project_dir / ".env",
-    llm_dir / ".env",
-):
-    if env_candidate.exists():
-        load_dotenv(env_candidate)
-
-load_dotenv(find_dotenv())
-
-if llm_dir.exists() and str(llm_dir) not in sys.path:
-    sys.path.insert(0, str(llm_dir))
-
-if str(backend_dir) not in sys.path:
-    sys.path.insert(0, str(backend_dir))
 
 
 FRONTEND_URL = app_settings.FRONTEND_URL
@@ -71,18 +69,21 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         )
 
     # Build the generator and backend service
-    llm_settings = get_llm_settings()
     generator = None
     try:
+        from mindmap_llm.config import get_settings as get_llm_settings
+        from mindmap_llm.providers.registry import get_llm_provider
+
+        llm_settings = get_llm_settings()
         generator = MindMapGenerator(
             llm=get_llm_provider(llm_settings),
             max_tokens=llm_settings.llm.max_output_tokens,
             max_retries=llm_settings.generation.max_generation_retries,
         )
     except Exception as exc:
-        logger.warning("Could not initialize default LLM provider: %s", exc)
+        logger.info("Decoupled worker mode active (in-process LLM provider skipped: %s)", exc)
 
-    service = MindMapBackendService(pool, generator)
+    service = MindMapBackendService(pool, generator)  # type: ignore[arg-type]
 
     redis_pool = await create_redis_pool()
 
@@ -152,9 +153,7 @@ def custom_openapi() -> dict[str, Any]:
     return app.openapi_schema
 
 
-app.openapi = custom_openapi
-
-app.openapi = custom_openapi
+app.openapi = custom_openapi  # type: ignore[method-assign]
 
 # Register routers with clean, canonical docs
 app.include_router(auth_router, prefix="/api")

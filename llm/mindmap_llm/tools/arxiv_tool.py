@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
+from typing import Any
 
 import httpx
-
 from providers.base import ToolSpec
 from tools.base import Tool, ToolError, ToolResult
 
@@ -28,9 +28,10 @@ class ArxivTool(Tool):
             },
         )
 
-    async def invoke(self, *, query: str) -> list[ToolResult]:
-        params = {
-            "search_query": f"all:{query}",
+    async def invoke(self, *, query: str = "", **kwargs: Any) -> list[ToolResult]:
+        query_val = query or str(kwargs.get("query", ""))
+        params: dict[str, str | int] = {
+            "search_query": f"all:{query_val}",
             "start": 0,
             "max_results": self._max_results,
         }

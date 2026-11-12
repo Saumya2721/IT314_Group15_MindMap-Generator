@@ -26,9 +26,8 @@ from __future__ import annotations
 import re
 from uuid import uuid4
 
-from pydantic import BaseModel, Field, field_validator, model_validator
-
 from contracts.models import EdgeDraft, NodeDraft
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 HEX_COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
 
@@ -65,7 +64,7 @@ class _DraftEdge(BaseModel):
     label: str | None = Field(default=None, max_length=100)
 
     @model_validator(mode="after")
-    def _no_self_loop(self) -> "_DraftEdge":
+    def _no_self_loop(self) -> _DraftEdge:
         if self.source == self.target:
             raise ValueError(f"Edge from {self.source!r} to itself is not allowed")
         return self
@@ -76,7 +75,7 @@ class DraftMindMap(BaseModel):
     edges: list[_DraftEdge]
 
     @model_validator(mode="after")
-    def _structure(self) -> "DraftMindMap":
+    def _structure(self) -> DraftMindMap:
         errors: list[str] = []
         errors += _validate_unique_ids(self.nodes)
         errors += _validate_edges_reference_existing_nodes(self.nodes, self.edges)
@@ -91,18 +90,14 @@ def _validate_unique_ids(nodes: list[_DraftNode]) -> list[str]:
     errors = []
     for n in nodes:
         if n.id in seen:
-            errors.append(
-                f"Duplicate node id {n.id!r} (violates DR-03: unique node identification)"
-            )
+            errors.append(f"Duplicate node id {n.id!r} (violates DR-03: unique node identification)")
         seen.add(n.id)
     if not nodes:
         errors.append("A mind map must contain at least one node")
     return errors
 
 
-def _validate_edges_reference_existing_nodes(
-    nodes: list[_DraftNode], edges: list[_DraftEdge]
-) -> list[str]:
+def _validate_edges_reference_existing_nodes(nodes: list[_DraftNode], edges: list[_DraftEdge]) -> list[str]:
     ids = {n.id for n in nodes}
     errors = []
     for e in edges:
@@ -113,9 +108,7 @@ def _validate_edges_reference_existing_nodes(
     return errors
 
 
-def _validate_single_root(
-    nodes: list[_DraftNode], edges: list[_DraftEdge]
-) -> list[str]:
+def _validate_single_root(nodes: list[_DraftNode], edges: list[_DraftEdge]) -> list[str]:
     """DR-02: exactly one central/root node. There is no is_root column
     in the schema, so "root" is structural: the one node with no
     incoming edges, from which every other node is reachable."""
@@ -134,14 +127,10 @@ def _validate_single_root(
     roots = [i for i, count in incoming.items() if count == 0]
     errors: list[str] = []
     if len(roots) == 0:
-        errors.append(
-            "No root node found — every node has an incoming edge (cycle with no entry point)"
-        )
+        errors.append("No root node found — every node has an incoming edge (cycle with no entry point)")
         return errors
     if len(roots) > 1:
-        errors.append(
-            f"Found {len(roots)} candidate root nodes {roots!r} — DR-02 requires exactly one central node"
-        )
+        errors.append(f"Found {len(roots)} candidate root nodes {roots!r} — DR-02 requires exactly one central node")
         return errors
 
     root = roots[0]
@@ -155,9 +144,7 @@ def _validate_single_root(
         stack.extend(adjacency.get(cur, []))
     unreachable = set(ids) - visited
     if unreachable:
-        errors.append(
-            f"Nodes {sorted(unreachable)} are disconnected from the root {root!r}"
-        )
+        errors.append(f"Nodes {sorted(unreachable)} are disconnected from the root {root!r}")
     return errors
 
 

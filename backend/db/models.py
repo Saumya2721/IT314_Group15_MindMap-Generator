@@ -6,17 +6,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from uuid import UUID
 
 
-class JobType(str, Enum):
+class JobType(StrEnum):
     GENERATE = "generate"
     REGENERATE_FULL = "regenerate_full"
     REGENERATE_NODE = "regenerate_node"
+    CHAT_TURN = "chat_turn"
 
 
-class JobStatus(str, Enum):
+class JobStatus(StrEnum):
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
@@ -24,13 +25,13 @@ class JobStatus(str, Enum):
     REJECTED = "rejected"
 
 
-class SeedAssetType(str, Enum):
+class SeedAssetType(StrEnum):
     PDF = "pdf"
     IMAGE = "image"
     TEXT = "text"
 
 
-class EmbeddingSource(str, Enum):
+class EmbeddingSource(StrEnum):
     UPLOADED_SEED = "uploaded_seed"
     WEB_SEARCH = "web_search"
     ARXIV = "arxiv"

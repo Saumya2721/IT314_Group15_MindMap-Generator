@@ -23,7 +23,6 @@ low-risk change.
 from __future__ import annotations
 
 import httpx
-
 from providers.decision_model import (
     ClassifyResult,
     DecisionModel,
@@ -57,14 +56,10 @@ class JevDecisionModel(DecisionModel):
         except httpx.HTTPError:
             return False
 
-    async def classify(
-        self, *, state: str, question: str, labels: list[str]
-    ) -> ClassifyResult:
+    async def classify(self, *, state: str, question: str, labels: list[str]) -> ClassifyResult:
         payload = {
             "state": state,
-            "questions": [
-                {"id": "q1", "type": "choice", "prompt": question, "choices": labels}
-            ],
+            "questions": [{"id": "q1", "type": "choice", "prompt": question, "choices": labels}],
         }
         try:
             resp = await self._client.post("/decide", json=payload)
@@ -75,19 +70,16 @@ class JevDecisionModel(DecisionModel):
         data = resp.json()
         answer = data["answers"]["q1"]
         probs: dict[str, float] = answer.get("probabilities", {})
-        label = answer.get("choice") or max(probs, key=probs.get)
+        label = str(answer.get("choice") or (max(probs, key=lambda k: probs[k]) if probs else labels[0]))
         return ClassifyResult(
             label=label,
             confidence=probs.get(label, answer.get("confidence", 1.0)),
             label_probabilities=probs,
         )
 
-    async def score(
-        self, *, state: str, items: list[str], question: str
-    ) -> ScoreResult:
+    async def score(self, *, state: str, items: list[str], question: str) -> ScoreResult:
         questions = [
-            {"id": f"item_{i}", "type": "score", "prompt": question, "context": item}
-            for i, item in enumerate(items)
+            {"id": f"item_{i}", "type": "score", "prompt": question, "context": item} for i, item in enumerate(items)
         ]
         payload = {"state": state, "questions": questions}
         try:

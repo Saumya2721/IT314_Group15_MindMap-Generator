@@ -3,12 +3,11 @@ from __future__ import annotations
 import json
 import os
 from contextlib import asynccontextmanager
-from typing import Optional
 
 import asyncpg
 
 
-async def create_db_pool(dsn: Optional[str] = None, min_size: int = 1, max_size: int = 10) -> asyncpg.Pool:
+async def create_db_pool(dsn: str | None = None, min_size: int = 1, max_size: int = 10) -> asyncpg.Pool:
     """Create asyncpg pool compatible with Supabase PostgreSQL."""
     db_dsn = dsn or os.getenv("DATABASE_URL")
     if not db_dsn:
@@ -48,6 +47,5 @@ async def create_db_pool(dsn: Optional[str] = None, min_size: int = 1, max_size:
 @asynccontextmanager
 async def transaction(pool: asyncpg.Pool):
     """Convenience context manager: `async with transaction(pool) as conn:`"""
-    async with pool.acquire() as conn:
-        async with conn.transaction():
-            yield conn
+    async with pool.acquire() as conn, conn.transaction():
+        yield conn

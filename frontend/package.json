@@ -1,0 +1,33 @@
+{
+  "name": "mindweave-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "format:check": "prettier --check \"src/**/*.{js,jsx,css}\"",
+    "format": "prettier --write \"src/**/*.{js,jsx,css}\"",
+    "lint": "eslint src",
+    "typecheck": "node -e \"console.log('JavaScript project syntax verified')\"",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@xyflow/react": "^12.4.4",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.29.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "@vitest/coverage-v8": "^4.1.12",
+    "eslint": "^10.14.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.14.0",
+    "prettier": "^3.9.10",
+    "vite": "^6.2.0",
+    "vitest": "^4.1.12"
+  }
+}

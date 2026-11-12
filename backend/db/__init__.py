@@ -1,3 +1,4 @@
+from .connection import create_db_pool, transaction
 from .models import (
     EdgeRecord,
     EmbeddingRecord,
@@ -29,7 +30,6 @@ from .repository import (
     replace_map_graph,
     update_job_status,
 )
-from .connection import create_db_pool, transaction
 
 __all__ = [
     "EdgeRecord",

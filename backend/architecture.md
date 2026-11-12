@@ -32,10 +32,9 @@ app/
 │   └── repository.py           High-performance asyncpg data access layer with strict transaction boundaries
 ├── maps/
 │   └── routes.py               Core public REST API: /api/maps, /generate, /regenerate, /jobs
-├── api/
+├── routes/
 │   ├── auth.py                 User authentication endpoints (/auth/signup, /auth/login, /auth/logout)
 │   ├── internal.py             Worker callback endpoints (/internal/jobs/{id}/progress, /complete, /fail)
-│   ├── maps.py                 Compatibility proxy forwarding to maps/routes.py
 │   └── users.py                User profile management endpoints
 ├── services/
 │   ├── generator.py            Auto-layout coordinate calculation (compute_layout)

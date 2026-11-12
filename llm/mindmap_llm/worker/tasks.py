@@ -81,9 +81,7 @@ async def generate_mindmap(ctx: dict, request_payload: dict) -> dict:
         )
         await _send_terminal(callback, result)
     except Exception as exc:  # noqa: BLE001 - this is THE catch-all; see module docstring
-        logger.exception(
-            "job %s: unhandled exception during generation", request.job_id
-        )
+        logger.exception("job %s: unhandled exception during generation", request.job_id)
         result = GenerationResult(
             job_id=request.job_id,
             map_id=request.map_id,
@@ -104,28 +102,20 @@ async def generate_mindmap(ctx: dict, request_payload: dict) -> dict:
     return result.model_dump(mode="json")
 
 
-async def _run(
-    request: GenerationRequest, namespace: str, deps: GenerationDeps
-) -> GenerationResult:
+async def _run(request: GenerationRequest, namespace: str, deps: GenerationDeps) -> GenerationResult:
     seed_assets = []
     rejected_files: list[RejectedFile] = []
 
     if request.job_type == JobType.GENERATE:
         fetched_files, fetch_failures = await fetch_all(request.files)
-        rejected_files += [
-            RejectedFile(file_name=n, reason=r) for n, r in fetch_failures
-        ]
+        rejected_files += [RejectedFile(file_name=n, reason=r) for n, r in fetch_failures]
 
         normalized = await normalize_seed(
-            submission=SeedSubmission(
-                topic=request.topic, ideas=request.ideas, files=fetched_files
-            ),
+            submission=SeedSubmission(topic=request.topic, ideas=request.ideas, files=fetched_files),
             decision_model=deps.decision_model,
         )
         seed_assets = normalized.seed_assets
-        rejected_files += [
-            RejectedFile(file_name=n, reason=r) for n, r in normalized.rejected_files
-        ]
+        rejected_files += [RejectedFile(file_name=n, reason=r) for n, r in normalized.rejected_files]
         seed_text = normalized.combined_text
         is_regeneration = False
 
@@ -133,10 +123,19 @@ async def _run(
         seed_text = await reconstruct_seed_from_namespace(deps, namespace=namespace)
         is_regeneration = True
 
-    else:
-        raise NotImplementedError(
-            f"{request.job_type} is not implemented yet (see llm.md section 15)"
+    elif request.job_type == JobType.REGENERATE_NODE:
+        branch_label = (
+            request.branch_context.get("target_node_label", "Subtopic") if request.branch_context else "Subtopic"
         )
+        try:
+            prior_seed = await reconstruct_seed_from_namespace(deps, namespace=namespace)
+            seed_text = f"Mind Map Context:\n{prior_seed}\n\nBranch to expand: '{branch_label}'"
+        except Exception:
+            seed_text = f"Mind map branch for: '{branch_label}'"
+        is_regeneration = True
+
+    else:
+        raise NotImplementedError(f"{request.job_type} is not implemented yet")
 
     final_state = await run_generation(
         deps,
@@ -153,18 +152,31 @@ async def _run(
     )
 
     if final_state.get("status") == "completed":
+        out_nodes = list(final_state.get("nodes", []))
+        out_edges = list(final_state.get("edges", []))
+
+        if request.job_type == JobType.REGENERATE_NODE and request.target_node_id and out_nodes:
+            target_id = request.target_node_id
+            root_id = out_nodes[0].id
+            for n in out_nodes:
+                if n.id == root_id:
+                    n.id = target_id
+            for e in out_edges:
+                if e.source_node_id == root_id:
+                    e.source_node_id = target_id
+                if e.target_node_id == root_id:
+                    e.target_node_id = target_id
+
         return GenerationResult(
             job_id=request.job_id,
             map_id=request.map_id,
             status="completed",
             resolved_detail_level=final_state.get("resolved_detail_level"),
-            nodes=final_state.get("nodes", []),
-            edges=final_state.get("edges", []),
+            nodes=out_nodes,
+            edges=out_edges,
             seed_assets=seed_assets,
             rejected_files=rejected_files,
-            tool_call_log=[
-                ToolCallLogEntry(**e) for e in final_state.get("tool_call_log", [])
-            ],
+            tool_call_log=[ToolCallLogEntry(**e) for e in final_state.get("tool_call_log", [])],
         )
 
     return GenerationResult(
@@ -176,8 +188,7 @@ async def _run(
         error=GenerationError(
             stage=final_state.get("failed_stage") or "validate",
             error_type="ValidationFailure",
-            message=final_state.get("error_message")
-            or "Generation failed for an unknown reason.",
+            message=final_state.get("error_message") or "Generation failed for an unknown reason.",
             retryable=True,
         ),
     )

@@ -1,18 +1,15 @@
 """Integration and contract tests for ARQ queue producer, internal callbacks, and node regeneration rejection."""
+
 from __future__ import annotations
 
 import hashlib
-import json
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-from fastapi.testclient import TestClient
-
 import main
+import pytest
 from contracts.models import (
-    EdgeDraft,
     FileRef,
     GenerationError,
     GenerationRequest,
@@ -21,10 +18,11 @@ from contracts.models import (
     NodeDraft,
 )
 from core.supabase import current_user_id
-from db.models import JobStatus
-from db.repository import create_generation_job
+from fastapi.testclient import TestClient
 from services.generator import compute_layout
 from services.queue import enqueue_generation_job
+
+from db.repository import create_generation_job
 
 
 @pytest.mark.asyncio
@@ -73,7 +71,6 @@ async def test_arq_producer_enqueues_contract_payload():
 @pytest.mark.asyncio
 async def test_create_generation_job_string_and_enum():
     """Verify create_generation_job accepts both string and JobType enum without AttributeError."""
-    from datetime import timezone
 
     async def mock_fetchrow(query, *args):
         j_type = "generate"
@@ -88,7 +85,7 @@ async def test_create_generation_job_string_and_enum():
             "status": "pending",
             "progress_percent": 0,
             "error_message": None,
-            "created_at": datetime.now(timezone.utc),
+            "created_at": datetime.now(UTC),
             "started_at": None,
             "completed_at": None,
             "triggered_by_message_id": None,
@@ -118,23 +115,86 @@ async def test_create_generation_job_string_and_enum():
     assert job_enum.job_type in (JobType.REGENERATE_FULL, "regenerate_full")
 
 
-def test_reject_node_regeneration_intake_501():
+def test_node_regeneration_intake_202():
     client = TestClient(main.app)
     fake_uid = uuid.uuid4()
     map_id = uuid.uuid4()
     node_id = uuid.uuid4()
 
     mock_pool = MagicMock()
-    # User is owner
-    mock_pool.fetchval = AsyncMock(side_effect=[True, True])
+    mock_conn = MagicMock()
+    mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
+
+    async def mock_fetchrow(query, *args):
+        if "public.nodes" in query:
+            return {
+                "id": node_id,
+                "map_id": map_id,
+                "label": "Target Node",
+                "description": "Desc",
+                "pos_x": 0.0,
+                "pos_y": 0.0,
+                "background_color": None,
+                "text_color": None,
+                "width": 100.0,
+                "height": 50.0,
+                "node_type": "default",
+                "source_job_id": None,
+                "node_data": None,
+                "created_at": datetime.now(UTC),
+                "updated_at": datetime.now(UTC),
+            }
+        return {"id": uuid.uuid4()}
+
+    mock_pool.fetchrow = AsyncMock(side_effect=mock_fetchrow)
+    mock_pool.fetchval = AsyncMock(side_effect=[True, None, None, uuid.uuid4()])
+    mock_pool.fetch = AsyncMock(return_value=[])
+
+    mock_redis = MagicMock()
+    mock_job = MagicMock()
+    mock_job.job_id = "arq-job-123"
+    mock_redis.enqueue_job = AsyncMock(return_value=mock_job)
     main.app.state.pool = mock_pool
+    main.app.state.redis_pool = mock_redis
+
+    job_row = {
+        "id": uuid.uuid4(),
+        "map_id": map_id,
+        "job_type": "regenerate_node",
+        "status": "pending",
+        "progress_percent": 0,
+        "error_message": None,
+        "created_at": datetime.now(UTC),
+        "started_at": None,
+        "completed_at": None,
+        "triggered_by_message_id": None,
+        "target_node_id": node_id,
+        "callback_token_hash": "dummy",
+    }
+
+    async def mock_conn_fetchrow(query, *args):
+        if "generation_jobs" in query:
+            return job_row
+        return {"id": uuid.uuid4()}
+
+    mock_conn.transaction.return_value.__aenter__.return_value = mock_conn
+    mock_conn.fetchrow = AsyncMock(side_effect=mock_conn_fetchrow)
+    mock_conn.fetchval = AsyncMock(return_value=uuid.uuid4())
+    mock_conn.execute = AsyncMock()
 
     main.app.dependency_overrides[current_user_id] = lambda: fake_uid
 
     try:
-        resp = client.post(f"/api/maps/{map_id}/nodes/{node_id}/regenerate")
-        assert resp.status_code == 501
-        assert "not yet supported" in resp.json()["detail"].lower()
+        resp = client.post(
+            f"/api/maps/{map_id}/nodes/{node_id}/regenerate",
+            json={"instruction": "Expand this branch with more concepts"},
+        )
+        assert resp.status_code == 202
+        data = resp.json()
+        assert data["status"] == "accepted"
+        assert data["map_id"] == str(map_id)
+        assert data["target_node_id"] == str(node_id)
+        assert "poll" in data
     finally:
         main.app.dependency_overrides.pop(current_user_id, None)
 
@@ -343,7 +403,6 @@ def test_compute_layout_handles_worker_edge_keys():
 
 
 def _build_test_pool(fetchrow_side_effect=None, fetchval_side_effect=None):
-    from datetime import timezone
     mock_conn = MagicMock()
     if fetchrow_side_effect is not None:
         mock_conn.fetchrow = AsyncMock(side_effect=fetchrow_side_effect)
@@ -358,7 +417,7 @@ def _build_test_pool(fetchrow_side_effect=None, fetchval_side_effect=None):
                 "status": "pending",
                 "progress_percent": 0,
                 "error_message": None,
-                "created_at": datetime.now(timezone.utc),
+                "created_at": datetime.now(UTC),
                 "started_at": None,
                 "completed_at": None,
                 "callback_token_hash": "dummy_hash",
@@ -392,7 +451,6 @@ def _build_test_pool(fetchrow_side_effect=None, fetchval_side_effect=None):
 @pytest.mark.asyncio
 async def test_late_complete_on_failed_job_returns_409():
     """Verify that if a job already reached terminal status 'failed' or 'rejected', late completion returns 409."""
-    from datetime import timezone
     job_id = uuid.uuid4()
     map_id = uuid.uuid4()
     raw_token = "valid-token-terminal"
@@ -413,7 +471,7 @@ async def test_late_complete_on_failed_job_returns_409():
                 "map_id": map_id,
                 "job_type": "generate",
                 "status": "failed",
-                "started_at": datetime.now(timezone.utc),
+                "started_at": datetime.now(UTC),
             },
         ]
     )
@@ -444,7 +502,6 @@ async def test_late_complete_on_failed_job_returns_409():
 @pytest.mark.asyncio
 async def test_late_fail_on_completed_job_returns_409():
     """Verify that if a job already reached terminal status 'completed', a conflicting fail callback returns 409."""
-    from datetime import timezone
     job_id = uuid.uuid4()
     map_id = uuid.uuid4()
     raw_token = "valid-token-terminal-fail"
@@ -462,7 +519,7 @@ async def test_late_fail_on_completed_job_returns_409():
             {
                 "id": job_id,
                 "status": "completed",
-                "started_at": datetime.now(timezone.utc),
+                "started_at": datetime.now(UTC),
             },
         ]
     )
@@ -528,9 +585,9 @@ def test_unified_routes_fail_503_when_redis_unavailable():
 @pytest.mark.asyncio
 async def test_store_files_partial_failure_compensates_cleaned_keys():
     """Verify that if a second file fails during upload, previously uploaded files in the batch are removed."""
+    import core.supabase
     from fastapi import HTTPException
     from uploads.service import store_files
-    import core.supabase
 
     mock_storage = MagicMock()
     # First upload succeeds, second upload throws exception
@@ -569,6 +626,7 @@ def test_generate_queue_failure_triggers_storage_cleanup_and_job_rejection():
     3. Endpoint returns 502 with error details.
     """
     from unittest.mock import patch
+
     import core.supabase
 
     client = TestClient(main.app)
@@ -594,11 +652,21 @@ def test_generate_queue_failure_triggers_storage_cleanup_and_job_rejection():
     main.app.dependency_overrides[current_user_id] = lambda: fake_uid
 
     try:
-        with patch("maps.routes.read_uploads", new_callable=AsyncMock, return_value=[("doc.pdf", "application/pdf", b"%PDF-1.4 ...")]), \
-             patch("maps.routes.store_files", new_callable=AsyncMock) as mock_store, \
-             patch("maps.routes.enqueue_generation_job", new_callable=AsyncMock, side_effect=RuntimeError("Redis queue cluster crashed")):
-
+        with (
+            patch(
+                "maps.routes.read_uploads",
+                new_callable=AsyncMock,
+                return_value=[("doc.pdf", "application/pdf", b"%PDF-1.4 ...")],
+            ),
+            patch("maps.routes.store_files", new_callable=AsyncMock) as mock_store,
+            patch(
+                "maps.routes.enqueue_generation_job",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("Redis queue cluster crashed"),
+            ),
+        ):
             from uploads.service import UploadedFile
+
             mock_store.return_value = [
                 UploadedFile(
                     file_name="doc.pdf",
@@ -640,6 +708,7 @@ def test_quick_generate_enqueue_failure_triggers_job_rejection():
     2. Endpoint returns 503 instead of leaving job permanently pending.
     """
     from unittest.mock import patch
+
     client = TestClient(main.app)
     fake_uid = uuid.uuid4()
 
@@ -654,7 +723,11 @@ def test_quick_generate_enqueue_failure_triggers_job_rejection():
     main.app.dependency_overrides[current_user_id] = lambda: fake_uid
 
     try:
-        with patch("maps.routes.enqueue_generation_job", new_callable=AsyncMock, side_effect=RuntimeError("Redis connection dropped")):
+        with patch(
+            "maps.routes.enqueue_generation_job",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("Redis connection dropped"),
+        ):
             resp = client.post("/api/maps/quick-generate", json={"topic": "Distributed Systems"})
             assert resp.status_code == 503
             assert "Failed to enqueue generation job" in resp.json()["detail"]

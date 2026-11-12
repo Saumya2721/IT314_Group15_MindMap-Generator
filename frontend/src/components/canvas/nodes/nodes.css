@@ -1,0 +1,124 @@
+/* =========================================================
+   MINDWEAVE — React Flow Custom Node Styles
+   Atelier Warm Editorial Aesthetics
+   ========================================================= */
+
+.atelier-flow-node {
+  background-color: #ffffff;
+  border: 1px solid var(--outline-variant, #e1e3e0);
+  border-radius: var(--radius-lg, 12px);
+  padding: 14px 18px;
+  font-family: var(--font-body, 'Newsreader', serif);
+  color: var(--on-surface, #181d1a);
+  transition: all 0.2s cubic-bezier(0.2, 0, 0, 1);
+  box-sizing: border-box;
+  cursor: pointer;
+}
+
+.atelier-flow-node:hover {
+  border-color: var(--primary, #155e63);
+}
+
+/* Root Node Specifics */
+.root-flow-node {
+  min-width: 240px;
+  max-width: 340px;
+  border-width: 2px;
+  background: linear-gradient(180deg, #ffffff 0%, #fbfdfc 100%);
+  padding: 18px 22px;
+}
+
+.root-node-title {
+  font-family: var(--font-headline, 'Cinzel', serif);
+  font-size: 19px;
+  font-weight: 600;
+  color: var(--on-surface, #181d1a);
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+  margin-top: 6px;
+  margin-bottom: 6px;
+}
+
+.root-node-description {
+  font-family: var(--font-body, 'Newsreader', serif);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--on-surface-variant, #404947);
+}
+
+/* Branch Node Specifics */
+.branch-flow-node {
+  min-width: 220px;
+  max-width: 300px;
+  padding: 14px 16px;
+}
+
+.branch-node-header {
+  margin-bottom: 6px;
+}
+
+.branch-node-title {
+  font-family: var(--font-headline, 'Cinzel', serif);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--on-surface, #181d1a);
+  line-height: 1.35;
+  margin-bottom: 4px;
+}
+
+.branch-node-description {
+  font-family: var(--font-body, 'Newsreader', serif);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--on-surface-variant, #404947);
+}
+
+/* Concept / Leaf Node Specifics */
+.concept-flow-node {
+  min-width: 180px;
+  max-width: 260px;
+  padding: 10px 14px;
+}
+
+.concept-node-title {
+  font-family: var(--font-body, 'Newsreader', serif);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--on-surface, #181d1a);
+  line-height: 1.35;
+  margin-bottom: 2px;
+}
+
+.concept-node-description {
+  font-family: var(--font-body, 'Newsreader', serif);
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--outline, #6f7977);
+}
+
+/* Category Badge */
+.flow-node-badge {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-family: var(--font-label, sans-serif);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #ffffff;
+}
+
+/* Handles */
+.flow-handle {
+  width: 7px !important;
+  height: 7px !important;
+  background-color: var(--primary, #155e63) !important;
+  border: 2px solid #ffffff !important;
+  border-radius: 50% !important;
+  transition: transform 0.15s ease;
+}
+
+.flow-handle:hover {
+  transform: scale(1.3);
+}

@@ -7,7 +7,6 @@ backend already uploaded each file and handed us a signed URL
 from __future__ import annotations
 
 import httpx
-
 from contracts.models import FileRef
 from seed.normalizer import UploadedFile
 
