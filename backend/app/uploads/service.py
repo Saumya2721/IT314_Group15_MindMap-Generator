@@ -165,7 +165,7 @@ async def delete_map_storage_files(
     """
     keys_to_remove: set[str] = set()
 
-    # 1. Fetch explicitly recorded storage keys from DB if pool is available
+    # 1. Fetch explicitly recorded storage paths from DB if pool is available
     if pool is not None:
         try:
             rows = await pool.fetch(
@@ -178,11 +178,11 @@ async def delete_map_storage_files(
                 map_id,
             )
             for r in rows:
-                if r["storage_key"]:
-                    keys_to_remove.add(r["storage_key"])
+                key = r.get("storage_key") or r.get("storage_path")
+                if key:
+                    keys_to_remove.add(key)
         except Exception as exc:
-            logger.error("Could not query seed_assets for map %s: %s", map_id, exc)
-            raise RuntimeError(f"Database lookup of seed assets failed for map {map_id}") from exc
+            logger.warning("Could not query seed_assets for map %s: %s", map_id, exc)
 
     # 2. Discover any objects under the folder prefix <user_id>/<map_id>/
     try:
@@ -216,7 +216,7 @@ async def delete_map_storage_files(
             logger.info("Successfully deleted %d storage files for map %s", len(keys_list), map_id)
             return keys_list
         except Exception as exc:
-            logger.error("Failed to remove storage keys %s for map %s: %s", keys_list, map_id, exc)
-            raise RuntimeError(f"Storage deletion failed for keys: {keys_list}") from exc
+            logger.warning("Failed to remove storage keys %s for map %s: %s", keys_list, map_id, exc)
+            raise RuntimeError(f"Storage deletion failed for keys {keys_list}: {exc}") from exc
 
     return []
