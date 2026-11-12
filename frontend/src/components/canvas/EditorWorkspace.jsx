@@ -1,8 +1,10 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { CanvasTopBar } from './CanvasTopBar'
 import { MindMapCanvas } from './MindMapCanvas'
 import { NodeInspector } from './NodeInspector'
 import { VersionHistoryPanel } from '../history/VersionHistoryPanel'
+import { ExportModal } from './ExportModal'
+import { exportMindMap } from '../../services/exportService'
 import { useCanvasState } from './useCanvasState'
 import { useCommentsChat } from './useCommentsChat'
 import { useExportHistory } from './useExportHistory'
@@ -49,6 +51,13 @@ export function EditorWorkspace({
   const [showRegenModal, setShowRegenModal] = useState(false)
   const [regenInstruction, setRegenInstruction] = useState('')
   const [regenDetailLevel, setRegenDetailLevel] = useState('overview')
+
+  // Export Modal State (S2-FE6 / US-07)
+  const [showExportModal, setShowExportModal] = useState(false)
+  const [isExporting, setIsExporting] = useState(false)
+  const [exportProgress, setExportProgress] = useState(0)
+  const [exportError, setExportError] = useState('')
+  const flowApiRef = useRef(null)
 
   // FE-1: Canvas & Undo/Redo State
   const defaultCanvas = useCanvasState({
@@ -126,14 +135,47 @@ export function EditorWorkspace({
     displayToast('Shareable workspace link copied to clipboard.')
   }
 
-  // Export handler
+  // Export handler: opens the PDF / PNG export dialog (S2-FE6 / US-07)
   const handleExport = () => {
+    setExportError('')
+    setExportProgress(0)
+    setShowExportModal(true)
+    exportHistory.openExport()
+  }
+
+  // Export confirmation: rasterizes the map and downloads the requested file
+  const handleExportConfirm = async (options = {}) => {
+    setIsExporting(true)
+    setExportError('')
+    setExportProgress(0)
+
     try {
-      exportHistory.executeJsonExport(mapTitle, canvas.nodes, canvas.edges)
-      displayToast('Knowledge graph exported as JSON.')
-    } catch {
-      displayToast('Export failed.')
+      const result = await exportMindMap({
+        mapTitle,
+        options,
+        flowApi: flowApiRef.current,
+        onProgress: setExportProgress,
+      })
+
+      setShowExportModal(false)
+      setIsExporting(false)
+      setExportProgress(0)
+      exportHistory.closeExport()
+      displayToast(`${result.format.toUpperCase()} exported successfully.`)
+    } catch (err) {
+      setIsExporting(false)
+      setExportProgress(0)
+      setExportError(err?.message || 'Export failed. Please try again.')
     }
+  }
+
+  // Close export modal from within the dialog
+  const handleExportModalClose = () => {
+    if (isExporting) return
+    setShowExportModal(false)
+    setExportError('')
+    setExportProgress(0)
+    exportHistory.closeExport()
   }
 
   // Regeneration submission handler
@@ -244,6 +286,7 @@ export function EditorWorkspace({
           rawEdges={canvas.edges}
           toastMessage={activeToast}
           onClearToast={onClearToast || (() => setLocalToast(''))}
+          flowApiRef={flowApiRef}
         />
       )}
 
@@ -363,6 +406,18 @@ export function EditorWorkspace({
             </form>
           </div>
         </div>
+      )}
+
+      {/* Export Mind Map Modal (S2-FE6 / US-07) */}
+      {(showExportModal || exportHistory.isExportModalOpen) && (
+        <ExportModal
+          mapTitle={mapTitle}
+          onClose={handleExportModalClose}
+          onExport={handleExportConfirm}
+          isExporting={isExporting}
+          progress={exportProgress}
+          errorMessage={exportError}
+        />
       )}
     </div>
   )
