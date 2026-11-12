@@ -67,6 +67,8 @@ class GenerationRequest(BaseModel):
     regeneration_instruction: str | None = None
 
     detail_level: DetailLevel | None = None  # None => worker infers it
+    purpose: str | None = None
+    seed_has_files: bool = False
 
     # Node-level regeneration (US-06 / S2-BE2):
     target_node_id: UUID | None = None
@@ -76,6 +78,9 @@ class GenerationRequest(BaseModel):
     # scoped to this one job by the backend when it enqueues.
     callback_base_url: str
     callback_token: str
+
+    # Short-term memory context (US-15 / S2-BE4): rolling summary + recent message turns
+    memory_context: dict[str, Any] | None = None
 
 
 # ---------------------------------------------------------------------
@@ -90,6 +95,7 @@ class NodeDraft(BaseModel):
     node_type: str = "default"
     background_color: str | None = None  # "#RRGGBB"
     text_color: str | None = None
+    sources: list[str] = Field(default_factory=list)
 
 
 class EdgeDraft(BaseModel):
@@ -146,6 +152,7 @@ class GenerationResult(BaseModel):
     seed_assets: list[SeedAssetDraft] = Field(default_factory=list)
     rejected_files: list[RejectedFile] = Field(default_factory=list)
     tool_call_log: list[ToolCallLogEntry] = Field(default_factory=list)
+    quality_warnings: list[str] = Field(default_factory=list)
 
     error: GenerationError | None = None
 

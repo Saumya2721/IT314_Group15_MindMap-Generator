@@ -14,6 +14,7 @@ from tools.base import Tool, ToolResult
 from worker.tasks import generate_mindmap
 
 from tests.conftest import (
+    HEALTHY_10_NODE_PAYLOAD,
     VALID_DRAFT_PAYLOAD,
     FakeCallbackClient,
     FakeDecisionModel,
@@ -216,7 +217,7 @@ class CapturingLLM(FakeLLMProvider):
 async def test_feature_flag_dynamic_prompts_enabled():
     payload = _build_request_payload(topic="Short topic", ideas=None)
     callback = FakeCallbackClient()
-    llm = CapturingLLM([json.dumps(VALID_DRAFT_PAYLOAD)])
+    llm = CapturingLLM([json.dumps(HEALTHY_10_NODE_PAYLOAD)])
     settings = Settings(generation=GenerationConfig(enable_dynamic_prompts=True))
     ctx = {
         "llm": llm,
