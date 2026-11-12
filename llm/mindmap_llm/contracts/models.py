@@ -155,5 +155,6 @@ class GenerationResult(BaseModel):
     seed_assets: list[SeedAssetDraft] = Field(default_factory=list)
     rejected_files: list[RejectedFile] = Field(default_factory=list)
     tool_call_log: list[ToolCallLogEntry] = Field(default_factory=list)
+    quality_warnings: list[str] = Field(default_factory=list)
 
     error: GenerationError | None = None

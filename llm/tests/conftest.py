@@ -240,3 +240,47 @@ VALID_DRAFT_PAYLOAD = {
         {"source": "n1", "target": "n3", "label": "includes"},
     ],
 }
+
+HEALTHY_10_NODE_PAYLOAD = {
+    "nodes": [
+        {
+            "id": "n1",
+            "label": "Photosynthesis",
+            "description": "Core biochemical pathway in plants.",
+            "node_type": "default",
+            "sources": ["seed"],
+        },
+        {
+            "id": "n2",
+            "label": "Light Reactions",
+            "description": "Converts light energy to chemical energy.",
+            "node_type": "default",
+            "sources": ["seed"],
+        },
+        {
+            "id": "n3",
+            "label": "Calvin Cycle",
+            "description": "Fixes carbon dioxide into sugars.",
+            "node_type": "default",
+            "sources": ["seed"],
+        },
+        {"id": "n4", "label": "Photosystem II", "description": None, "node_type": "default", "sources": ["seed"]},
+        {"id": "n5", "label": "Photosystem I", "description": None, "node_type": "default", "sources": ["seed"]},
+        {"id": "n6", "label": "ATP Synthase", "description": None, "node_type": "default", "sources": ["seed"]},
+        {"id": "n7", "label": "Carbon Fixation", "description": None, "node_type": "default", "sources": ["seed"]},
+        {"id": "n8", "label": "Reduction Phase", "description": None, "node_type": "default", "sources": ["seed"]},
+        {"id": "n9", "label": "RuBP Regeneration", "description": None, "node_type": "default", "sources": ["seed"]},
+        {"id": "n10", "label": "G3P Production", "description": None, "node_type": "default", "sources": ["seed"]},
+    ],
+    "edges": [
+        {"source": "n1", "target": "n2", "label": "stage"},
+        {"source": "n1", "target": "n3", "label": "stage"},
+        {"source": "n2", "target": "n4", "label": "component"},
+        {"source": "n2", "target": "n5", "label": "component"},
+        {"source": "n2", "target": "n6", "label": "component"},
+        {"source": "n3", "target": "n7", "label": "step"},
+        {"source": "n3", "target": "n8", "label": "step"},
+        {"source": "n3", "target": "n9", "label": "step"},
+        {"source": "n3", "target": "n10", "label": "output"},
+    ],
+}

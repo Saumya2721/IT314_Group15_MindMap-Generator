@@ -153,6 +153,7 @@ async def _run(request: GenerationRequest, namespace: str, deps: GenerationDeps)
             seed_assets=seed_assets,
             rejected_files=rejected_files,
             tool_call_log=[ToolCallLogEntry(**e) for e in final_state.get("tool_call_log", [])],
+            quality_warnings=final_state.get("quality_warnings", []),
         )
 
     return GenerationResult(
