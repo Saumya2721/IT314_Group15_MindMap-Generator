@@ -179,8 +179,13 @@ def test_patch_map_updates_viewport():
     client = TestClient(main.app)
     mock_pool = _mock_pool()
     mock_pool.fetchrow = AsyncMock(
-        return_value={"id": str(MAP_ID), "title": "Weekly Project Review", "is_public": False,
-                       "created_at": "2026-11-10T09:00:00Z", "updated_at": "2026-11-12T12:00:00Z"}
+        return_value={
+            "id": str(MAP_ID),
+            "title": "Weekly Project Review",
+            "is_public": False,
+            "created_at": "2026-11-10T09:00:00Z",
+            "updated_at": "2026-11-12T12:00:00Z",
+        }
     )
     mock_pool.fetchval = AsyncMock(return_value=True)  # assert_map_owner returns true
 
