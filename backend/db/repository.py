@@ -83,6 +83,43 @@ async def assert_map_owner(conn: asyncpg.Connection, map_id: UUID, user_id: UUID
     return bool(ok)
 
 
+async def search_maps(
+    conn: asyncpg.Connection,
+    user_id: UUID,
+    query: str,
+    limit: int = 20,
+) -> list[dict]:
+    """Search maps belonging to ``user_id`` by title / description (S2-FE5 / US-08).
+
+    Results are ordered by relevance — maps whose title matches rank above
+    maps that only match in the description — and then by ``updated_at``.
+    The literal search term is supplied as a parameter; ``%``/``_`` in the
+    term are escaped so user input never alters the pattern's meaning.
+    """
+    term = (query or "").strip().lower()
+    if not term:
+        return []
+    escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    pattern = f"%{escaped}%"
+
+    rows = await conn.fetch(
+        """SELECT m.id, m.title, m.description, m.is_public, m.created_at, m.updated_at,
+                  (SELECT count(*)::int FROM public.nodes n WHERE n.map_id = m.id) AS node_count,
+                  (SELECT j.status FROM public.generation_jobs j WHERE j.map_id = m.id ORDER BY j.created_at DESC LIMIT 1) AS latest_job_status,
+                  (SELECT j.progress_percent::int FROM public.generation_jobs j WHERE j.map_id = m.id ORDER BY j.created_at DESC LIMIT 1) AS latest_job_progress,
+                  (SELECT j.id FROM public.generation_jobs j WHERE j.map_id = m.id ORDER BY j.created_at DESC LIMIT 1) AS latest_job_id
+           FROM public.mind_maps m
+           WHERE m.user_id = $1
+             AND (m.title ILIKE $2 OR COALESCE(m.description, '') ILIKE $2)
+           ORDER BY (m.title ILIKE $2) DESC, m.updated_at DESC
+           LIMIT $3""",
+        user_id,
+        pattern,
+        limit,
+    )
+    return [dict(r) for r in rows]
+
+
 # ---------------------------------------------------------------------
 # Chat Threads & Messages
 # ---------------------------------------------------------------------

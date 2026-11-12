@@ -18,6 +18,7 @@ export default function EditorPage() {
   const [mapTitle, setMapTitle] = useState('Mind Map')
   const [graphNodes, setGraphNodes] = useState([])
   const [rawEdges, setRawEdges] = useState([])
+  const [initialViewport, setInitialViewport] = useState(null)
   const [isLoading, setIsLoading] = useState(true)
 
   // Regeneration & Job Polling State
@@ -40,6 +41,16 @@ export default function EditorPage() {
         const mapData = await mindMapService.getMapById(mapId)
         if (mapData?.title) {
           setMapTitle(mapData.title)
+        }
+
+        // Persisted editor viewport (S2-FE5 / US-08): restore the zoom level
+        // and pan position the user left behind on the previous session.
+        if (mapData?.view_x != null && mapData?.view_y != null && mapData?.view_zoom != null) {
+          setInitialViewport({
+            x: Number(mapData.view_x),
+            y: Number(mapData.view_y),
+            zoom: Number(mapData.view_zoom),
+          })
         }
 
         // If an ARQ generation job is currently running, resume polling
@@ -99,6 +110,23 @@ export default function EditorPage() {
     [showToast],
   )
 
+  // Persist the latest canvas viewport to the server (S2-FE5 / US-08)
+  const handleViewportChange = useCallback(
+    async (viewport) => {
+      if (!mapId || !viewport) return
+      try {
+        await mindMapService.updateMap(mapId, {
+          view_x: viewport.x,
+          view_y: viewport.y,
+          view_zoom: viewport.zoom,
+        })
+      } catch (err) {
+        console.warn('Failed to persist viewport:', err)
+      }
+    },
+    [mapId],
+  )
+
   // Handle cancel during regeneration: preserves existing map (P0 invariant)
   const handleRegenerationCancel = useCallback(() => {
     setIsRegenerating(false)
@@ -156,9 +184,11 @@ export default function EditorPage() {
       initialTitle={mapTitle}
       initialNodes={graphNodes}
       initialEdges={rawEdges}
+      initialViewport={initialViewport}
       onTitleChange={setMapTitle}
       onBack={() => navigate('/dashboard')}
       onRegenerate={handleRegenerate}
+      onViewportChange={handleViewportChange}
       toastMessage={toastMessage}
       onClearToast={() => setToastMessage('')}
     />

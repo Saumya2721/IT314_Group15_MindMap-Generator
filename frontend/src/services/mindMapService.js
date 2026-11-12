@@ -21,6 +21,25 @@ export const mindMapService = {
   },
 
   /**
+   * Server-backed search of mind maps by title / description (S2-FE5 / US-08).
+   * Endpoint: GET /api/maps?q=<query>&limit=<limit>
+   */
+  async searchMaps(query, limit = 20) {
+    const qs = `?q=${encodeURIComponent((query || '').trim())}&limit=${limit}`
+    const res = await apiClient.get(`/api/maps${qs}`)
+    if (!res.ok) {
+      throw new Error(res.error || 'Failed to search mind maps')
+    }
+
+    const maps = res.data || []
+    return maps.map((m) => ({
+      ...m,
+      lastEdited: formatRelativeTime(m.updated_at || m.created_at),
+      bookmarked: false,
+    }))
+  },
+
+  /**
    * Fetch a single mind map by ID
    * Endpoint: GET /api/maps/{id}
    */
@@ -56,13 +75,16 @@ export const mindMapService = {
   },
 
   /**
-   * Update map title or metadata
+   * Update map title or metadata (S2-FE5 / US-08: also persists the editor viewport).
    * Endpoint: PATCH /api/maps/{id}
    */
-  async updateMap(id, { title, is_public }) {
+  async updateMap(id, { title, is_public, view_x, view_y, view_zoom }) {
     const payload = {}
     if (title !== undefined) payload.title = title.trim()
     if (is_public !== undefined) payload.is_public = is_public
+    if (view_x !== undefined) payload.view_x = view_x
+    if (view_y !== undefined) payload.view_y = view_y
+    if (view_zoom !== undefined) payload.view_zoom = view_zoom
 
     const res = await apiClient.patch(`/api/maps/${id}`, payload)
     if (!res.ok) {

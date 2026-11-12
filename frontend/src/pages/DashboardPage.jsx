@@ -1,26 +1,62 @@
-import React, { useState, useMemo, useEffect } from 'react'
+import React, { useState, useMemo, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useMindMap } from '../context/MindMapContext'
 import { useAuth } from '../context/AuthContext'
 import { AppHeader } from '../components/layout/AppHeader'
 import { AppFooter } from '../components/layout/AppFooter'
 import { MindMapCard } from '../components/dashboard/MindMapCard'
+import { DashboardSearchSkeleton } from '../components/dashboard/DashboardSearchSkeleton'
 import './DashboardPage.css'
 
+/**
+ * DashboardPage — MindWeave dashboard (Screen 2).
+ *
+ * S2-FE5 / US-08: the search input now performs a 300ms-debounced call to the
+ * server-backed ``GET /api/maps?q=`` endpoint instead of filtering locally.
+ * States handled:
+ *   - loading skeleton while search results stream in,
+ *   - empty state ("No matching mind maps" / "No mind maps found"),
+ *   - error banner when the server search fails.
+ */
 export default function DashboardPage() {
   const navigate = useNavigate()
-  const { maps, loading, error, fetchMaps, deleteMap, toggleBookmark } = useMindMap()
+  const {
+    maps,
+    loading,
+    error,
+    fetchMaps,
+    deleteMap,
+    toggleBookmark,
+    searchResults,
+    searchLoading,
+    searchError,
+    searchMindMaps,
+  } = useMindMap()
   const { user } = useAuth()
 
-  // Search filter and sorting states
+  const debounceRef = useRef(null)
   const [searchQuery, setSearchQuery] = useState('')
-  const [sortBy, setSortBy] = useState('recent') // 'recent' | 'title' | 'nodes'
-  const [actionError, setActionError] = useState('')
+  const [debouncedQuery, setDebouncedQuery] = useState('')
 
   // Always refresh user's live maps on mounting the dashboard
   useEffect(() => {
     fetchMaps()
   }, [fetchMaps])
+
+  // 300ms debounce for server-backed search
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => setDebouncedQuery(searchQuery), 300)
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current)
+    }
+  }, [searchQuery])
+
+  // Server-backed search on debounced query change. An empty query clears
+  // searchResults (via searchMindMaps) so the dashboard returns to the full list.
+  useEffect(() => {
+    void searchMindMaps(debouncedQuery)
+  }, [debouncedQuery, searchMindMaps])
 
   // Auto-refresh maps periodically if any map is currently generating in background
   useEffect(() => {
@@ -36,27 +72,37 @@ export default function DashboardPage() {
     return () => clearInterval(interval)
   }, [maps, fetchMaps])
 
-  // Filter and sort maps (excluding orphaned empty drafts that are not actively generating)
-  const filteredAndSortedMaps = useMemo(() => {
-    let result = maps.filter((m) => {
+  const [sortBy, setSortBy] = useState('recent') // 'recent' | 'title' | 'nodes'
+  const [actionError, setActionError] = useState('')
+
+  // Determine which list to render: server search results or full maps list
+  const isSearching = searchResults !== null && debouncedQuery.trim()
+
+  // Filter out orphaned empty drafts (that are not actively generating)
+  const sourceMaps = useMemo(() => {
+    const baseMaps = isSearching ? searchResults || [] : maps
+    return baseMaps.filter((m) => {
       const isGenerating = m.latest_job_status === 'running' || m.latest_job_status === 'pending'
       const hasNodes = (Number(m.node_count) || 0) > 0
       return hasNodes || isGenerating
     })
+  }, [maps, searchResults, isSearching])
 
-    // Filter by search query
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase().trim()
-      result = result.filter((m) => m.title && m.title.toLowerCase().includes(q))
-    }
+  // Sort maps
+  const filteredAndSortedMaps = useMemo(() => {
+    const result = [...sourceMaps]
 
-    // Sort maps
     if (sortBy === 'title') {
       result.sort((a, b) => (a.title || '').localeCompare(b.title || ''))
     }
+    // 'recent' keeps server order (already sorted by updated_at DESC)
 
     return result
-  }, [maps, searchQuery, sortBy])
+  }, [sourceMaps, sortBy])
+
+  const isSearchLoading = debouncedQuery.trim() ? searchLoading : false
+
+  const bannerError = (debouncedQuery.trim() ? searchError : null) || actionError || error
 
   // Navigate to editor for completed map OR to generating page for active synthesis
   const handleCardClick = (id, map) => {
@@ -102,7 +148,7 @@ export default function DashboardPage() {
       {/* Main Workspace Body */}
       <main className="dashboard-main">
         {/* Error notification banner */}
-        {(error || actionError) && (
+        {bannerError && (
           <div
             style={{
               padding: '12px 16px',
@@ -118,7 +164,7 @@ export default function DashboardPage() {
             <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>
               error
             </span>
-            <span>{actionError || error}</span>
+            <span>{bannerError}</span>
           </div>
         )}
 
@@ -151,6 +197,14 @@ export default function DashboardPage() {
                     close
                   </span>
                 </button>
+              )}
+              {isSearchLoading && (
+                <span
+                  className="material-symbols-outlined step-spin-icon"
+                  style={{ fontSize: '18px', color: 'var(--primary)' }}
+                >
+                  sync
+                </span>
               )}
             </div>
 
@@ -208,35 +262,14 @@ export default function DashboardPage() {
               />
             ))}
           </section>
-        ) : !loading ? (
-          /* Empty State */
-          <div className="dashboard-empty-state">
-            <span className="material-symbols-outlined empty-state-icon">
-              {searchQuery ? 'search_off' : 'account_tree'}
-            </span>
-            <h3 className="empty-state-title">
-              {searchQuery ? 'No matching mind maps' : 'No mind maps found'}
-            </h3>
-            <p className="empty-state-text">
-              {searchQuery
-                ? `We couldn't find any thought records matching "${searchQuery}". Try a different keyword or reset the search.`
-                : 'Start charting your ideas into structured visual knowledge.'}
-            </p>
-            {searchQuery ? (
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => setSearchQuery('')}
-              >
-                Clear search filter
-              </button>
-            ) : (
-              <button type="button" className="btn btn-primary" onClick={handleCreateNewMap}>
-                Create your first mind map
-              </button>
-            )}
-          </div>
-        ) : null}
+        ) : (
+          <DashboardSearchSkeleton
+            showingSkeleton={isSearchLoading && filteredAndSortedMaps.length === 0}
+            searchQuery={debouncedQuery}
+            maps={filteredAndSortedMaps}
+            onCreateNewMap={handleCreateNewMap}
+          />
+        )}
       </main>
 
       {/* Shared Footer */}

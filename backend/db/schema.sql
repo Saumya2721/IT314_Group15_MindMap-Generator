@@ -131,10 +131,19 @@ CREATE TABLE public.mind_maps (
     is_public   BOOLEAN NOT NULL DEFAULT FALSE,
     version     INTEGER NOT NULL DEFAULT 1,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- Persisted editor viewport (zoom + pan), S2-FE5 / US-08
+    view_x      DOUBLE PRECISION DEFAULT 0,
+    view_y      DOUBLE PRECISION DEFAULT 0,
+    view_zoom   DOUBLE PRECISION DEFAULT 1
 );
 
 CREATE INDEX idx_mind_maps_user_id_created ON public.mind_maps (user_id, created_at DESC);
+
+-- Trigram indexes for case-insensitive dashboard search (S2-FE5 / US-08)
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE INDEX idx_mind_maps_title_trgm ON public.mind_maps USING gin (title gin_trgm_ops);
+CREATE INDEX idx_mind_maps_description_trgm ON public.mind_maps USING gin (COALESCE(description, '') gin_trgm_ops);
 
 CREATE TRIGGER trg_mind_maps_updated_at
     BEFORE UPDATE ON public.mind_maps

@@ -17,6 +17,7 @@ import { BranchNode } from './nodes/BranchNode'
 import { ConceptNode } from './nodes/ConceptNode'
 import { adaptBackendGraphToFlow } from '../../utils/graphAdapter'
 import { validateConnection } from '../../utils/connectionGuards'
+import { useCanvasViewport } from './useCanvasViewport'
 import './MindMapCanvas.css'
 
 const nodeTypes = {
@@ -60,6 +61,7 @@ function FlowCanvas({
   onClearToast,
   onToast,
   flowApiRef,
+  onCaptureViewport,
   selectedNode = null,
   editingNodeId = null,
   onNodeSelect,
@@ -99,6 +101,15 @@ function FlowCanvas({
   useEffect(() => {
     setEdges(flowEdges)
   }, [flowEdges, setEdges])
+
+  // Capture the current viewport after the graph is (re)rendered so the
+  // parent can persist it (S2-FE5 / US-08).
+  useEffect(() => {
+    if (onCaptureViewport) {
+      const id = requestAnimationFrame(() => onCaptureViewport())
+      return () => cancelAnimationFrame(id)
+    }
+  }, [flowNodes, flowEdges, onCaptureViewport])
 
   // Handle node selection
   const handleNodeClick = useCallback(
@@ -323,6 +334,14 @@ function FlowCanvas({
 }
 
 export function MindMapCanvas(props) {
+  const { initialViewport = null, onViewportChange = null, flowApiRef = null } = props
+
+  const { capture } = useCanvasViewport({
+    initialViewport,
+    flowApiRef,
+    onViewportChange,
+  })
+
   return (
     <ReactFlowProvider>
       <FlowCanvas
@@ -330,8 +349,9 @@ export function MindMapCanvas(props) {
         rawEdges={props.rawEdges || []}
         toastMessage={props.toastMessage}
         onClearToast={props.onClearToast}
+        flowApiRef={flowApiRef}
+        onCaptureViewport={capture}
         onToast={props.onToast}
-        flowApiRef={props.flowApiRef}
         selectedNode={props.selectedNode}
         editingNodeId={props.editingNodeId}
         onNodeSelect={props.onNodeSelect}
