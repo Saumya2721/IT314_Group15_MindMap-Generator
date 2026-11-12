@@ -5,12 +5,83 @@ import { NodeInspector } from './NodeInspector'
 import { VersionHistoryPanel } from '../history/VersionHistoryPanel'
 import { ExportModal } from './ExportModal'
 import { exportMindMap } from '../../services/exportService'
+import { mindMapService } from '../../services/mindMapService'
+import { getDescendantNodeIds, validateConnection } from '../../utils/connectionGuards'
 import { useCanvasState } from './useCanvasState'
 import { useCommentsChat } from './useCommentsChat'
 import { useExportHistory } from './useExportHistory'
 import { useMindMap } from '../../context/MindMapContext'
 import { useSaveStatus } from './useSaveStatus'
 import '../../pages/GeneratingPage.css'
+
+/**
+ * Helper to determine if an event target is an active editable input.
+ */
+export function isEditableElement(target) {
+  if (!target) return false
+  const tagName = target?.tagName ? target.tagName.toUpperCase() : ''
+  if (['INPUT', 'TEXTAREA', 'SELECT'].includes(tagName)) return true
+  if (target?.isContentEditable || target?.getAttribute?.('contenteditable') === 'true') return true
+  return false
+}
+
+/**
+ * Handles global canvas keyboard shortcuts for Undo (Ctrl+Z) and Redo (Ctrl+Y, Ctrl+Shift+Z).
+ * Returns true if the shortcut was handled, false otherwise.
+ */
+export function handleCanvasKeyboardShortcut({
+  event,
+  canUndo = false,
+  canRedo = false,
+  onUndo,
+  onRedo,
+  isModalActive = false,
+}) {
+  if (!event) return false
+
+  // 1. Do not trigger while user is typing in input, textarea, or contentEditable element
+  if (isEditableElement(event.target)) return false
+
+  // 2. Do not trigger if any modal is active
+  if (isModalActive) return false
+
+  // 3. Must be Ctrl (or Cmd on macOS) without Alt
+  const isCtrlOrMeta = Boolean(event.ctrlKey || event.metaKey)
+  if (!isCtrlOrMeta || event.altKey) return false
+
+  const key = event.key
+
+  if (key === 'z' || key === 'Z') {
+    event.preventDefault?.()
+    if (event.shiftKey) {
+      if (canRedo && onRedo) onRedo()
+    } else {
+      if (canUndo && onUndo) onUndo()
+    }
+    return true
+  }
+
+  if (key === 'y' || key === 'Y') {
+    event.preventDefault?.()
+    if (canRedo && onRedo) onRedo()
+    return true
+  }
+
+  return false
+}
+
+/**
+ * EditorWorkspace
+ *
+ * Dedicated workspace encapsulating the React Flow canvas, top bar,
+ * inspectors, outline view, and modal dialogs. Extracted from GeneratingPage.jsx
+ * as part of Issue #104.
+ *
+ * Uses isolated state hooks for:
+ * - FE-1: Canvas and undo/redo (useCanvasState)
+ * - FE-2: Comments and chat (useCommentsChat)
+ * - FE-3: Export and history (useExportHistory)
+ */
 export function EditorWorkspace({
   mapId,
   initialTitle = 'Mind Map',
@@ -47,6 +118,11 @@ export function EditorWorkspace({
   const [exportProgress, setExportProgress] = useState(0)
   const [exportError, setExportError] = useState('')
   const flowApiRef = useRef(null)
+
+  // Branch Deletion Confirmation State
+  const [deleteConfirmNode, setDeleteConfirmNode] = useState(null)
+  const hasUserEditedRef = useRef(false)
+  const saveTimerRef = useRef(null)
 
   // FE-1: Canvas & Undo/Redo State
   const defaultCanvas = useCanvasState({
@@ -97,8 +173,43 @@ export function EditorWorkspace({
   useEffect(() => {
     if (initialNodes && initialNodes.length > 0) {
       setGraphData({ nodes: initialNodes, edges: initialEdges || [] })
+      hasUserEditedRef.current = false
     }
   }, [initialNodes, initialEdges, setGraphData])
+
+  // Clear debounce timer on unmount
+  useEffect(() => {
+    return () => {
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current)
+      }
+    }
+  }, [])
+
+  // Debounced persistence of graph mutations to backend
+  useEffect(() => {
+    if (!hasUserEditedRef.current || !mapId) return
+
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current)
+    }
+
+    setIsSaving(true)
+    saveTimerRef.current = setTimeout(async () => {
+      try {
+        await mindMapService.updateMapGraph(mapId, {
+          nodes: canvas.nodes,
+          edges: canvas.edges,
+        })
+      } catch (err) {
+        // Backend PATCH /maps/{id}/graph may not be implemented yet (404/501).
+        // Maintain local state so the user never loses their changes.
+        console.warn('Backend graph persistence unavailable or failed:', err?.message || err)
+      } finally {
+        setIsSaving(false)
+      }
+    }, 750)
+  }, [canvas.nodes, canvas.edges, mapId])
 
   // Sync initialTitle
   useEffect(() => {
@@ -211,6 +322,148 @@ export function EditorWorkspace({
     }
   }
 
+  // Node position drag handler
+  const handleNodePositionChange = (id, x, y) => {
+    hasUserEditedRef.current = true
+    canvas.updateNodePosition(id, x, y)
+  }
+
+  // Connection handler with validation & toast warning feedback
+  const handleConnect = (connection) => {
+    const validation = validateConnection(canvas.nodes, canvas.edges, connection)
+    if (!validation.valid) {
+      displayToast(validation.reason)
+      return
+    }
+    hasUserEditedRef.current = true
+    canvas.addEdge(connection)
+    displayToast('Concepts connected.')
+  }
+
+  // Edge reconnection handler with validation & toast feedback
+  const handleReconnect = (oldEdge, newConnection) => {
+    const filteredEdges = canvas.edges.filter((e) => String(e.id) !== String(oldEdge.id || oldEdge))
+    const validation = validateConnection(canvas.nodes, filteredEdges, newConnection)
+    if (!validation.valid) {
+      displayToast(validation.reason)
+      return
+    }
+    hasUserEditedRef.current = true
+    canvas.reconnectEdge(oldEdge, newConnection)
+    displayToast('Connection updated.')
+  }
+
+  // Inline editing handlers
+  const handleStartEditing = (nodeId) => {
+    canvas.startEditing(nodeId)
+  }
+
+  const handleSaveLabel = (id, label) => {
+    hasUserEditedRef.current = true
+    canvas.updateNodeLabel(id, label)
+  }
+
+  const handleCancelEditing = () => {
+    canvas.stopEditing()
+  }
+
+  const handleUpdateDescription = (id, desc) => {
+    hasUserEditedRef.current = true
+    canvas.updateNode(id, { description: desc })
+  }
+
+  // Node deletion with branch confirmation check
+  const handleDeleteNode = (nodeId) => {
+    const targetNode = canvas.nodes.find((n) => String(n.id) === String(nodeId))
+    if (!targetNode) return
+
+    if (targetNode.node_type === 'root') {
+      displayToast('The central root concept cannot be deleted.')
+      return
+    }
+
+    const descendantIds = getDescendantNodeIds(canvas.edges, nodeId)
+    if (descendantIds.length > 0) {
+      setDeleteConfirmNode({
+        id: nodeId,
+        label: targetNode.label || 'Concept',
+        descendantCount: descendantIds.length,
+      })
+    } else {
+      hasUserEditedRef.current = true
+      canvas.deleteNode(nodeId)
+      displayToast(`Concept "${targetNode.label || 'Concept'}" deleted.`)
+    }
+  }
+
+  // Confirm branch deletion
+  const handleConfirmDeleteBranch = () => {
+    if (!deleteConfirmNode) return
+    hasUserEditedRef.current = true
+    canvas.deleteBranch(deleteConfirmNode.id)
+    displayToast(`Branch "${deleteConfirmNode.label}" and sub-concepts deleted.`)
+    setDeleteConfirmNode(null)
+  }
+
+  // Add child concept
+  const handleAddChild = (parentId) => {
+    hasUserEditedRef.current = true
+    canvas.addChildNode(parentId)
+  }
+
+  // Add sibling concept
+  const handleAddSibling = (refId) => {
+    const refNode = canvas.nodes.find((n) => String(n.id) === String(refId))
+    if (refNode?.node_type === 'root') {
+      displayToast('The central root concept cannot have siblings. Add a child concept instead.')
+      return
+    }
+    hasUserEditedRef.current = true
+    canvas.addSiblingNode(refId)
+  }
+
+  const handleUndo = useCallback(() => {
+    if (!canvas.canUndo) return
+    hasUserEditedRef.current = true
+    canvas.undo()
+  }, [canvas])
+
+  const handleRedo = useCallback(() => {
+    if (!canvas.canRedo) return
+    hasUserEditedRef.current = true
+    canvas.redo()
+  }, [canvas])
+
+  // Global Keyboard Shortcuts for Canvas: Ctrl+Z (Undo) and Ctrl+Y / Ctrl+Shift+Z (Redo)
+  useEffect(() => {
+    const handleGlobalKeyDown = (e) => {
+      handleCanvasKeyboardShortcut({
+        event: e,
+        canUndo: canvas.canUndo,
+        canRedo: canvas.canRedo,
+        onUndo: handleUndo,
+        onRedo: handleRedo,
+        isModalActive: Boolean(
+          showRegenModal || showExportModal || exportHistory.isExportModalOpen || deleteConfirmNode,
+        ),
+      })
+    }
+
+    window.addEventListener('keydown', handleGlobalKeyDown)
+    return () => {
+      window.removeEventListener('keydown', handleGlobalKeyDown)
+    }
+  }, [
+    handleUndo,
+    handleRedo,
+    canvas.canUndo,
+    canvas.canRedo,
+    showRegenModal,
+    showExportModal,
+    exportHistory.isExportModalOpen,
+    deleteConfirmNode,
+  ])
+
   const activeToast = toastMessage || localToast
 
   return (
@@ -228,9 +481,10 @@ export function EditorWorkspace({
         onToggleChat={commentsChat.toggleChat}
         canUndo={canvas.canUndo}
         canRedo={canvas.canRedo}
-        onUndo={canvas.undo}
-        onRedo={canvas.redo}
+        onUndo={handleUndo}
+        onRedo={handleRedo}
         onAddNode={() => {
+          hasUserEditedRef.current = true
           const newNode = {
             id: `node-${Date.now()}`,
             label: 'New Concept',
@@ -308,15 +562,37 @@ export function EditorWorkspace({
           rawEdges={canvas.edges}
           toastMessage={activeToast}
           onClearToast={onClearToast || (() => setLocalToast(''))}
+          onToast={displayToast}
           flowApiRef={flowApiRef}
           initialViewport={initialViewport}
           onViewportChange={handleViewportChange}
+          selectedNode={canvas.selectedNode}
+          editingNodeId={canvas.editingNodeId}
+          onNodeSelect={canvas.selectNode}
+          onPaneClick={canvas.clearSelectedNode}
+          onNodePositionChange={handleNodePositionChange}
+          onConnect={handleConnect}
+          onReconnect={handleReconnect}
+          onStartEditing={handleStartEditing}
+          onSaveLabel={handleSaveLabel}
+          onCancelEditing={handleCancelEditing}
+          onDeleteNode={handleDeleteNode}
+          onAddChild={handleAddChild}
+          onAddSibling={handleAddSibling}
         />
       )}
 
       {/* Node Inspector Flyout */}
       {canvas.selectedNode && (
-        <NodeInspector selectedNode={canvas.selectedNode} onClose={canvas.clearSelectedNode} />
+        <NodeInspector
+          selectedNode={canvas.selectedNode}
+          onClose={canvas.clearSelectedNode}
+          onUpdateLabel={handleSaveLabel}
+          onUpdateDescription={handleUpdateDescription}
+          onAddChild={handleAddChild}
+          onAddSibling={handleAddSibling}
+          onDeleteNode={handleDeleteNode}
+        />
       )}
 
       {/* Version History Panel (FE-3) */}
@@ -442,6 +718,95 @@ export function EditorWorkspace({
           progress={exportProgress}
           errorMessage={exportError}
         />
+      )}
+
+      {/* Branch Deletion Confirmation Modal */}
+      {deleteConfirmNode && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(24, 29, 26, 0.45)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+          }}
+          onClick={() => setDeleteConfirmNode(null)}
+        >
+          <div
+            style={{
+              backgroundColor: 'var(--card-surface, #ffffff)',
+              border: '1px solid var(--structural-border, #e1e3e0)',
+              borderRadius: '8px',
+              padding: '24px',
+              maxWidth: '440px',
+              width: '90%',
+              boxShadow: '0 8px 30px rgba(0, 0, 0, 0.12)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+              <span
+                className="material-symbols-outlined"
+                style={{ color: '#ba1a1a', fontSize: '24px' }}
+              >
+                warning
+              </span>
+              <h3
+                style={{
+                  margin: 0,
+                  fontFamily: 'var(--font-headline)',
+                  fontSize: '18px',
+                  color: 'var(--on-surface, #181d1a)',
+                }}
+              >
+                Delete Branch?
+              </h3>
+            </div>
+            <p
+              style={{
+                margin: '0 0 16px',
+                color: 'var(--ink-secondary, #404947)',
+                fontSize: '13px',
+                lineHeight: 1.5,
+              }}
+            >
+              Concept <strong>"{deleteConfirmNode.label}"</strong> has{' '}
+              <strong>{deleteConfirmNode.descendantCount}</strong> connected sub-concept
+              {deleteConfirmNode.descendantCount > 1 ? 's' : ''}. Deleting it will remove the entire
+              branch and all associated connections.
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setDeleteConfirmNode(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn-danger"
+                style={{
+                  backgroundColor: '#ba1a1a',
+                  color: '#ffffff',
+                  border: 'none',
+                  padding: '8px 16px',
+                  borderRadius: '4px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+                onClick={handleConfirmDeleteBranch}
+              >
+                Delete Branch
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

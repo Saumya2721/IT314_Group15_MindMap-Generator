@@ -186,6 +186,21 @@ export const mindMapService = {
   },
 
   /**
+   * Persist updated graph (nodes & edges) to backend
+   * Endpoint: PATCH /api/maps/{map_id}/graph
+   */
+  async updateMapGraph(mapId, { nodes, edges }) {
+    const res = await apiClient.patch(`/api/maps/${mapId}/graph`, {
+      nodes,
+      edges,
+    })
+    if (!res.ok) {
+      throw new Error(res.error || 'Failed to update mind map graph')
+    }
+    return res.data
+  },
+
+  /**
    * Full map regeneration from natural language instruction
    * Endpoint: POST /api/maps/{map_id}/regenerate
    */

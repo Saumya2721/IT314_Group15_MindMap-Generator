@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal, TypedDict
+from typing import Any, Literal, TypedDict
 from uuid import UUID
 
 from contracts.models import EdgeDraft, NodeDraft
@@ -36,6 +36,8 @@ class GenerationState(TypedDict, total=False):
     prompt_items_log: list[dict]
     draft_payload: dict | None  # raw LLM JSON output, pre-validation
     validation_errors: list[str]
+    quality_warnings: list[str]
+    best_valid_draft: Any
     retry_count: int
     _max_retries: int
     nodes: list[NodeDraft]
