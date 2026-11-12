@@ -1,1 +1,7 @@
-"""Feature module package."""
+"""Services package marker."""
+
+__all__ = []
+
+
+# Intentionally left blank.
+
