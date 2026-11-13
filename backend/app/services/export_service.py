@@ -14,6 +14,7 @@ import logging
 from typing import Any
 
 import httpx
+
 from core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -205,7 +206,7 @@ class ExportConversionAdapter:
                     resp = await client.post(self.converter_url, json=payload)
                     if resp.status_code == 200:
                         return resp.content
-                    elif resp.status_code in (502, 503, 504):
+                    if resp.status_code in (502, 503, 504):
                         last_error = ExportConversionError(
                             f"Converter upstream error {resp.status_code}: {resp.text[:200]}"
                         )
