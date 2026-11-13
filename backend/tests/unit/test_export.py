@@ -85,13 +85,11 @@ def test_build_full_graph_svg_empty_nodes():
 
 def test_build_full_graph_svg_bounding_box_covers_all_nodes():
     nodes, edges = _sample_nodes_and_edges()
-    # min_x=100, min_y=150, max_x=500+180=680, max_y=300+70=370
-    # with padding=80: box_x=20, box_y=70, box_w=(680-100)+160=740, box_h=(370-150)+160=380
     svg = build_full_graph_svg(nodes, edges, scale=2.0)
 
     assert 'viewBox="20.0 70.0 740.0 380.0"' in svg
     assert 'width="1480.0"' in svg  # 740 * 2.0
-    assert 'height="760.0"' in svg   # 380 * 2.0
+    assert 'height="760.0"' in svg  # 380 * 2.0
     assert "Frontend Client" in svg
     assert "Backend API" in svg
     assert "HTTPS REST" in svg
