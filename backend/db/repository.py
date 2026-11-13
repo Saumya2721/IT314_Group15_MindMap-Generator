@@ -633,9 +633,9 @@ async def create_map_snapshot(
     conn: asyncpg.Connection,
     *,
     map_id: UUID,
-    trigger_source: str,
-    trigger_job_id: UUID | None,
-    snapshot_data: dict,
+    trigger_source: str = "manual",
+    trigger_job_id: UUID | None = None,
+    snapshot_data: dict | None = None,
     label: str | None = None,
     reason: str | None = None,
     created_by: UUID | None = None,
@@ -644,6 +644,8 @@ async def create_map_snapshot(
     """Insert a new snapshot row for a map, returning the inserted row."""
     version = await next_snapshot_version(conn, map_id)
     snapshot_label = label or reason
+    if snapshot_data is None:
+        snapshot_data = await get_map_graph(conn, map_id)
     row = await conn.fetchrow(
         """
         INSERT INTO public.map_snapshots
