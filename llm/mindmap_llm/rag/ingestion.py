@@ -20,17 +20,25 @@ class TextChunk(str):
 
     breadcrumb: str | None
     section_path: str | None
+    heading_level: int | None
+    page_number: int | None
+    char_length: int
 
     def __new__(
         cls,
         content: str,
         breadcrumb: str | None = None,
         section_path: str | None = None,
+        heading_level: int | None = None,
+        page_number: int | None = None,
     ) -> TextChunk:
         obj = super().__new__(cls, content)
         path = breadcrumb if breadcrumb is not None else section_path
         obj.breadcrumb = path
         obj.section_path = path
+        obj.heading_level = heading_level
+        obj.page_number = page_number
+        obj.char_length = len(content)
         return obj
 
 
@@ -39,6 +47,8 @@ def _split_into_boundary_chunks(
     breadcrumb: str | None,
     chunk_size: int,
     overlap: int,
+    heading_level: int | None = None,
+    page_number: int | None = None,
 ) -> list[TextChunk]:
     """Split text while preserving sentence and word boundaries (no cut words)."""
     text = text.strip()
@@ -46,7 +56,7 @@ def _split_into_boundary_chunks(
         return []
 
     if len(text) <= chunk_size:
-        return [TextChunk(text, breadcrumb=breadcrumb)]
+        return [TextChunk(text, breadcrumb=breadcrumb, heading_level=heading_level, page_number=page_number)]
 
     chunks: list[TextChunk] = []
     start = 0
@@ -58,7 +68,7 @@ def _split_into_boundary_chunks(
         if total_len - start <= chunk_size:
             final_slice = text[start:].strip()
             if final_slice and total_len > last_end:
-                chunks.append(TextChunk(final_slice, breadcrumb=breadcrumb))
+                chunks.append(TextChunk(final_slice, breadcrumb=breadcrumb, heading_level=heading_level, page_number=page_number))
             break
 
         target_end = min(start + chunk_size, total_len)
@@ -93,7 +103,7 @@ def _split_into_boundary_chunks(
         chunk_end = start + split_pos
         chunk_content = text[start:chunk_end].strip()
         if chunk_content and chunk_end > last_end:
-            chunks.append(TextChunk(chunk_content, breadcrumb=breadcrumb))
+            chunks.append(TextChunk(chunk_content, breadcrumb=breadcrumb, heading_level=heading_level, page_number=page_number))
             last_end = chunk_end
 
         if chunk_end >= total_len:
@@ -131,9 +141,11 @@ def chunk_text(
     lines = text.split("\n")
     heading_pattern = re.compile(r"^(#{1,6})\s+(.+)$")
 
-    sections: list[tuple[str | None, str]] = []
+    sections: list[tuple[str | None, int | None, int | None, str]] = []
     heading_stack: list[tuple[int, str]] = []
     current_lines: list[str] = []
+    current_page: int | None = None
+    page_pattern = re.compile(r"^--- Page (\d+) ---$")
 
     def current_breadcrumb() -> str | None:
         if not heading_stack:
@@ -141,13 +153,22 @@ def chunk_text(
         return " > ".join(title for _, title in heading_stack)
 
     for line in lines:
+        page_match = page_pattern.match(line.strip())
+        if page_match:
+            if current_lines:
+                content = "\n".join(current_lines).strip()
+                if content:
+                    sections.append((current_breadcrumb(), heading_stack[-1][0] if heading_stack else None, current_page, content))
+                current_lines = []
+            current_page = int(page_match.group(1))
+            continue
         match = heading_pattern.match(line.strip())
         if match:
             # New heading found: save accumulated content for previous section
             if current_lines:
                 content = "\n".join(current_lines).strip()
                 if content:
-                    sections.append((current_breadcrumb(), content))
+                    sections.append((current_breadcrumb(), heading_stack[-1][0] if heading_stack else None, current_page, content))
                 current_lines = []
 
             hashes, title = match.groups()
@@ -165,24 +186,41 @@ def chunk_text(
     if current_lines:
         content = "\n".join(current_lines).strip()
         if content:
-            sections.append((current_breadcrumb(), content))
+            sections.append((current_breadcrumb(), heading_stack[-1][0] if heading_stack else None, current_page, content))
 
     # If document had headings but no trailing body text
     if not sections and heading_stack:
         title = heading_stack[-1][1]
-        return [TextChunk(title, breadcrumb=current_breadcrumb())]
+        return [TextChunk(title, breadcrumb=current_breadcrumb(), heading_level=heading_stack[-1][0])]
 
     all_chunks: list[TextChunk] = []
-    for breadcrumb, sec_text in sections:
+    for breadcrumb, heading_level, page_number, sec_text in sections:
         sec_chunks = _split_into_boundary_chunks(
             sec_text,
             breadcrumb=breadcrumb,
             chunk_size=chunk_size,
             overlap=overlap,
+            heading_level=heading_level,
+            page_number=page_number,
         )
         all_chunks.extend(sec_chunks)
 
     return all_chunks
+
+
+class StructureAwareChunker:
+    """Reusable entry point for Markdown-aware chunking used by both ingestion paths."""
+
+    def __init__(
+        self,
+        chunk_size: int = DEFAULT_CHUNK_SIZE_CHARS,
+        overlap: int = DEFAULT_CHUNK_OVERLAP_CHARS,
+    ) -> None:
+        self.chunk_size = chunk_size
+        self.overlap = overlap
+
+    def chunk(self, text: str) -> list[TextChunk]:
+        return chunk_text(text, chunk_size=self.chunk_size, overlap=self.overlap)
 
 
 async def ingest_seed_text(
@@ -195,7 +233,7 @@ async def ingest_seed_text(
 ) -> int:
     """Chunks + embeds the normalized seed text and upserts it into
     Pinecone under the map's namespace, source=uploaded_seed."""
-    chunks = chunk_text(seed_text)
+    chunks = StructureAwareChunker().chunk(seed_text)
     if not chunks:
         return 0
     vectors = await embedding_provider.embed([str(c) for c in chunks])
@@ -206,9 +244,13 @@ async def ingest_seed_text(
             embedding_model=embedding_provider.model_name,
             source=ChunkSource.UPLOADED_SEED,
             generation_job_id=generation_job_id,
-            section_path=getattr(chunk, "section_path", None),
+            section_path=chunk.section_path,
+            heading_level=chunk.heading_level,
+            page_number=chunk.page_number,
+            char_length=chunk.char_length,
+            chunk_index=index,
         )
-        for chunk, vector in zip(chunks, vectors)
+        for index, (chunk, vector) in enumerate(zip(chunks, vectors))
     ]
     return await vector_store.upsert_chunks(namespace=namespace, chunks=records)
 
@@ -228,7 +270,7 @@ async def ingest_tool_result(
     where source_url is always populated (mirrors the old
     chk_embeddings_source_url constraint, now enforced by convention
     rather than a DB CHECK)."""
-    chunks = chunk_text(text)
+    chunks = StructureAwareChunker().chunk(text)
     if not chunks:
         return 0
     vectors = await embedding_provider.embed([str(c) for c in chunks])
@@ -241,8 +283,12 @@ async def ingest_tool_result(
             generation_job_id=generation_job_id,
             source_title=source_title,
             source_url=source_url,
-            section_path=getattr(chunk, "section_path", None),
+            section_path=chunk.section_path,
+            heading_level=chunk.heading_level,
+            page_number=chunk.page_number,
+            char_length=chunk.char_length,
+            chunk_index=index,
         )
-        for chunk, vector in zip(chunks, vectors)
+        for index, (chunk, vector) in enumerate(zip(chunks, vectors))
     ]
     return await vector_store.upsert_chunks(namespace=namespace, chunks=records)
