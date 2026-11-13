@@ -542,6 +542,63 @@ async def replace_map_graph(
     await conn.execute("DELETE FROM public.nodes WHERE map_id = $1", map_id)
     await persist_generated_graph(conn, map_id=map_id, source_job_id=source_job_id, nodes=nodes, edges=edges)
 
+ async def replace_node_branch(
+    conn: asyncpg.Connection,
+    *,
+    map_id: UUID,
+    target_node_id: UUID,
+    source_job_id: UUID | None = None,
+    nodes: list[NodeRecord] | None = None,
+    edges: list[EdgeRecord] | None = None,
+    **kwargs: Any,
+) -> None:
+    """Replace a specific branch/subtree of nodes and edges in a map."""
+    if nodes:
+        await conn.executemany(
+            """
+            INSERT INTO public.nodes
+                (id, map_id, label, description, pos_x, pos_y,
+                 background_color, text_color, node_type, source_job_id, node_data)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            ON CONFLICT (id) DO UPDATE SET
+                label = EXCLUDED.label,
+                description = EXCLUDED.description,
+                pos_x = EXCLUDED.pos_x,
+                pos_y = EXCLUDED.pos_y,
+                background_color = EXCLUDED.background_color,
+                text_color = EXCLUDED.text_color,
+                node_type = EXCLUDED.node_type,
+                source_job_id = EXCLUDED.source_job_id,
+                node_data = EXCLUDED.node_data,
+                updated_at = now()
+            """,
+            [
+                (
+                    n.id,
+                    map_id,
+                    n.label,
+                    n.description,
+                    n.pos_x,
+                    n.pos_y,
+                    n.background_color,
+                    n.text_color,
+                    n.node_type,
+                    source_job_id,
+                    n.node_data,
+                )
+                for n in nodes
+            ],
+        )
+    if edges:
+        await conn.executemany(
+            """
+            INSERT INTO public.edges (id, map_id, source_node_id, target_node_id, label, edge_data)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            ON CONFLICT (source_node_id, target_node_id, label) DO NOTHING
+            """,
+            [(e.id, map_id, e.source_node_id, e.target_node_id, e.label, e.edge_data) for e in edges],
+        )
+
 
 async def get_map_graph(conn: asyncpg.Connection, map_id: UUID) -> dict:
     """Retrieve full nodes and edges graph for a map."""
@@ -583,10 +640,13 @@ async def create_map_snapshot(
     trigger_job_id: UUID | None,
     snapshot_data: dict,
     label: str | None = None,
+    reason: str | None = None,
     created_by: UUID | None = None,
+    **kwargs: Any,
 ) -> dict | None:
     """Insert a new snapshot row for a map, returning the inserted row."""
     version = await next_snapshot_version(conn, map_id)
+    snapshot_label = label or reason
     row = await conn.fetchrow(
         """
         INSERT INTO public.map_snapshots
@@ -600,7 +660,7 @@ async def create_map_snapshot(
         version,
         trigger_source,
         trigger_job_id,
-        label,
+        snapshot_label,
         asyncpg.Json(snapshot_data),
         created_by,
     )
