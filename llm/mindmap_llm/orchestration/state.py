@@ -23,6 +23,16 @@ class GenerationState(TypedDict, total=False):
     purpose: str | None
     seed_has_files: bool
 
+    # --- node regeneration inputs (S2-L7) ---
+    selected_node: NodeDraft | None
+    target_node_id: UUID | None
+    comment: str | None
+    ancestor_labels: list[str]
+    branch_nodes: list[NodeDraft]
+    branch_edges: list[EdgeDraft]
+    allowed_node_ids: set[str]
+    breadcrumb_path: str
+
     # --- working state, populated as the graph runs ---
     resolved_detail_level: DetailLevel
     mode: SeedMode

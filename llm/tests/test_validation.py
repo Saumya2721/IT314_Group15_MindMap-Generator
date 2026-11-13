@@ -1,7 +1,15 @@
 from __future__ import annotations
 
+import uuid
+
 import pytest
-from validation.schema import ValidationFailure, resolve_to_records, validate_draft
+from contracts.models import NodeDraft
+from validation.schema import (
+    ValidationFailure,
+    resolve_to_records,
+    validate_branch_draft,
+    validate_draft,
+)
 
 from tests.conftest import VALID_DRAFT_PAYLOAD
 
@@ -102,3 +110,55 @@ def test_draft_with_sources_resolves_properly():
     nodes, _ = resolve_to_records(draft)
     assert nodes[0].sources == ["seed"]
     assert nodes[1].sources == ["ctx:1", "general"]
+
+
+def test_validate_branch_draft_rejects_altered_root_id():
+    selected = NodeDraft(id=uuid.uuid4(), label="Root Node", description="Test")
+    altered_root = str(uuid.uuid4())
+    payload = {
+        "nodes": [
+            {"id": altered_root, "label": "Root Node"},
+            {"id": "n2", "label": "Child"},
+        ],
+        "edges": [{"source": altered_root, "target": "n2"}],
+    }
+    with pytest.raises(ValidationFailure) as exc:
+        validate_branch_draft(payload, selected_node=selected)
+    assert "Branch root ID cannot be modified" in str(exc.value)
+
+
+def test_validate_branch_draft_rejects_outside_ids():
+    selected = NodeDraft(id=uuid.uuid4(), label="Root Node", description="Test")
+    outside_id = str(uuid.uuid4())
+    payload = {
+        "nodes": [
+            {"id": "n1", "label": "Root Node"},
+            {"id": outside_id, "label": "Outside Node"},
+        ],
+        "edges": [{"source": "n1", "target": outside_id}],
+    }
+    with pytest.raises(ValidationFailure) as exc:
+        validate_branch_draft(
+            payload,
+            selected_node=selected,
+            allowed_node_ids={str(selected.id)},
+        )
+    assert "outside the allowed branch" in str(exc.value)
+
+
+def test_validate_branch_draft_rejects_ancestor_labels_as_nodes():
+    selected = NodeDraft(id=uuid.uuid4(), label="Root Node", description="Test")
+    payload = {
+        "nodes": [
+            {"id": "n1", "label": "Root Node"},
+            {"id": "n2", "label": "Read Only Ancestor"},
+        ],
+        "edges": [{"source": "n1", "target": "n2"}],
+    }
+    with pytest.raises(ValidationFailure) as exc:
+        validate_branch_draft(
+            payload,
+            selected_node=selected,
+            ancestor_labels=["Read Only Ancestor"],
+        )
+    assert "ancestors are read-only" in str(exc.value)
