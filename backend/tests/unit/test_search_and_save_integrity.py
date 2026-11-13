@@ -11,7 +11,6 @@ from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
-
 from maps.routes import _parse_version_token
 
 
