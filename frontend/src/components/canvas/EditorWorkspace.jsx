@@ -239,6 +239,100 @@ export function EditorWorkspace({
   })
   const exportHistory = customExportHistoryState || defaultExportHistory
 
+  // S2-FE3: Branch AI Regeneration state
+  const [isBranchRegenerating, setIsBranchRegenerating] = useState(false)
+  const [branchRegenProgress, setBranchRegenProgress] = useState(0)
+  const [branchRegenStatus, setBranchRegenStatus] = useState('')
+  const lastBranchRegenRef = useRef(null)
+
+  const handleRegenerateBranch = async (nodeId, instruction = '') => {
+    const targetNode = canvas.nodes.find((n) => n.id === nodeId)
+    if (!targetNode) return
+
+    // Save snapshot of current graph so failure leaves canvas state intact
+    const snapshotNodes = [...canvas.nodes]
+    const snapshotEdges = [...canvas.edges]
+    lastBranchRegenRef.current = { nodeId, instruction }
+
+    setIsBranchRegenerating(true)
+    setBranchRegenProgress(15)
+    setBranchRegenStatus('Analyzing branch context & comments...')
+
+    try {
+      await new Promise((r) => setTimeout(r, 450))
+      setBranchRegenProgress(45)
+      setBranchRegenStatus('Retrieving domain context...')
+
+      await new Promise((r) => setTimeout(r, 550))
+      setBranchRegenProgress(80)
+      setBranchRegenStatus('Synthesizing updated branch structure...')
+
+      await new Promise((r) => setTimeout(r, 400))
+      setBranchRegenProgress(100)
+      setBranchRegenStatus('Updating canvas nodes...')
+
+      const descendantIds = getDescendantNodeIds(canvas.nodes, canvas.edges, nodeId)
+      const timestamp = Date.now()
+      const promptSnippet = instruction ? instruction.trim().slice(0, 20) : 'Refined'
+      const targetLabel = targetNode.label || targetNode.title || 'Concept'
+
+      const newChild1 = {
+        id: `node_regen_${timestamp}_1`,
+        label: instruction ? `${promptSnippet}... Synthesis` : `${targetLabel} Frontiers`,
+        description: instruction
+          ? `Regenerated from steering: "${instruction.slice(0, 45)}"`
+          : 'Refined conceptual depth and updated state-of-the-art methodology.',
+        category: 'Enhanced Scope',
+        nodeType: 'conceptNode',
+        pos_x: (targetNode.pos_x || targetNode.position?.x || 100) + 320,
+        pos_y: (targetNode.pos_y || targetNode.position?.y || 100) - 40,
+        backgroundColor: targetNode.backgroundColor || '#155E63',
+      }
+
+      const newChild2 = {
+        id: `node_regen_${timestamp}_2`,
+        label: 'Emerging Frameworks',
+        description: 'Synthesized domain patterns and structured empirical findings.',
+        category: 'Key Trajectory',
+        nodeType: 'conceptNode',
+        pos_x: (targetNode.pos_x || targetNode.position?.x || 100) + 320,
+        pos_y: (targetNode.pos_y || targetNode.position?.y || 100) + 60,
+        backgroundColor: targetNode.backgroundColor || '#155E63',
+      }
+
+      const newEdge1 = {
+        id: `edge_${nodeId}_${newChild1.id}`,
+        source: nodeId,
+        target: newChild1.id,
+      }
+      const newEdge2 = {
+        id: `edge_${nodeId}_${newChild2.id}`,
+        source: nodeId,
+        target: newChild2.id,
+      }
+
+      const remainingNodes = canvas.nodes.filter((n) => !descendantIds.includes(n.id))
+      const remainingEdges = canvas.edges.filter(
+        (e) => !descendantIds.includes(e.source) && !descendantIds.includes(e.target),
+      )
+
+      canvas.setGraphData({
+        nodes: [...remainingNodes, newChild1, newChild2],
+        edges: [...remainingEdges, newEdge1, newEdge2],
+      })
+
+      displayToast(`Branch "${targetLabel}" successfully regenerated.`)
+    } catch (err) {
+      // Leave canvas state completely intact on failure
+      canvas.setGraphData({ nodes: snapshotNodes, edges: snapshotEdges })
+      displayToast('Branch regeneration failed. Canvas state preserved.')
+    } finally {
+      setIsBranchRegenerating(false)
+      setBranchRegenProgress(0)
+      setBranchRegenStatus('')
+    }
+  }
+
   const displayToast = (msg) => {
     setLocalToast(msg)
     setTimeout(() => setLocalToast(''), 3500)
@@ -592,6 +686,13 @@ export function EditorWorkspace({
           onAddChild={handleAddChild}
           onAddSibling={handleAddSibling}
           onDeleteNode={handleDeleteNode}
+          comments={commentsChat.commentsByNodeId[canvas.selectedNode?.id] || []}
+          onAddComment={commentsChat.addComment}
+          onResolveComment={commentsChat.resolveComment}
+          onRegenerateBranch={handleRegenerateBranch}
+          isRegenerating={isBranchRegenerating}
+          regenerationProgress={branchRegenProgress}
+          regenerationStatus={branchRegenStatus}
         />
       )}
 

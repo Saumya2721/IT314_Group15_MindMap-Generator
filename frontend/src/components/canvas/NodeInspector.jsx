@@ -9,9 +9,19 @@ export function NodeInspector({
   onAddChild,
   onAddSibling,
   onDeleteNode,
+  comments = [],
+  onAddComment,
+  onResolveComment,
+  onRegenerateBranch,
+  isRegenerating = false,
+  regenerationProgress = 0,
+  regenerationStatus = '',
 }) {
   const [labelDraft, setLabelDraft] = useState('')
   const [descDraft, setDescDraft] = useState('')
+  const [instruction, setInstruction] = useState('')
+  const [newCommentText, setNewCommentText] = useState('')
+  const [commentFilter, setCommentFilter] = useState('all') // 'all' | 'active' | 'resolved'
 
   useEffect(() => {
     if (selectedNode) {
@@ -27,6 +37,15 @@ export function NodeInspector({
   const isRoot = nodeType === 'root' || nodeType === 'rootNode'
   const category = selectedNode.category || (isRoot ? 'Central Theme' : 'Concept')
 
+  // Filter comments
+  const filteredComments = (comments || []).filter((c) => {
+    if (commentFilter === 'active') return !c.resolved
+    if (commentFilter === 'resolved') return c.resolved
+    return true
+  })
+
+  const activeCommentsCount = (comments || []).filter((c) => !c.resolved).length
+
   const handleLabelBlur = () => {
     if (labelDraft.trim() && labelDraft.trim() !== (selectedNode.title || selectedNode.label)) {
       onUpdateLabel?.(selectedNode.id, labelDraft.trim())
@@ -39,8 +58,21 @@ export function NodeInspector({
     }
   }
 
+  const handleRegenerateClick = () => {
+    if (onRegenerateBranch && !isRegenerating) {
+      onRegenerateBranch(selectedNode.id, instruction)
+    }
+  }
+
+  const handleAddCommentSubmit = (e) => {
+    e.preventDefault()
+    if (!newCommentText.trim()) return
+    onAddComment?.(selectedNode.id, newCommentText.trim())
+    setNewCommentText('')
+  }
+
   return (
-    <div className="node-inspector-flyout">
+    <div className="node-inspector-flyout" role="complementary" aria-label="Node Inspector">
       {/* Header */}
       <div className="inspector-header">
         <div className="inspector-header-left">
@@ -213,6 +245,186 @@ export function NodeInspector({
             </button>
           )}
         </div>
+      </div>
+
+      {/* Divider */}
+      <div className="inspector-divider" />
+
+      {/* S2-FE3: Branch AI Regeneration */}
+      <div className="inspector-section branch-regen-section">
+        <div className="inspector-section-header">
+          <div className="section-title-wrap">
+            <span className="material-symbols-outlined section-icon" style={{ color: 'var(--accent-terracotta, #c96b4b)' }}>
+              neurology
+            </span>
+            <span className="inspector-field-label">Branch AI Regeneration</span>
+          </div>
+          {isRoot && <span className="badge-context-pill">Root Map</span>}
+        </div>
+
+        <p className="section-help-text">
+          Re-synthesize this branch and connected descendants using custom steering.
+        </p>
+
+        <div className="regen-input-wrap">
+          <textarea
+            className="inspector-textarea"
+            rows={2}
+            value={instruction}
+            onChange={(e) => setInstruction(e.target.value)}
+            placeholder="Steering instruction (e.g. Expand with recent breakthroughs)..."
+            disabled={isRegenerating}
+          />
+        </div>
+
+        {isRegenerating && (
+          <div className="regen-progress-container">
+            <div className="regen-progress-header">
+              <span className="regen-status-label">
+                {regenerationStatus || 'Regenerating branch...'}
+              </span>
+              <span className="regen-percent-label">{Math.round(regenerationProgress)}%</span>
+            </div>
+            <div className="regen-progress-track">
+              <div
+                className="regen-progress-fill"
+                style={{ width: `${Math.max(8, Math.min(100, regenerationProgress))}%` }}
+              />
+            </div>
+          </div>
+        )}
+
+        <button
+          type="button"
+          className={`btn-regenerate-branch ${isRegenerating ? 'loading' : ''}`}
+          onClick={handleRegenerateClick}
+          disabled={isRegenerating}
+        >
+          <span
+            className="material-symbols-outlined"
+            style={{ fontSize: '16px', animation: isRegenerating ? 'spin 1s linear infinite' : 'none' }}
+          >
+            {isRegenerating ? 'sync' : 'auto_awesome'}
+          </span>
+          <span>{isRegenerating ? 'Regenerating Branch...' : 'Regenerate Branch'}</span>
+        </button>
+      </div>
+
+      {/* Divider */}
+      <div className="inspector-divider" />
+
+      {/* S2-FE3: Node Comments Thread Panel */}
+      <div className="inspector-section comments-section">
+        <div className="inspector-section-header">
+          <div className="section-title-wrap">
+            <span className="material-symbols-outlined section-icon" style={{ color: 'var(--accent-teal, #155e63)' }}>
+              forum
+            </span>
+            <span className="inspector-field-label">Node Discussion</span>
+          </div>
+          <div className="comments-header-badges">
+            {activeCommentsCount > 0 && (
+              <span className="comments-count-badge" title="Active comments">
+                {activeCommentsCount} open
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Filter Tabs */}
+        {(comments || []).length > 0 && (
+          <div className="comments-filter-tabs">
+            <button
+              type="button"
+              className={`btn-comment-tab ${commentFilter === 'all' ? 'active' : ''}`}
+              onClick={() => setCommentFilter('all')}
+            >
+              All ({comments.length})
+            </button>
+            <button
+              type="button"
+              className={`btn-comment-tab ${commentFilter === 'active' ? 'active' : ''}`}
+              onClick={() => setCommentFilter('active')}
+            >
+              Open ({activeCommentsCount})
+            </button>
+            <button
+              type="button"
+              className={`btn-comment-tab ${commentFilter === 'resolved' ? 'active' : ''}`}
+              onClick={() => setCommentFilter('resolved')}
+            >
+              Resolved ({comments.length - activeCommentsCount})
+            </button>
+          </div>
+        )}
+
+        {/* Comment Thread List */}
+        <div className="comments-thread-list">
+          {filteredComments.length === 0 ? (
+            <div className="comments-empty-state">
+              <span className="material-symbols-outlined" style={{ fontSize: '20px', color: 'var(--outline-variant, #bfc8c9)' }}>
+                chat_bubble_outline
+              </span>
+              <p className="empty-state-text">
+                {commentFilter === 'resolved'
+                  ? 'No resolved comments.'
+                  : commentFilter === 'active'
+                  ? 'No open comments on this node.'
+                  : 'No comments yet. Leave a review note or branch idea.'}
+              </p>
+            </div>
+          ) : (
+            filteredComments.map((comment) => (
+              <div
+                key={comment.id}
+                className={`comment-item-card ${comment.resolved ? 'resolved' : ''}`}
+              >
+                <div className="comment-item-top">
+                  <div className="comment-author-badge">
+                    <span className="author-avatar">{comment.author ? comment.author[0] : 'U'}</span>
+                    <span className="comment-author-name">{comment.author || 'User'}</span>
+                    <span className="comment-timestamp">{comment.createdAt || 'Just now'}</span>
+                  </div>
+
+                  <button
+                    type="button"
+                    className={`btn-resolve-toggle ${comment.resolved ? 'is-resolved' : ''}`}
+                    onClick={() => onResolveComment?.(selectedNode.id, comment.id)}
+                    title={comment.resolved ? 'Reopen comment' : 'Mark as resolved'}
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>
+                      {comment.resolved ? 'check_circle' : 'radio_button_unchecked'}
+                    </span>
+                    <span>{comment.resolved ? 'Resolved' : 'Resolve'}</span>
+                  </button>
+                </div>
+
+                <p className="comment-body-text">{comment.text}</p>
+              </div>
+            ))
+          )}
+        </div>
+
+        {/* Add Comment Input Form */}
+        <form onSubmit={handleAddCommentSubmit} className="comment-add-form">
+          <input
+            type="text"
+            className="inspector-input comment-input"
+            placeholder="Add a comment or steering note..."
+            value={newCommentText}
+            onChange={(e) => setNewCommentText(e.target.value)}
+          />
+          <button
+            type="submit"
+            className="btn-submit-comment"
+            disabled={!newCommentText.trim()}
+            title="Post comment"
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: '15px' }}>
+              send
+            </span>
+          </button>
+        </form>
       </div>
 
       {/* Connections Info */}
