@@ -54,6 +54,11 @@ from maps.schemas import (
     ValidateGraphRequest,
 )
 from pydantic import BaseModel, Field
+from services.export_service import (
+    ExportConversionError,
+    build_full_graph_svg,
+    get_export_adapter,
+)
 from services.queue import enqueue_generation_job, get_redis_pool
 from services.runner import limiter
 from uploads.service import delete_map_storage_files, read_uploads, store_files
@@ -337,6 +342,69 @@ async def update_map(
         clean_val = str(val).strip('"')
         response.headers["ETag"] = f'"{clean_val}"'
     return result
+
+
+# ------------------------------------------------------------------ Map Export (S2-BE6 / US-07)
+@router.get("/maps/{map_id}/export")
+async def export_map(
+    map_id: UUID,
+    request: Request,
+    format: str = Query("png", description="Export format: 'pdf', 'png', or 'svg'"),
+    scale: float = Query(2.0, ge=1.0, le=4.0, description="Export scale multiplier"),
+    theme: str = Query("light", description="Export theme: 'light' or 'dark'"),
+    uid: UUID = Depends(current_user_id),
+):
+    """Export the entire mind map layout to PDF, PNG, or SVG (S2-BE6 / US-07)."""
+    fmt = format.lower().strip()
+    if fmt not in ("pdf", "png", "svg"):
+        raise HTTPException(
+            status_code=422,
+            detail="Invalid export format. Must be 'pdf', 'png', or 'svg'.",
+        )
+
+    thm = theme.lower().strip()
+    if thm not in ("light", "dark"):
+        raise HTTPException(
+            status_code=422,
+            detail="Invalid export theme. Must be 'light' or 'dark'.",
+        )
+
+    pool = pool_of(request)
+    is_owner = await assert_map_owner(pool, map_id, uid)
+    if not is_owner:
+        raise HTTPException(status_code=404, detail="Map not found")
+
+    limiter.check(uid)
+
+    map_row = await pool.fetchrow("SELECT title FROM public.mind_maps WHERE id = $1", map_id)
+    raw_title = (map_row["title"] if map_row and map_row["title"] else "mindmap").strip()
+    safe_title = "".join(c for c in raw_title if c.isalnum() or c in ("-", "_", " ")).strip() or "mindmap"
+
+    nodes = await list_map_nodes(pool, map_id)
+    edges = await list_map_edges(pool, map_id)
+
+    svg_content = build_full_graph_svg(nodes, edges, theme=thm, scale=scale)
+
+    if fmt == "svg":
+        media_type = "image/svg+xml"
+        data = svg_content.encode("utf-8")
+    else:
+        adapter = get_export_adapter()
+        try:
+            data = await adapter.convert(svg_content, fmt, scale=scale)
+        except ExportConversionError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Export conversion service failed: {exc}",
+            )
+        media_type = "application/pdf" if fmt == "pdf" else "image/png"
+
+    filename = f"{safe_title}.{fmt}"
+    return Response(
+        content=data,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 # ------------------------------------------------------------------ Direct Quick Generate

@@ -1,8 +1,13 @@
+from __future__ import annotations
+
 import os
 
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
 
-load_dotenv()
+    load_dotenv()
+except ImportError:
+    pass
 
 
 class AppConfig:
@@ -28,6 +33,10 @@ class AppConfig:
     COOKIE_SECURE: bool = os.getenv("COOKIE_SECURE", "false").lower() in ("true", "1")
     COOKIE_SAMESITE: str = os.getenv("COOKIE_SAMESITE", "lax")  # 'lax', 'strict', or 'none'
     COOKIE_DOMAIN: str | None = os.getenv("COOKIE_DOMAIN") or None
+
+    # Export & Conversion Settings (S2-BE6 / US-07)
+    EXPORT_CONVERTER_URL: str = os.getenv("EXPORT_CONVERTER_URL", "http://localhost:3001/convert")
+    EXPORT_TIMEOUT_SECONDS: float = float(os.getenv("EXPORT_TIMEOUT_SECONDS", "15.0"))
 
 
 settings = AppConfig()
