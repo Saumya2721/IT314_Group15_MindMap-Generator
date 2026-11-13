@@ -120,9 +120,6 @@ async def search_maps(
     return [dict(r) for r in rows]
 
 
-
-
-
 async def update_mind_map_occ(
     conn: asyncpg.Connection,
     *,
@@ -1378,5 +1375,3 @@ async def replace_node_branch(
 
     # Bump map version atomically
     await check_and_bump_map_version(conn, map_id)
-
-
