@@ -82,7 +82,7 @@ def build_full_graph_svg(
         'markerWidth="6" markerHeight="6" orient="auto-start-reverse">',
         f'    <path d="M 0 1 L 10 5 L 0 9 z" fill="{edge_stroke}" />',
         "  </marker>",
-        f'  <pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse">',
+        '  <pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse">',
         f'    <circle cx="2" cy="2" r="1" fill="{grid_dot}" />',
         "  </pattern>",
         "</defs>",
@@ -217,14 +217,10 @@ class ExportConversionAdapter:
                 last_error = ExportConversionError(f"Converter connection/timeout error: {exc}")
 
             if attempt <= self.max_retries:
-                logger.warning(
-                    "Export conversion attempt %d failed (%s), retrying...", attempt, last_error
-                )
+                logger.warning("Export conversion attempt %d failed (%s), retrying...", attempt, last_error)
                 await asyncio.sleep(0.3 * attempt)
 
-        raise ExportConversionError(
-            f"Export service unavailable after {self.max_retries + 1} attempts: {last_error}"
-        )
+        raise ExportConversionError(f"Export service unavailable after {self.max_retries + 1} attempts: {last_error}")
 
 
 _default_adapter = ExportConversionAdapter()
