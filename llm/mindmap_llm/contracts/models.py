@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 from typing import Any, Literal
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
 
@@ -27,6 +27,19 @@ class JobType(StrEnum):
     REGENERATE_FULL = "regenerate_full"
     REGENERATE_NODE = "regenerate_node"
     CHAT_TURN = "chat_turn"
+
+
+# ---------------------------------------------------------------------
+# Chat intents
+# ---------------------------------------------------------------------
+
+
+class ChatIntent(StrEnum):
+    QUESTION = "question"
+    EDIT_PROPOSAL = "edit_proposal"
+    REGEN_WHOLE = "regen_whole"
+    REGEN_NODE = "regen_node"
+    SMALL_TALK = "small_talk"
 
 
 class SeedAssetType(StrEnum):
@@ -167,17 +180,6 @@ class RegenerateNodeRequest(BaseModel):
     memory_context: dict[str, Any] | None = None
 
 
-class ChatTurnRequest(BaseModel):
-    job_id: UUID
-    map_id: UUID
-    job_type: JobType = JobType.CHAT_TURN
-    message: str
-    thread_id: UUID | None = None
-    callback_base_url: str
-    callback_token: str
-    memory_context: dict[str, Any] | None = None
-
-
 # ---------------------------------------------------------------------
 # Outbound: worker -> callback -> backend
 # ---------------------------------------------------------------------
@@ -234,6 +236,80 @@ class GenerationResult(BaseModel):
     quality_warnings: list[str] = Field(default_factory=list)
 
     error: GenerationError | None = None
+
+
+# ---------------------------------------------------------------------
+# Chat agent contracts (S2-L8, US-14)
+# ---------------------------------------------------------------------
+
+
+class MapSnapshot(BaseModel):
+    """Read-only view of the current map sent to the chat agent.
+
+    The agent NEVER modifies this — it is used only for grounding answers
+    and validating node IDs in action proposals.
+    """
+
+    map_id: UUID = Field(default_factory=uuid4)
+    nodes: list[NodeDraft] = Field(default_factory=list)
+    edges: list[EdgeDraft] = Field(default_factory=list)
+
+
+class ChatMessage(BaseModel):
+    """A single turn in the conversation history."""
+
+    role: Literal["user", "assistant"]
+    content: str
+
+
+class ChatTurnRequest(BaseModel):
+    """The payload sent to the chat agent across the queue/callback interface."""
+
+    job_id: UUID | None = None
+    map_id: UUID
+    job_type: JobType = JobType.CHAT_TURN
+    message: str
+    thread_id: UUID | None = None
+    target_node_id: UUID | None = None
+    history: list[ChatMessage] = Field(default_factory=list)
+    map_snapshot: MapSnapshot = Field(default_factory=lambda: MapSnapshot(map_id=uuid4()))
+    context_window: list[dict[str, Any]] = Field(default_factory=list)
+    rolling_summary: str | None = None
+    callback_base_url: str
+    callback_token: str
+    memory_context: dict[str, Any] | None = None
+
+
+class ActionProposal(BaseModel):
+    """A proposed change to the map — NEVER applied directly.
+
+    The agent returns this; the user must explicitly confirm before any
+    change is applied through a separate flow (S2-L10 / S2-BE3).
+    """
+
+    action_type: ChatIntent | str
+    target_node_ids: list[UUID] = Field(default_factory=list)
+    target_node_id: UUID | None = None
+    parameters: dict[str, Any] = Field(default_factory=dict)
+    explanation: str = ""
+    instruction: str | None = None
+    description: str | None = None
+
+
+class ChatTurnResponse(BaseModel):
+    """What the chat agent returns for a single conversation turn.
+
+    Exactly one of ``answer`` or ``action_proposal`` is populated, unless
+    ``needs_clarification`` is True, in which case both may be None.
+    """
+
+    intent: ChatIntent
+    answer: str | None = None
+    action_proposal: ActionProposal | None = None
+    cited_node_ids: list[UUID] = Field(default_factory=list)
+    source_refs: list[str] = Field(default_factory=list)
+    needs_clarification: bool = False
+    clarification_question: str | None = None
 
 
 class RegenerateNodeResult(BaseModel):
