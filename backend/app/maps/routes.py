@@ -307,7 +307,7 @@ async def update_map(
     expected_updated_at = _parse_version_token(raw_version)
 
     # 2. Check at least one field is being updated
-has_changes = any(x is not None for x in (body.title, body.description, body.tags, body.theme, body.is_public))
+    has_changes = any(x is not None for x in (body.title, body.description, body.tags, body.theme, body.is_public))
     if not has_changes:
         raise HTTPException(status_code=400, detail="No fields to update")
 
@@ -542,7 +542,6 @@ async def generate(
     callback_token = secrets.token_urlsafe(32)
     token_hash = hashlib.sha256(callback_token.encode("utf-8")).hexdigest()
 
-    # Step 1: Create chat thread & user turn, then create the job record in DB upfront
     summary_msg = f"Generate mind map for topic: '{topic or 'General'}' (Detail: {detail_level.value if detail_level else 'overview'})"
     async with transaction(pool) as conn:
         thread_id = await get_or_create_chat_thread(conn, map_id, uid)
@@ -558,14 +557,12 @@ async def generate(
 
     stored_keys: list[str] = []
     try:
-        # Step 2: Store files using the exact same job_id in the storage path
         uploads = []
         if combined_files:
             items = await read_uploads(combined_files)  # type: ignore[arg-type]
             uploads = await store_files(uid, map_id, job_id, items)
             stored_keys = [u.storage_key for u in uploads if getattr(u, "storage_key", None)]
 
-        # Step 3: Dispatch to ARQ worker (canonical queue execution path)
         redis_pool = get_redis_pool(request)
         if not redis_pool:
             raise HTTPException(503, "Generation queue service is unavailable. Redis connection is required.")
@@ -765,7 +762,6 @@ async def regenerate_node(
     request: Request,
     uid: UUID = Depends(current_user_id),
 ):
-    """Reject node-level regeneration at intake with 501 Not Implemented after verifying map ownership and node existence."""
     pool = pool_of(request)
     is_owner = await assert_map_owner(pool, map_id, uid)
     if not is_owner:
@@ -812,7 +808,6 @@ async def get_job(map_id: UUID, job_id: UUID, request: Request, uid: UUID = Depe
 
 @router.get("/jobs/{job_id}")
 async def get_job_by_id(job_id: UUID, request: Request, uid: UUID = Depends(current_user_id)):
-    """Allow user to inspect their generation job status directly using job_id."""
     pool = pool_of(request)
     row = await pool.fetchrow(
         f"SELECT {JOB_COLS} FROM public.generation_jobs WHERE id = $1",
