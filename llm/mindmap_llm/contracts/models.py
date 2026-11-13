@@ -14,7 +14,7 @@ backend inserts, not rows this worker inserts itself.
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -26,6 +26,19 @@ class JobType(StrEnum):
     GENERATE = "generate"
     REGENERATE_FULL = "regenerate_full"
     REGENERATE_NODE = "regenerate_node"
+
+
+# ---------------------------------------------------------------------
+# Chat intents
+# ---------------------------------------------------------------------
+
+
+class ChatIntent(StrEnum):
+    QUESTION = "question"
+    EDIT_PROPOSAL = "edit_proposal"
+    REGEN_WHOLE = "regen_whole"
+    REGEN_NODE = "regen_node"
+    SMALL_TALK = "small_talk"
 
 
 class SeedAssetType(StrEnum):
@@ -190,3 +203,73 @@ class GenerationResult(BaseModel):
     tool_call_log: list[ToolCallLogEntry] = Field(default_factory=list)
 
     error: GenerationError | None = None
+
+
+# ---------------------------------------------------------------------
+# Chat agent contracts (S2-L8, US-14)
+# ---------------------------------------------------------------------
+
+
+class MapSnapshot(BaseModel):
+    """Read-only view of the current map sent to the chat agent.
+
+    The agent NEVER modifies this — it is used only for grounding answers
+    and validating node IDs in action proposals.
+    """
+
+    map_id: UUID
+    nodes: list[NodeDraft] = Field(default_factory=list)
+    edges: list[EdgeDraft] = Field(default_factory=list)
+
+
+class ChatMessage(BaseModel):
+    """A single turn in the conversation history."""
+
+    role: Literal["user", "assistant"]
+    content: str
+
+
+class ChatTurnRequest(BaseModel):
+    """The payload the backend sends to the chat agent for one turn.
+
+    The namespace for Pinecone retrieval follows the existing convention:
+    ``str(map_id)``.  callback_base_url / callback_token are included for
+    consistency with GenerationRequest; the ARQ callback layer (S2-L10)
+    will use them — the agent itself does not make callback HTTP calls.
+    """
+
+    map_id: UUID
+    message: str
+    history: list[ChatMessage] = Field(default_factory=list)
+    map_snapshot: MapSnapshot
+    callback_base_url: str
+    callback_token: str
+
+
+class ActionProposal(BaseModel):
+    """A proposed change to the map — NEVER applied directly.
+
+    The agent returns this; the user must explicitly confirm before any
+    change is applied through a separate flow (S2-L10 / S2-BE3).
+    """
+
+    action_type: ChatIntent
+    target_node_ids: list[UUID] = Field(default_factory=list)
+    parameters: dict[str, Any] = Field(default_factory=dict)
+    explanation: str
+
+
+class ChatTurnResponse(BaseModel):
+    """What the chat agent returns for a single conversation turn.
+
+    Exactly one of ``answer`` or ``action_proposal`` is populated, unless
+    ``needs_clarification`` is True, in which case both may be None.
+    """
+
+    intent: ChatIntent
+    answer: str | None = None
+    action_proposal: ActionProposal | None = None
+    cited_node_ids: list[UUID] = Field(default_factory=list)
+    source_refs: list[str] = Field(default_factory=list)
+    needs_clarification: bool = False
+    clarification_question: str | None = None
