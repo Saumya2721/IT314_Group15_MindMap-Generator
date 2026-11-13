@@ -17,7 +17,7 @@ from enum import StrEnum
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 DetailLevel = Literal["overview", "balanced", "detailed"]
 
@@ -272,12 +272,37 @@ class ChatTurnRequest(BaseModel):
     thread_id: UUID | None = None
     target_node_id: UUID | None = None
     history: list[ChatMessage] = Field(default_factory=list)
+    summary: str | None = None  # Rolling conversation summary from backend (S2-L9 / US-15)
+    rolling_summary: str | None = None
     map_snapshot: MapSnapshot = Field(default_factory=lambda: MapSnapshot(map_id=uuid4()))
     context_window: list[dict[str, Any]] = Field(default_factory=list)
-    rolling_summary: str | None = None
-    callback_base_url: str
-    callback_token: str
+    callback_base_url: str = ""
+    callback_token: str = ""
     memory_context: dict[str, Any] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def sync_summary(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if not data.get("summary") and data.get("rolling_summary"):
+                data["summary"] = data["rolling_summary"]
+            elif not data.get("rolling_summary") and data.get("summary"):
+                data["rolling_summary"] = data["summary"]
+        return data
+
+
+class SummarizeRequest(BaseModel):
+    """Payload to trigger summarisation of older messages (S2-L9 / US-15)."""
+
+    messages: list[ChatMessage] = Field(default_factory=list)
+    previous_summary: str | None = None
+
+
+class SummarizeResult(BaseModel):
+    """Result of a summarisation operation."""
+
+    summary: str
+    tokens_estimated: int = 0
 
 
 class ActionProposal(BaseModel):

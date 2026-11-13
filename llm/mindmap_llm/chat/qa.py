@@ -20,12 +20,14 @@ import logging
 import re
 from uuid import UUID
 
+from chat.context import assemble_chat_context
 from chat.prompts import (
     build_chat_qa_system_prompt,
     build_chat_qa_user_prompt,
     build_small_talk_system_prompt,
     build_small_talk_user_prompt,
 )
+from chat.token_budget import TokenBudget, estimate_tokens
 from contracts.models import ChatIntent, ChatTurnRequest, ChatTurnResponse
 from orchestration.deps import GenerationDeps
 from providers.base import Message
@@ -79,7 +81,27 @@ async def answer_question(
 
     # Stage 3 — generate
     system = build_chat_qa_system_prompt(request.map_snapshot)
-    user_msg = build_chat_qa_user_prompt(request.message, request.history, top_records)
+
+    chunks_overhead = sum(estimate_tokens(c.chunk_text) for c in top_records)
+    budget = TokenBudget(
+        max_context_tokens=deps.settings.llm.max_output_tokens,
+        reserved_response_tokens=_QA_MAX_TOKENS,
+    )
+    assembled = assemble_chat_context(
+        current_message=request.message,
+        history=request.history,
+        summary=request.summary,
+        budget=budget,
+        system_prompt=system,
+        overhead_tokens=chunks_overhead,
+    )
+
+    user_msg = build_chat_qa_user_prompt(
+        request.message,
+        assembled.recent_messages,
+        top_records,
+        summary=assembled.summary,
+    )
 
     try:
         response = await deps.llm.generate(
@@ -124,7 +146,18 @@ async def handle_small_talk(
 ) -> ChatTurnResponse:
     """Return a natural conversational reply without touching Pinecone."""
     system = build_small_talk_system_prompt()
-    user_msg = build_small_talk_user_prompt(request.message, request.history)
+    assembled = assemble_chat_context(
+        current_message=request.message,
+        history=request.history,
+        summary=request.summary,
+        budget=TokenBudget(reserved_response_tokens=256),
+        system_prompt=system,
+    )
+    user_msg = build_small_talk_user_prompt(
+        request.message,
+        assembled.recent_messages,
+        summary=assembled.summary,
+    )
 
     try:
         response = await deps.llm.generate(
