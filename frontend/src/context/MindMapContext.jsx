@@ -24,7 +24,7 @@ function setStoredBookmarks(ids) {
 export function MindMapProvider({ children }) {
   const [maps, setMaps] = useState([])
   const [activeMap, setActiveMap] = useState(null)
-  const [bookmarkedIds, setBookmarkedIds] = useState(getStoredBookmarks)
+  const [, setBookmarkedIds] = useState(getStoredBookmarks)
   const [draftMap, setDraftMap] = useState({
     title: '',
     topic: '',
@@ -33,8 +33,14 @@ export function MindMapProvider({ children }) {
     files: [],
     filePreviews: [],
   })
+  const [snapshots, setSnapshots] = useState([])
+  const [snapshotsLoading, setSnapshotsLoading] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchResults, setSearchResults] = useState(null)
+  const [searchLoading, setSearchLoading] = useState(false)
+  const [searchError, setSearchError] = useState(null)
 
   const fetchMaps = useCallback(async () => {
     setLoading(true)
@@ -53,6 +59,33 @@ export function MindMapProvider({ children }) {
       return []
     } finally {
       setLoading(false)
+    }
+  }, [])
+
+  const searchMindMaps = useCallback(async (q, limit = 20) => {
+    const trimmed = (q || '').trim()
+    if (!trimmed) {
+      setSearchResults(null)
+      setSearchLoading(false)
+      setSearchError(null)
+      return []
+    }
+    setSearchLoading(true)
+    setSearchError(null)
+    try {
+      const data = await mindMapService.searchMaps(trimmed, limit)
+      const mapped = data.map((m) => ({
+        ...m,
+        bookmarked: getStoredBookmarks().includes(m.id),
+      }))
+      setSearchResults(mapped)
+      return mapped
+    } catch (err) {
+      setSearchError(err.message || 'Failed to search mind maps')
+      setSearchResults([])
+      return []
+    } finally {
+      setSearchLoading(false)
     }
   }, [])
 
@@ -110,6 +143,30 @@ export function MindMapProvider({ children }) {
     })
   }
 
+  // ------------------------------------------------------------------
+  // Version History / Snapshots (US-04 / S2-FE7)
+  // ------------------------------------------------------------------
+
+  const loadSnapshots = useCallback(async (mapId) => {
+    setSnapshotsLoading(true)
+    try {
+      const data = await mindMapService.getSnapshots(mapId)
+      setSnapshots(data)
+      return data
+    } catch (err) {
+      console.error('Failed to load snapshots:', err)
+      setSnapshots([])
+      return []
+    } finally {
+      setSnapshotsLoading(false)
+    }
+  }, [])
+
+  const restoreSnapshot = useCallback(async (mapId, snapshotId) => {
+    const restored = await mindMapService.restoreSnapshot(mapId, snapshotId)
+    return restored.snapshot_data || { nodes: [], edges: [] }
+  }, [])
+
   useEffect(() => {
     fetchMaps()
   }, [fetchMaps])
@@ -129,6 +186,16 @@ export function MindMapProvider({ children }) {
         deleteMap,
         toggleBookmark,
         setActiveMap,
+        snapshots,
+        snapshotsLoading,
+        loadSnapshots,
+        restoreSnapshot,
+        searchQuery,
+        setSearchQuery,
+        searchResults,
+        searchLoading,
+        searchError,
+        searchMindMaps,
       }}
     >
       {children}

@@ -26,6 +26,7 @@ from contracts.models import (
     GenerationRequest,
     GenerationResult,
     JobType,
+    NodeDraft,
     RejectedFile,
     ToolCallLogEntry,
 )
@@ -124,15 +125,34 @@ async def _run(request: GenerationRequest, namespace: str, deps: GenerationDeps)
         is_regeneration = True
 
     elif request.job_type == JobType.REGENERATE_NODE:
-        if not request.selected_node:
-            raise ValueError("regenerate_node request must include selected_node")
-
+        selected_node = request.selected_node
         branch_nodes = request.effective_branch_nodes
         branch_edges = request.effective_branch_edges
         comment = request.effective_comment
+
+        if not selected_node:
+            target_id = request.target_node_id
+            if target_id and branch_nodes:
+                for n in branch_nodes:
+                    if n.id == target_id:
+                        selected_node = n
+                        break
+            if not selected_node and target_id and isinstance(request.branch_context, dict):
+                label = request.branch_context.get("target_node_label") or "Target Node"
+                desc = request.branch_context.get("target_node_description")
+                selected_node = NodeDraft(
+                    id=target_id,
+                    label=label,
+                    description=desc,
+                    node_type="default",
+                )
+
+        if not selected_node:
+            raise ValueError("regenerate_node request must include selected_node")
+
         ancestor_labels = request.ancestor_labels or []
-        breadcrumb = " > ".join([*ancestor_labels, request.selected_node.label])
-        allowed_ids = {str(request.selected_node.id), *(str(n.id) for n in branch_nodes)}
+        breadcrumb = " > ".join([*ancestor_labels, selected_node.label])
+        allowed_ids = {str(selected_node.id), *(str(n.id) for n in branch_nodes)}
 
         final_state = await run_regenerate_node(
             deps,
@@ -140,8 +160,8 @@ async def _run(request: GenerationRequest, namespace: str, deps: GenerationDeps)
                 "job_id": request.job_id,
                 "map_id": request.map_id,
                 "namespace": namespace,
-                "selected_node": request.selected_node,
-                "target_node_id": request.target_node_id or request.selected_node.id,
+                "selected_node": selected_node,
+                "target_node_id": request.target_node_id or selected_node.id,
                 "comment": comment,
                 "ancestor_labels": ancestor_labels,
                 "branch_nodes": branch_nodes,
@@ -210,6 +230,7 @@ async def _run(request: GenerationRequest, namespace: str, deps: GenerationDeps)
             seed_assets=seed_assets,
             rejected_files=rejected_files,
             tool_call_log=[ToolCallLogEntry(**e) for e in final_state.get("tool_call_log", [])],
+            quality_warnings=final_state.get("quality_warnings", []),
         )
 
     return GenerationResult(

@@ -1,0 +1,55 @@
+/* SaveStatusBadge.css - autosave status pill (S2-FE5 / US-08) */
+
+.canvas-save-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-label);
+  font-size: 11px;
+  color: var(--outline);
+  line-height: 1;
+}
+
+.save-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: var(--primary);
+}
+
+.canvas-save-status.is-saving .save-dot {
+  animation: save-pulse 1.5s infinite ease-in-out;
+}
+
+.canvas-save-status.is-error {
+  cursor: pointer;
+  user-select: none;
+}
+
+.canvas-save-status.is-error .save-dot {
+  animation: save-pulse-fast 1s infinite ease-in-out;
+}
+
+@keyframes save-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.25);
+  }
+}
+
+@keyframes save-pulse-fast {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.4);
+  }
+}

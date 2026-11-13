@@ -12,7 +12,7 @@ import secrets
 from typing import Any
 from uuid import UUID
 
-from contracts.models import GenerationResult
+from contracts.models import GenerationResult, JobType
 from core.supabase import bearer
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials
@@ -22,11 +22,14 @@ from services.generator import compute_layout
 from db.connection import transaction
 from db.models import EdgeRecord, NodeRecord, SeedAssetType
 from db.repository import (
+    get_chat_messages,
     get_or_create_chat_thread,
     insert_chat_message,
     insert_seed_asset,
     persist_generated_graph,
     replace_map_graph,
+    replace_node_branch,
+    update_chat_thread_summary,
 )
 
 logger = logging.getLogger(__name__)
@@ -221,7 +224,7 @@ async def report_complete(
     # Idempotent lock and check
     async with transaction(pool) as conn:
         job_row = await conn.fetchrow(
-            "SELECT id, map_id, job_type, status, started_at FROM public.generation_jobs WHERE id = $1 FOR UPDATE",
+            "SELECT id, map_id, job_type, target_node_id, status, started_at FROM public.generation_jobs WHERE id = $1 FOR UPDATE",
             job_id,
         )
         if not job_row:
@@ -302,7 +305,19 @@ async def report_complete(
             )
 
         # Persist / replace graph
-        if job_type in ("regenerate_full", "regenerate"):
+        if job_type in ("regenerate_node", JobType.REGENERATE_NODE):
+            target_node_id = job_row["target_node_id"]
+            if not target_node_id:
+                raise HTTPException(500, "Node regeneration job missing target_node_id")
+            await replace_node_branch(
+                conn,
+                map_id=map_id,
+                target_node_id=target_node_id,
+                source_job_id=job_id,
+                new_nodes=node_records,
+                new_edges=edge_records,
+            )
+        elif job_type in ("regenerate_full", "regenerate", JobType.REGENERATE_FULL):
             await replace_map_graph(
                 conn,
                 map_id=map_id,
@@ -451,4 +466,119 @@ async def report_fail(
         "status": final_status,
         "receipt_id": str(job_id),
         "already_processed": False,
+    }
+
+
+# ---------------------------------------------------------------------
+# Internal Chat Completion Callbacks (S2-BE4 / US-15)
+# ---------------------------------------------------------------------
+
+
+chat_callback_router = APIRouter(prefix="/internal/chat", tags=["Internal Chat Callbacks"])
+
+
+class ChatCompleteCallback(BaseModel):
+    map_id: UUID
+    job_id: UUID
+    assistant_message: str = Field(..., description="Assistant response to persist to chat history")
+    summary: str | None = Field(default=None, description="Updated rolling summary from worker if threshold reached")
+    status: str = Field(default="completed", description="Job status: completed or failed")
+    error: str | None = None
+
+
+@chat_callback_router.post("/{job_id}/complete", status_code=200)
+async def report_chat_complete(
+    job_id: UUID,
+    payload: ChatCompleteCallback,
+    request: Request,
+    creds: HTTPAuthorizationCredentials | None = Depends(bearer),
+    authorization: str | None = Header(None),
+):
+    """Worker reports completion of chat response: persists assistant turn & updates rolling summary."""
+    job_ctx = await verify_callback_auth(job_id, request, authorization, creds)
+    pool = request.app.state.pool
+
+    if payload.job_id != job_id:
+        raise HTTPException(
+            status_code=400,
+            detail=f"job_id mismatch: URL is {job_id}, payload has {payload.job_id}",
+        )
+    if str(job_ctx["map_id"]) != str(payload.map_id):
+        raise HTTPException(
+            status_code=400,
+            detail=f"map_id mismatch: job belongs to map {job_ctx['map_id']}, payload has {payload.map_id}",
+        )
+
+    map_id = job_ctx["map_id"]
+
+    if payload.status == "failed":
+        async with transaction(pool) as conn:
+            await conn.execute(
+                """
+                UPDATE public.generation_jobs
+                   SET status = 'failed',
+                       completed_at = now(),
+                       error_message = $2
+                 WHERE id = $1
+                """,
+                job_id,
+                payload.error or "Chat completion failed",
+            )
+        return {"status": "failed", "job_id": str(job_id), "map_id": str(map_id)}
+
+    async with transaction(pool) as conn:
+        job_row = await conn.fetchrow(
+            "SELECT id, status FROM public.generation_jobs WHERE id = $1 FOR UPDATE",
+            job_id,
+        )
+        if not job_row:
+            raise HTTPException(404, "Job not found")
+
+        if job_row["status"] == "completed":
+            return {
+                "status": "completed",
+                "message": "Already processed",
+                "receipt_id": str(job_id),
+                "already_processed": True,
+            }
+
+        # 1. Fetch map owner and ensure chat thread exists
+        map_owner = await conn.fetchval("SELECT user_id FROM public.mind_maps WHERE id = $1", map_id)
+        if map_owner:
+            thread_id = await get_or_create_chat_thread(conn, map_id, map_owner)
+            # 2. Persist assistant turn
+            if payload.assistant_message:
+                await insert_chat_message(conn, thread_id, "assistant", payload.assistant_message)
+
+            # 3. Update rolling summary in chat_threads if provided or threshold reached
+            if payload.summary:
+                await update_chat_thread_summary(conn, map_id, payload.summary)
+            else:
+                all_msgs = await get_chat_messages(conn, map_id)
+                if len(all_msgs) >= 10:
+                    from memory.summarizer import RollingSummarizer
+
+                    summarizer = RollingSummarizer()
+                    new_summary = await summarizer.generate_summary(all_msgs)
+                    await update_chat_thread_summary(conn, map_id, new_summary)
+
+        # 4. Update job status to completed
+        await conn.execute(
+            """
+            UPDATE public.generation_jobs
+               SET status = 'completed',
+                   completed_at = now(),
+                   progress_percent = 100
+             WHERE id = $1
+            """,
+            job_id,
+        )
+
+    return {
+        "status": "completed",
+        "job_id": str(job_id),
+        "map_id": str(map_id),
+        "receipt_id": str(job_id),
+        "already_processed": False,
+        "summary_updated": bool(payload.summary),
     }

@@ -24,6 +24,8 @@ EdgeRecord — the worker never inserts these anywhere itself.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
+from typing import Any
 from uuid import UUID, uuid4
 
 from contracts.models import EdgeDraft, NodeDraft
@@ -149,6 +151,103 @@ def _validate_single_root(nodes: list[_DraftNode], edges: list[_DraftEdge]) -> l
     return errors
 
 
+@dataclass
+class QualityReport:
+    warnings: list[str]
+    passed: bool  # True = meets minimum node count bar
+
+
+def _compute_tree_depth(nodes: list[_DraftNode], edges: list[_DraftEdge]) -> int:
+    """Compute maximum depth of the mind map tree from the root node (root = depth 0)."""
+    incoming = {n.id: 0 for n in nodes}
+    children: dict[str, list[str]] = {n.id: [] for n in nodes}
+    for e in edges:
+        if e.target in incoming:
+            incoming[e.target] += 1
+        if e.source in children:
+            children[e.source].append(e.target)
+
+    roots = [n_id for n_id, count in incoming.items() if count == 0]
+    if not roots:
+        return 0
+
+    max_depth = 0
+    stack: list[tuple[str, int]] = [(roots[0], 0)]
+    visited: set[str] = set()
+
+    while stack:
+        cur_id, depth = stack.pop()
+        if cur_id in visited:
+            continue
+        visited.add(cur_id)
+        if depth > max_depth:
+            max_depth = depth
+        for child_id in children.get(cur_id, []):
+            stack.append((child_id, depth + 1))
+
+    return max_depth
+
+
+def run_quality_checks(
+    draft: DraftMindMap,
+    *,
+    target_node_range: tuple[int, int] = (10, 25),
+    target_max_depth: int = 3,
+    supporting_context: list[Any] | None = None,
+) -> QualityReport:
+    """Evaluate content quality beyond syntax: node counts, tree depth,
+    branch descriptions, and citation validity.
+    """
+    warnings: list[str] = []
+    min_nodes, max_nodes = target_node_range
+    actual_nodes = len(draft.nodes)
+
+    # 1. Node count check (blocks pass if below min)
+    passed = True
+    if actual_nodes < min_nodes:
+        warnings.append(
+            f"Mind map node count ({actual_nodes}) is below target minimum ({min_nodes}). Expand branches with more sub-concepts."
+        )
+        passed = False
+    elif actual_nodes > max_nodes:
+        warnings.append(f"Mind map node count ({actual_nodes}) exceeds target maximum ({max_nodes}).")
+
+    # 2. Tree depth check
+    actual_depth = _compute_tree_depth(draft.nodes, draft.edges)
+    if actual_depth > target_max_depth:
+        warnings.append(f"Tree depth ({actual_depth}) exceeds target depth ({target_max_depth}).")
+
+    # 3. Branch description check (non-leaf nodes should have explanations)
+    children_count = {n.id: 0 for n in draft.nodes}
+    for e in draft.edges:
+        if e.source in children_count:
+            children_count[e.source] += 1
+
+    for n in draft.nodes:
+        if children_count[n.id] > 0 and (not n.description or not n.description.strip()):
+            warnings.append(f"Branch node '{n.label}' (id: {n.id}) is missing a required 2-3 sentence description.")
+
+    # 4. Citation coverage and validity check
+    context_len = len(supporting_context or [])
+    has_citations = False
+    for n in draft.nodes:
+        if n.sources:
+            has_citations = True
+            for s in n.sources:
+                match = re.match(r"^ctx:(\d+)$", s.strip())
+                if match:
+                    idx = int(match.group(1))
+                    if idx < 1 or idx > context_len:
+                        warnings.append(
+                            f"Node '{n.label}' cites non-existent context item '{s}' (only {context_len} context items provided)."
+                        )
+
+    if supporting_context and not has_citations and actual_nodes > 1:
+        warnings.append("Supporting context was provided but no nodes include citation sources ('ctx:<n>').")
+
+    return QualityReport(warnings=warnings, passed=passed)
+
+
 def validate_draft(payload: dict) -> DraftMindMap:
     """Raises ValidationFailure with all collected errors, or returns a
     validated DraftMindMap. Callers in orchestration/nodes.py catch this
@@ -159,13 +258,39 @@ def validate_draft(payload: dict) -> DraftMindMap:
         raise ValidationFailure([str(exc)]) from exc
 
 
-def resolve_to_records(draft: DraftMindMap) -> tuple[list[NodeDraft], list[EdgeDraft]]:
+def resolve_to_records(
+    draft: DraftMindMap,
+    supporting_context: list[Any] | None = None,
+) -> tuple[list[NodeDraft], list[EdgeDraft]]:
     """Maps the LLM's provisional string ids to real UUIDs and produces
     the wire-contract NodeDraft/EdgeDraft objects that go into
-    GenerationResult. No map_id is threaded through here anymore — the
-    backend already knows which map a job belongs to from the job row
-    itself, so the result doesn't need to repeat it per node/edge."""
+    GenerationResult. Resolves 'ctx:<n>' citations to actual titles and URLs."""
     id_map: dict[str, UUID] = {n.id: uuid4() for n in draft.nodes}
+    context_list = supporting_context or []
+
+    def _resolve_sources(raw_sources: list[str]) -> list[str]:
+        resolved: list[str] = []
+        for s in raw_sources:
+            match = re.match(r"^ctx:(\d+)$", s.strip())
+            if match and context_list:
+                idx = int(match.group(1)) - 1
+                if 0 <= idx < len(context_list):
+                    chunk = context_list[idx]
+                    title = getattr(chunk.record, "source_title", None)
+                    url = getattr(chunk.record, "source_url", None)
+                    if title and url:
+                        resolved.append(f"{title} ({url})")
+                    elif url:
+                        resolved.append(url)
+                    elif title:
+                        resolved.append(title)
+                    else:
+                        resolved.append(s)
+                else:
+                    resolved.append(s)
+            else:
+                resolved.append(s)
+        return resolved
 
     nodes = [
         NodeDraft(
@@ -175,7 +300,7 @@ def resolve_to_records(draft: DraftMindMap) -> tuple[list[NodeDraft], list[EdgeD
             node_type=n.node_type,
             background_color=n.background_color,
             text_color=n.text_color,
-            sources=n.sources,
+            sources=_resolve_sources(n.sources),
         )
         for n in draft.nodes
     ]
@@ -275,6 +400,7 @@ def resolve_branch_to_records(
     *,
     selected_node: NodeDraft,
     allowed_node_ids: set[str] | None = None,
+    supporting_context: list[Any] | None = None,
 ) -> tuple[list[NodeDraft], list[EdgeDraft]]:
     """Resolves branch draft nodes and edges to wire-contract records.
 
@@ -306,6 +432,34 @@ def resolve_branch_to_records(
         except ValueError:
             id_map[n.id] = uuid4()
 
+    context_list = supporting_context or []
+
+    def _resolve_sources(raw_sources: list[str]) -> list[str]:
+        if not context_list:
+            return raw_sources
+        resolved: list[str] = []
+        for s in raw_sources:
+            match = re.match(r"^ctx:(\d+)$", s.strip())
+            if match:
+                idx = int(match.group(1)) - 1
+                if 0 <= idx < len(context_list):
+                    chunk = context_list[idx]
+                    title = getattr(chunk.record, "source_title", None)
+                    url = getattr(chunk.record, "source_url", None)
+                    if title and url:
+                        resolved.append(f"{title} ({url})")
+                    elif url:
+                        resolved.append(url)
+                    elif title:
+                        resolved.append(title)
+                    else:
+                        resolved.append(s)
+                else:
+                    resolved.append(s)
+            else:
+                resolved.append(s)
+        return resolved
+
     nodes = [
         NodeDraft(
             id=id_map[n.id],
@@ -314,7 +468,7 @@ def resolve_branch_to_records(
             node_type=n.node_type,
             background_color=n.background_color,
             text_color=n.text_color,
-            sources=n.sources,
+            sources=_resolve_sources(n.sources),
         )
         for n in draft.nodes
     ]

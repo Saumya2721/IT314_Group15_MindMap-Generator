@@ -142,4 +142,3 @@ async def handle_small_talk(
         intent=ChatIntent.SMALL_TALK,
         answer=answer_text,
     )
-

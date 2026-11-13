@@ -129,11 +129,21 @@ CREATE TABLE public.mind_maps (
     title       VARCHAR(255) NOT NULL DEFAULT 'Untitled mind map',
     description TEXT,
     is_public   BOOLEAN NOT NULL DEFAULT FALSE,
+    version     INTEGER NOT NULL DEFAULT 1,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- Persisted editor viewport (zoom + pan), S2-FE5 / US-08
+    view_x      DOUBLE PRECISION DEFAULT 0,
+    view_y      DOUBLE PRECISION DEFAULT 0,
+    view_zoom   DOUBLE PRECISION DEFAULT 1
 );
 
 CREATE INDEX idx_mind_maps_user_id_created ON public.mind_maps (user_id, created_at DESC);
+
+-- Trigram indexes for case-insensitive dashboard search (S2-FE5 / US-08)
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE INDEX idx_mind_maps_title_trgm ON public.mind_maps USING gin (title gin_trgm_ops);
+CREATE INDEX idx_mind_maps_description_trgm ON public.mind_maps USING gin (COALESCE(description, '') gin_trgm_ops);
 
 CREATE TRIGGER trg_mind_maps_updated_at
     BEFORE UPDATE ON public.mind_maps
@@ -167,7 +177,8 @@ CREATE TABLE public.chat_threads (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     map_id      UUID NOT NULL UNIQUE REFERENCES public.mind_maps(id) ON DELETE CASCADE,
     user_id     UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    summary     TEXT DEFAULT NULL
 );
 
 CREATE INDEX idx_chat_threads_user_id ON public.chat_threads (user_id);
@@ -217,7 +228,7 @@ CREATE TABLE public.generation_jobs (
     triggered_by_message_id UUID REFERENCES public.chat_messages(id) ON DELETE SET NULL,
 
     job_type          VARCHAR(20) NOT NULL DEFAULT 'generate'
-                      CHECK (job_type IN ('generate', 'regenerate_full', 'regenerate_node')),
+                      CHECK (job_type IN ('generate', 'regenerate_full', 'regenerate_node', 'chat_turn')),
     target_node_id    UUID,   -- FK to nodes(id) added below, after nodes exists
 
     status            VARCHAR(20) NOT NULL DEFAULT 'pending'
@@ -833,6 +844,46 @@ REVOKE ALL ON SCHEMA langgraph FROM anon, authenticated;
 --    intentionally not modeled yet — Sprint 3. When added, extend the
 --    private.is_map_owner() check (e.g. a map_members table) rather
 --    than editing every policy.
+-- =====================================================================
+-- =====================================================================
+-- Version history: public.map_snapshots
+-- One row per generation job completion (initial generation, full regen,
+-- branch regen, or manual). snapshot_data holds the full {nodes, edges}
+-- payload for that version; version_number increments per map.
+-- =====================================================================
+create table public.map_snapshots (
+    id              uuid primary key default gen_random_uuid(),
+    map_id          uuid not null references public.mind_maps(id) on delete cascade,
+    version_number  int not null,
+    trigger_source  text not null check (
+        trigger_source in ('initial_generation', 'full_regen', 'branch_regen', 'manual')
+    ),
+    trigger_job_id  uuid references public.generation_jobs(id) on delete set null,
+    label           varchar(255),
+    snapshot_data   jsonb not null,
+    created_by      uuid references public.profiles(id) on delete set null,
+    created_at      timestamptz not null default now()
+);
+
+create index idx_map_snapshots_map_id
+    on public.map_snapshots (map_id);
+
+create unique index uq_map_snapshots_map_version
+    on public.map_snapshots (map_id, version_number);
+
+alter table public.map_snapshots enable row level security;
+
+create policy map_snapshots_select_own on public.map_snapshots
+    for select to authenticated
+    using (
+        exists (
+            select 1 from public.mind_maps m
+            where m.id = map_id and m.user_id = auth.uid()
+        )
+    );
+
+-- Writes are owned by the backend only (service-role key); no write grants
+-- for authenticated/anon are provided.
 -- =====================================================================
 -- End of schema
 -- =====================================================================

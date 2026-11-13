@@ -1,9 +1,40 @@
-import React, { memo } from 'react'
+import React, { memo, useState, useEffect } from 'react'
 import { Handle, Position } from '@xyflow/react'
 import './nodes.css'
 
-export const BranchNode = memo(({ data, selected }) => {
+export const BranchNode = memo(({ id, data, selected }) => {
   const tint = data?.backgroundColor || '#C96B4B'
+  const isEditing = Boolean(data?.isEditing)
+  const [labelDraft, setLabelDraft] = useState(data?.label || 'Thematic Branch')
+
+  useEffect(() => {
+    setLabelDraft(data?.label || 'Thematic Branch')
+  }, [data?.label, isEditing])
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      e.stopPropagation()
+      if (labelDraft.trim()) {
+        data?.onSaveLabel?.(id, labelDraft.trim())
+      } else {
+        data?.onCancelEditing?.(id)
+      }
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      e.stopPropagation()
+      setLabelDraft(data?.label || 'Thematic Branch')
+      data?.onCancelEditing?.(id)
+    }
+  }
+
+  const handleBlur = () => {
+    if (labelDraft.trim()) {
+      data?.onSaveLabel?.(id, labelDraft.trim())
+    } else {
+      data?.onCancelEditing?.(id)
+    }
+  }
 
   return (
     <div
@@ -25,7 +56,32 @@ export const BranchNode = memo(({ data, selected }) => {
         </span>
       </div>
 
-      <div className="branch-node-title">{data?.label || 'Thematic Branch'}</div>
+      {isEditing ? (
+        <input
+          type="text"
+          className="nodrag nopan node-inline-input"
+          value={labelDraft}
+          onChange={(e) => setLabelDraft(e.target.value)}
+          onKeyDown={handleKeyDown}
+          onBlur={handleBlur}
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+          onDoubleClick={(e) => e.stopPropagation()}
+          autoFocus
+          aria-label="Edit branch title"
+        />
+      ) : (
+        <div
+          className="branch-node-title"
+          onDoubleClick={(e) => {
+            e.stopPropagation()
+            data?.onStartEditing?.(id)
+          }}
+          title="Double-click to rename"
+        >
+          {data?.label || 'Thematic Branch'}
+        </div>
+      )}
 
       {data?.description && <div className="branch-node-description">{data.description}</div>}
     </div>

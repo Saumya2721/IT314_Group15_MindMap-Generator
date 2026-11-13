@@ -14,6 +14,7 @@ class JobType(StrEnum):
     GENERATE = "generate"
     REGENERATE_FULL = "regenerate_full"
     REGENERATE_NODE = "regenerate_node"
+    CHAT_TURN = "chat_turn"
 
 
 class JobStatus(StrEnum):

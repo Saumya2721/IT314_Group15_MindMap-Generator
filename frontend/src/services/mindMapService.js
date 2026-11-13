@@ -21,6 +21,25 @@ export const mindMapService = {
   },
 
   /**
+   * Server-backed search of mind maps by title / description (S2-FE5 / US-08).
+   * Endpoint: GET /api/maps?q=<query>&limit=<limit>
+   */
+  async searchMaps(query, limit = 20) {
+    const qs = `?q=${encodeURIComponent((query || '').trim())}&limit=${limit}`
+    const res = await apiClient.get(`/api/maps${qs}`)
+    if (!res.ok) {
+      throw new Error(res.error || 'Failed to search mind maps')
+    }
+
+    const maps = res.data || []
+    return maps.map((m) => ({
+      ...m,
+      lastEdited: formatRelativeTime(m.updated_at || m.created_at),
+      bookmarked: false,
+    }))
+  },
+
+  /**
    * Fetch a single mind map by ID
    * Endpoint: GET /api/maps/{id}
    */
@@ -56,13 +75,16 @@ export const mindMapService = {
   },
 
   /**
-   * Update map title or metadata
+   * Update map title or metadata (S2-FE5 / US-08: also persists the editor viewport).
    * Endpoint: PATCH /api/maps/{id}
    */
-  async updateMap(id, { title, is_public }) {
+  async updateMap(id, { title, is_public, view_x, view_y, view_zoom }) {
     const payload = {}
     if (title !== undefined) payload.title = title.trim()
     if (is_public !== undefined) payload.is_public = is_public
+    if (view_x !== undefined) payload.view_x = view_x
+    if (view_y !== undefined) payload.view_y = view_y
+    if (view_zoom !== undefined) payload.view_zoom = view_zoom
 
     const res = await apiClient.patch(`/api/maps/${id}`, payload)
     if (!res.ok) {
@@ -164,6 +186,21 @@ export const mindMapService = {
   },
 
   /**
+   * Persist updated graph (nodes & edges) to backend
+   * Endpoint: PATCH /api/maps/{map_id}/graph
+   */
+  async updateMapGraph(mapId, { nodes, edges }) {
+    const res = await apiClient.patch(`/api/maps/${mapId}/graph`, {
+      nodes,
+      edges,
+    })
+    if (!res.ok) {
+      throw new Error(res.error || 'Failed to update mind map graph')
+    }
+    return res.data
+  },
+
+  /**
    * Full map regeneration from natural language instruction
    * Endpoint: POST /api/maps/{map_id}/regenerate
    */
@@ -186,6 +223,75 @@ export const mindMapService = {
     const res = await apiClient.get(`/api/maps/${mapId}/chat`)
     if (!res.ok) {
       throw new Error(res.error || 'Failed to load conversation history')
+    }
+    return res.data
+  },
+
+  // ------------------------------------------------------------------
+  // Version History / Snapshots (US-04 / S2-FE7)
+  // ------------------------------------------------------------------
+
+  /**
+   * Fetch all snapshots for a map, newest first
+   * Endpoint: GET /api/maps/{map_id}/snapshots
+   */
+  async getSnapshots(mapId) {
+    const res = await apiClient.get(`/api/maps/${mapId}/snapshots`)
+    if (!res.ok) {
+      throw new Error(res.error || 'Failed to fetch snapshots')
+    }
+
+    const raw = res.data || []
+    return raw.map((s) => ({
+      id: s.id,
+      map_id: s.map_id,
+      version_number: s.version_number,
+      trigger_source: s.trigger_source,
+      trigger_job_id: s.trigger_job_id || null,
+      label: s.label || `Version ${s.version_number}`,
+      snapshot_data: s.snapshot_data || { nodes: [], edges: [] },
+      created_by: s.created_by || null,
+      created_at: s.created_at || null,
+    }))
+  },
+
+  /**
+   * Fetch a single snapshot by ID (includes snapshot_data payload)
+   * Endpoint: GET /api/maps/{map_id}/snapshots/{snapshot_id}
+   */
+  async getSnapshotDetail(mapId, snapshotId) {
+    const res = await apiClient.get(`/api/maps/${mapId}/snapshots/${snapshotId}`)
+    if (!res.ok) {
+      throw new Error(res.error || 'Failed to fetch snapshot')
+    }
+    const s = res.data
+    if (!s) throw new Error('Snapshot not found')
+    return {
+      ...s,
+      snapshot_data: s.snapshot_data || { nodes: [], edges: [] },
+    }
+  },
+
+  /**
+   * Restore a map to a previous snapshot
+   * Endpoint: POST /api/maps/{map_id}/snapshots/{snapshot_id}/restore
+   */
+  async restoreSnapshot(mapId, snapshotId) {
+    const res = await apiClient.post(`/api/maps/${mapId}/snapshots/${snapshotId}/restore`)
+    if (!res.ok) {
+      throw new Error(res.error || 'Failed to restore snapshot')
+    }
+    return res.data // { snapshot_id, snapshot_data: { nodes, edges } }
+  },
+
+  /**
+   * Delete a snapshot
+   * Endpoint: DELETE /api/maps/{map_id}/snapshots/{snapshot_id}
+   */
+  async deleteSnapshot(mapId, snapshotId) {
+    const res = await apiClient.delete(`/api/maps/${mapId}/snapshots/${snapshotId}`)
+    if (!res.ok) {
+      throw new Error(res.error || 'Failed to delete snapshot')
     }
     return res.data
   },
