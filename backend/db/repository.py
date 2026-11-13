@@ -224,7 +224,7 @@ async def update_mind_map_occ(
     # Note: trg_mind_maps_updated_at trigger will update updated_at automatically
     sql = f"""
         UPDATE public.mind_maps
-        SET {', '.join(updates)}
+        SET {", ".join(updates)}
         WHERE id = $1 AND user_id = $2 AND updated_at = ${version_idx}
         RETURNING id, title, description, is_public, created_at, updated_at
     """
