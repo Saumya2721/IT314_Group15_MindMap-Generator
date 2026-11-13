@@ -214,10 +214,29 @@ CREATE TABLE public.chat_messages (
     thread_id   UUID NOT NULL REFERENCES public.chat_threads(id) ON DELETE CASCADE,
     role        VARCHAR(20) NOT NULL CHECK (role IN ('user', 'assistant')),
     content     TEXT NOT NULL,
+    metadata    JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX idx_chat_messages_thread_id_created ON public.chat_messages (thread_id, created_at);
+
+-- Summary cursor needs chat_messages to exist before defining its FK.
+ALTER TABLE public.chat_threads ADD COLUMN summary_through_message_id UUID
+    REFERENCES public.chat_messages(id) ON DELETE SET NULL;
+
+-- S2-DB3: backend-managed long-term agent memory.
+CREATE TABLE public.agent_memories (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    map_id UUID REFERENCES public.mind_maps(id) ON DELETE CASCADE,
+    memory_type TEXT NOT NULL,
+    content TEXT NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_agent_memories_user_active ON public.agent_memories (user_id, is_active, created_at DESC);
+CREATE INDEX idx_agent_memories_map ON public.agent_memories (map_id) WHERE map_id IS NOT NULL;
+
 
 -- =====================================================================
 -- 6. GENERATION_JOBS  (async task tracking only — no result payload here)
@@ -627,6 +646,7 @@ ALTER TABLE public.seed_assets     ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.nodes           ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.edges           ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.embeddings      ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.agent_memories   ENABLE ROW LEVEL SECURITY;
 
 -- ---------- profiles: each user sees/edits only their own row ----------
 CREATE POLICY profiles_select_own ON public.profiles
@@ -748,6 +768,12 @@ CREATE POLICY embeddings_select_own ON public.embeddings
     FOR SELECT TO authenticated
     USING (private.is_map_owner(map_id));
 
+-- Agent memory is private, even if a mind map is publicly viewable.
+CREATE POLICY agent_memories_select_own ON public.agent_memories
+    FOR SELECT TO authenticated
+    USING (user_id = (SELECT auth.uid())
+           AND (map_id IS NULL OR private.is_map_owner(map_id)));
+
 -- =====================================================================
 -- 13. TABLE PRIVILEGES (defence in depth on top of RLS)
 -- Supabase grants ALL on new public tables to anon and authenticated by
@@ -757,7 +783,7 @@ CREATE POLICY embeddings_select_own ON public.embeddings
 REVOKE ALL ON
     public.profiles, public.mind_maps, public.chat_threads, public.chat_messages,
     public.generation_jobs, public.seed_assets, public.nodes, public.edges,
-    public.embeddings
+    public.embeddings, public.agent_memories
 FROM anon, authenticated;
 
 -- anon: may only read public maps (rows limited by the *_select_public policies)
@@ -780,14 +806,14 @@ GRANT UPDATE (source_node_id, target_node_id, label, edge_data)
     ON public.edges TO authenticated;
 
 GRANT SELECT ON public.chat_threads, public.chat_messages, public.generation_jobs,
-                public.seed_assets, public.embeddings
+                public.seed_assets, public.embeddings, public.agent_memories
     TO authenticated;
 
 -- service_role (server-side only, bypasses RLS) keeps full access.
 GRANT ALL ON
     public.profiles, public.mind_maps, public.chat_threads, public.chat_messages,
     public.generation_jobs, public.seed_assets, public.nodes, public.edges,
-    public.embeddings
+    public.embeddings, public.agent_memories
 TO service_role;
 
 -- =====================================================================
