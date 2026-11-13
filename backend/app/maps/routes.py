@@ -7,11 +7,11 @@ Enhanced with server-side search, sorting, pagination, and strict OCC save integ
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
+from enum import StrEnum
 import hashlib
 import logging
 import secrets
-from datetime import datetime, timezone
-from enum import StrEnum
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -95,7 +95,7 @@ def _parse_version_token(raw_token: str) -> datetime:
     except ValueError:
         try:
             ts = float(token)
-            dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+            dt = datetime.fromtimestamp(ts, tz=UTC)
         except Exception:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -103,7 +103,7 @@ def _parse_version_token(raw_token: str) -> datetime:
             )
 
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
     return dt
 
 
