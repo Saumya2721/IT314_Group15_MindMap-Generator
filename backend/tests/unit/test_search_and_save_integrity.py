@@ -5,13 +5,12 @@ and strict OCC save integrity (ETag / If-Match).
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
-from fastapi.testclient import TestClient
 
 from maps.routes import _parse_version_token
 
@@ -30,7 +29,7 @@ def test_parse_version_token_with_quotes_and_w():
 
 def test_parse_version_token_zulu():
     dt = _parse_version_token("2026-11-12T16:30:00Z")
-    assert dt.tzinfo == timezone.utc
+    assert dt.tzinfo == UTC
 
 
 def test_parse_version_token_invalid():
@@ -51,8 +50,8 @@ async def test_search_maps_query_and_pagination():
             "title": "Machine Learning Map",
             "description": "Neural networks notes",
             "is_public": False,
-            "created_at": datetime.now(timezone.utc),
-            "updated_at": datetime.now(timezone.utc),
+            "created_at": datetime.now(UTC),
+            "updated_at": datetime.now(UTC),
             "node_count": 12,
             "latest_job_status": "completed",
             "latest_job_progress": 100,
@@ -84,11 +83,11 @@ async def test_update_mind_map_occ_conflict():
     # 0 rows returned from UPDATE due to updated_at mismatch
     mock_conn.fetchrow.return_value = None
     # existing_updated_at exists in DB (different timestamp)
-    mock_conn.fetchval.return_value = datetime(2026, 11, 12, 17, 0, 0, tzinfo=timezone.utc)
+    mock_conn.fetchval.return_value = datetime(2026, 11, 12, 17, 0, 0, tzinfo=UTC)
 
     map_id = uuid4()
     user_id = uuid4()
-    stale_timestamp = datetime(2026, 11, 12, 16, 0, 0, tzinfo=timezone.utc)
+    stale_timestamp = datetime(2026, 11, 12, 16, 0, 0, tzinfo=UTC)
 
     row, conflict_status = await update_mind_map_occ(
         mock_conn,
@@ -108,7 +107,7 @@ async def test_update_mind_map_occ_success():
 
     map_id = uuid4()
     user_id = uuid4()
-    now_dt = datetime.now(timezone.utc)
+    now_dt = datetime.now(UTC)
 
     mock_conn = AsyncMock()
     mock_conn.fetchrow.return_value = {
