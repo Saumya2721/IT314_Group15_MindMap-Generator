@@ -21,7 +21,9 @@ from __future__ import annotations
 import logging
 from uuid import UUID
 
+from chat.context import assemble_chat_context
 from chat.prompts import build_proposal_system_prompt, build_proposal_user_prompt
+from chat.token_budget import TokenBudget
 from contracts.models import ActionProposal, ChatIntent, ChatTurnRequest, ChatTurnResponse
 from orchestration.deps import GenerationDeps
 from orchestration.prompts import JSONExtractionError, extract_json_object
@@ -45,7 +47,21 @@ async def build_action_proposal(
     sets needs_clarification=True.
     """
     system = build_proposal_system_prompt(request.map_snapshot)
-    user_msg = build_proposal_user_prompt(request.message, request.history)
+    assembled = assemble_chat_context(
+        current_message=request.message,
+        history=request.history,
+        summary=request.summary,
+        budget=TokenBudget(
+            max_context_tokens=deps.settings.llm.max_output_tokens,
+            reserved_response_tokens=_PROPOSAL_MAX_TOKENS,
+        ),
+        system_prompt=system,
+    )
+    user_msg = build_proposal_user_prompt(
+        request.message,
+        assembled.recent_messages,
+        summary=assembled.summary,
+    )
 
     # LLM call — single turn, no retry (parse errors become clarifications)
     try:

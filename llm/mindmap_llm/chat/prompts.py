@@ -50,6 +50,21 @@ def _format_history(history: list[ChatMessage]) -> str:
     return "\n".join(lines)
 
 
+def format_conversation_context(
+    history: list[ChatMessage],
+    summary: str | None = None,
+) -> list[str]:
+    """Format summary and recent messages into prompt sections."""
+    sections: list[str] = []
+    if summary and summary.strip():
+        sections.append(f"## Historical Conversation Summary (Background Context Only)\n{summary.strip()}")
+    history_block = _format_history(history)
+    if history_block:
+        header = "## Recent Conversation" if summary else "## Conversation History"
+        sections.append(f"{header}\n\n{history_block}")
+    return sections
+
+
 def _format_chunks(chunks: list[RetrievedChunkRecord]) -> str:
     if not chunks:
         return "(no additional reference material retrieved)"
@@ -84,12 +99,11 @@ def build_chat_qa_user_prompt(
     message: str,
     history: list[ChatMessage],
     chunks: list[RetrievedChunkRecord],
+    summary: str | None = None,
 ) -> str:
-    history_block = _format_history(history)
     chunks_block = _format_chunks(chunks)
     parts = []
-    if history_block:
-        parts.append(f"## Conversation History\n\n{history_block}")
+    parts.extend(format_conversation_context(history, summary))
     parts.append(f"## Reference Material\n\n{chunks_block}")
     parts.append(f"## User Question\n\n{message}")
     return "\n\n".join(parts)
@@ -109,10 +123,14 @@ def build_small_talk_system_prompt() -> str:
     )
 
 
-def build_small_talk_user_prompt(message: str, history: list[ChatMessage]) -> str:
-    history_block = _format_history(history)
-    if history_block:
-        return f"{history_block}\nUser: {message}"
+def build_small_talk_user_prompt(
+    message: str,
+    history: list[ChatMessage],
+    summary: str | None = None,
+) -> str:
+    sections = format_conversation_context(history, summary)
+    if sections:
+        return "\n\n".join(sections) + f"\n\nUser: {message}"
     return message
 
 
@@ -151,8 +169,14 @@ def build_proposal_system_prompt(map_snapshot: MapSnapshot) -> str:
     )
 
 
-def build_proposal_user_prompt(message: str, history: list[ChatMessage]) -> str:
-    history_block = _format_history(history)
-    if history_block:
-        return f"## Conversation so far\n\n{history_block}\n\n## User request\n\n{message}"
-    return message
+def build_proposal_user_prompt(
+    message: str,
+    history: list[ChatMessage],
+    summary: str | None = None,
+) -> str:
+    sections = format_conversation_context(history, summary)
+    parts = []
+    if sections:
+        parts.extend(sections)
+    parts.append(f"## User request\n\n{message}")
+    return "\n\n".join(parts)

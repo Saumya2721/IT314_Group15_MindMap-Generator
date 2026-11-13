@@ -241,9 +241,24 @@ class ChatTurnRequest(BaseModel):
     map_id: UUID
     message: str
     history: list[ChatMessage] = Field(default_factory=list)
+    summary: str | None = None  # Rolling conversation summary from backend (S2-L9 / US-15)
     map_snapshot: MapSnapshot
     callback_base_url: str
     callback_token: str
+
+
+class SummarizeRequest(BaseModel):
+    """Payload to trigger summarisation of older messages (S2-L9 / US-15)."""
+
+    messages: list[ChatMessage] = Field(default_factory=list)
+    previous_summary: str | None = None
+
+
+class SummarizeResult(BaseModel):
+    """Result of a summarisation operation."""
+
+    summary: str
+    tokens_estimated: int = 0
 
 
 class ActionProposal(BaseModel):
