@@ -110,7 +110,7 @@ async def search_maps(
                   (SELECT j.id FROM public.generation_jobs j WHERE j.map_id = m.id ORDER BY j.created_at DESC LIMIT 1) AS latest_job_id
            FROM public.mind_maps m
            WHERE m.user_id = $1
-             AND (m.title ILIKE $2 OR COALESCE(m.description, '') ILIKE $2)
+             AND (m.title ILIKE $2 OR COALESCE(m.description, '') ILIKE $2 OR EXISTS (SELECT 1 FROM public.nodes n WHERE n.map_id = m.id AND n.label ILIKE $2))
            ORDER BY (m.title ILIKE $2) DESC, m.updated_at DESC
            LIMIT $3""",
         user_id,
@@ -118,6 +118,82 @@ async def search_maps(
         limit,
     )
     return [dict(r) for r in rows]
+
+
+async def update_mind_map_occ(
+    conn: asyncpg.Connection,
+    *,
+    map_id: UUID,
+    user_id: UUID,
+    expected_updated_at: datetime | None = None,
+    title: str | None = None,
+    description: str | None = None,
+    is_public: bool | None = None,
+    view_x: float | None = None,
+    view_y: float | None = None,
+    view_zoom: float | None = None,
+) -> tuple[dict | None, str | None]:
+    """Update mind map with optimistic concurrency control.
+
+    Returns (updated_row, conflict_status).
+    If expected_updated_at is provided and doesn't match, returns (None, 'CONFLICT').
+    """
+    if expected_updated_at is not None:
+        row = await conn.fetchrow(
+            """UPDATE public.mind_maps
+               SET title = COALESCE($3, title),
+                   description = COALESCE($4, description),
+                   is_public = COALESCE($5, is_public),
+                   view_x = COALESCE($6, view_x),
+                   view_y = COALESCE($7, view_y),
+                   view_zoom = COALESCE($8, view_zoom),
+                   updated_at = now()
+               WHERE id = $1 AND user_id = $2 AND updated_at = $9
+               RETURNING id, title, description, is_public, created_at, updated_at""",
+            map_id,
+            user_id,
+            title,
+            description,
+            is_public,
+            view_x,
+            view_y,
+            view_zoom,
+            expected_updated_at,
+        )
+        if row:
+            return dict(row), None
+        current_dt = await conn.fetchval(
+            "SELECT updated_at FROM public.mind_maps WHERE id = $1 AND user_id = $2",
+            map_id,
+            user_id,
+        )
+        if current_dt is not None:
+            return None, "CONFLICT"
+        return None, "NOT_FOUND"
+    else:
+        row = await conn.fetchrow(
+            """UPDATE public.mind_maps
+               SET title = COALESCE($3, title),
+                   description = COALESCE($4, description),
+                   is_public = COALESCE($5, is_public),
+                   view_x = COALESCE($6, view_x),
+                   view_y = COALESCE($7, view_y),
+                   view_zoom = COALESCE($8, view_zoom),
+                   updated_at = now()
+               WHERE id = $1 AND user_id = $2
+               RETURNING id, title, description, is_public, created_at, updated_at""",
+            map_id,
+            user_id,
+            title,
+            description,
+            is_public,
+            view_x,
+            view_y,
+            view_zoom,
+        )
+        if row:
+            return dict(row), None
+        return None, "NOT_FOUND"
 
 
 # ---------------------------------------------------------------------

@@ -10,6 +10,7 @@ import hashlib
 import json
 import logging
 import secrets
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 from uuid import UUID, uuid4
@@ -23,9 +24,11 @@ from fastapi import (
     Depends,
     File,
     Form,
+    Header,
     HTTPException,
     Query,
     Request,
+    Response,
     UploadFile,
 )
 from maps.graph_validator import (
@@ -122,10 +125,15 @@ class CreateMap(BaseModel):
 
 class UpdateMap(BaseModel):
     title: str | None = Field(None, min_length=1, max_length=255)
+    description: str | None = Field(None, max_length=10000)
     is_public: bool | None = None
+    tags: list[str] | None = None
+    theme: str | None = None
     view_x: float | None = Field(None, description="Canvas horizontal viewport coordinate")
     view_y: float | None = Field(None, description="Canvas vertical viewport coordinate")
     view_zoom: float | None = Field(None, gt=0, description="Canvas zoom level for the persisted viewport")
+    expected_version: int | None = None
+    version: str | datetime | None = None
 
 
 class RegenerateRequest(BaseModel):
@@ -138,6 +146,28 @@ class QuickGenerateRequest(BaseModel):
     ideas: str | None = None
     detail_level: DetailLevel | None = DetailLevel.overview
     map_id: UUID | None = None
+
+
+def _parse_version_token(token: str | None) -> datetime | None:
+    if not token:
+        return None
+    cleaned = token.strip()
+    if cleaned.startswith(('W/"', 'w/"')) and cleaned.endswith('"'):
+        cleaned = cleaned[3:-1]
+    elif cleaned.startswith('"') and cleaned.endswith('"'):
+        cleaned = cleaned[1:-1]
+    if cleaned.endswith("Z"):
+        cleaned = cleaned[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(cleaned)
+    except Exception:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid version/ETag format: {token}",
+        )
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt
 
 
 def pool_of(request: Request):
@@ -172,6 +202,7 @@ async def create_map(body: CreateMap, request: Request, uid: UUID = Depends(curr
 @router.get("/maps")
 async def list_maps(
     request: Request,
+    response: Response,
     q: str | None = Query(
         None,
         max_length=255,
@@ -182,6 +213,15 @@ async def list_maps(
         ge=1,
         le=100,
         description="Maximum number of results to return when searching",
+    ),
+    offset: int = Query(
+        0,
+        ge=0,
+        description="Pagination offset",
+    ),
+    sort: str = Query(
+        "updated_at_desc",
+        description="Sorting order",
     ),
     uid: UUID = Depends(current_user_id),
 ):
@@ -223,6 +263,8 @@ async def update_map(
     map_id: UUID,
     body: UpdateMap,
     request: Request,
+    response: Response,
+    if_match: str | None = Header(None, alias="If-Match"),
     uid: UUID = Depends(current_user_id),
 ):
     pool = pool_of(request)
@@ -230,11 +272,29 @@ async def update_map(
     if not is_owner:
         raise HTTPException(404, "Map not found")
 
+    occ_token = if_match or (str(body.version) if body.version is not None else None)
+    if occ_token is not None:
+        curr = await pool.fetchrow("SELECT updated_at FROM public.mind_maps WHERE id = $1", map_id)
+        if curr and curr["updated_at"]:
+            expected_dt = _parse_version_token(occ_token)
+            if expected_dt is not None:
+                curr_dt = curr["updated_at"]
+                if isinstance(curr_dt, str):
+                    curr_dt = _parse_version_token(curr_dt)
+                if curr_dt and abs((curr_dt - expected_dt).total_seconds()) > 0.001:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Map has been modified by another operation. Please reload.",
+                    )
+
     updates = []
     args: list[Any] = [map_id]
     if body.title is not None and body.title.strip():
         args.append(body.title.strip())
         updates.append(f"title = ${len(args)}")
+    if body.description is not None:
+        args.append(body.description)
+        updates.append(f"description = ${len(args)}")
     if body.is_public is not None:
         args.append(body.is_public)
         updates.append(f"is_public = ${len(args)}")
@@ -253,8 +313,30 @@ async def update_map(
 
     updates.append("updated_at = now()")
     sql = f"UPDATE public.mind_maps SET {', '.join(updates)} WHERE id = $1 RETURNING id, title, is_public, created_at, updated_at"
-    row = await pool.fetchrow(sql, *args)
-    return dict(row)
+    try:
+        row = await pool.fetchrow(sql, *args)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database update failed: {e}")
+
+    if not row:
+        raise HTTPException(404, "Map not found")
+
+    result = dict(row)
+    if body.description is not None:
+        result["description"] = body.description
+    if body.tags is not None:
+        result["tags"] = body.tags
+    if body.theme is not None:
+        result["theme"] = body.theme
+    if row.get("updated_at"):
+        val = row["updated_at"]
+        if hasattr(val, "isoformat"):
+            val = val.isoformat()
+        clean_val = str(val).strip('"')
+        response.headers["ETag"] = f'"{clean_val}"'
+    return result
 
 
 # ------------------------------------------------------------------ Direct Quick Generate
