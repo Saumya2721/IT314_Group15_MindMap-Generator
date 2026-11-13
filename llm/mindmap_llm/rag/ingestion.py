@@ -68,7 +68,9 @@ def _split_into_boundary_chunks(
         if total_len - start <= chunk_size:
             final_slice = text[start:].strip()
             if final_slice and total_len > last_end:
-                chunks.append(TextChunk(final_slice, breadcrumb=breadcrumb, heading_level=heading_level, page_number=page_number))
+                chunks.append(
+                    TextChunk(final_slice, breadcrumb=breadcrumb, heading_level=heading_level, page_number=page_number)
+                )
             break
 
         target_end = min(start + chunk_size, total_len)
@@ -103,7 +105,9 @@ def _split_into_boundary_chunks(
         chunk_end = start + split_pos
         chunk_content = text[start:chunk_end].strip()
         if chunk_content and chunk_end > last_end:
-            chunks.append(TextChunk(chunk_content, breadcrumb=breadcrumb, heading_level=heading_level, page_number=page_number))
+            chunks.append(
+                TextChunk(chunk_content, breadcrumb=breadcrumb, heading_level=heading_level, page_number=page_number)
+            )
             last_end = chunk_end
 
         if chunk_end >= total_len:
@@ -158,7 +162,9 @@ def chunk_text(
             if current_lines:
                 content = "\n".join(current_lines).strip()
                 if content:
-                    sections.append((current_breadcrumb(), heading_stack[-1][0] if heading_stack else None, current_page, content))
+                    sections.append(
+                        (current_breadcrumb(), heading_stack[-1][0] if heading_stack else None, current_page, content)
+                    )
                 current_lines = []
             current_page = int(page_match.group(1))
             continue
@@ -168,7 +174,9 @@ def chunk_text(
             if current_lines:
                 content = "\n".join(current_lines).strip()
                 if content:
-                    sections.append((current_breadcrumb(), heading_stack[-1][0] if heading_stack else None, current_page, content))
+                    sections.append(
+                        (current_breadcrumb(), heading_stack[-1][0] if heading_stack else None, current_page, content)
+                    )
                 current_lines = []
 
             hashes, title = match.groups()
@@ -186,7 +194,9 @@ def chunk_text(
     if current_lines:
         content = "\n".join(current_lines).strip()
         if content:
-            sections.append((current_breadcrumb(), heading_stack[-1][0] if heading_stack else None, current_page, content))
+            sections.append(
+                (current_breadcrumb(), heading_stack[-1][0] if heading_stack else None, current_page, content)
+            )
 
     # If document had headings but no trailing body text
     if not sections and heading_stack:
