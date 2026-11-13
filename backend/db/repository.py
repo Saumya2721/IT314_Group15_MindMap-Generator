@@ -205,7 +205,6 @@ async def update_mind_map_occ(
         updates.append(f"is_public = ${len(args)}")
 
     if not updates:
-        # No actual fields changed, but verify existence and version
         current_map = await conn.fetchrow(
             "SELECT id, title, description, is_public, created_at, updated_at FROM public.mind_maps WHERE id = $1 AND user_id = $2",
             map_id,
@@ -217,11 +216,9 @@ async def update_mind_map_occ(
             return None, "CONFLICT"
         return dict(current_map), None
 
-    # Append expected_updated_at to WHERE clause
     args.append(expected_updated_at)
     version_idx = len(args)
 
-    # Note: trg_mind_maps_updated_at trigger will update updated_at automatically
     sql = f"""
         UPDATE public.mind_maps
         SET {", ".join(updates)}
@@ -233,7 +230,6 @@ async def update_mind_map_occ(
     if row:
         return dict(row), None
 
-    # If 0 rows updated, disambiguate between NOT_FOUND and CONFLICT
     existing_updated_at = await conn.fetchval(
         "SELECT updated_at FROM public.mind_maps WHERE id = $1 AND user_id = $2",
         map_id,
@@ -542,7 +538,8 @@ async def replace_map_graph(
     await conn.execute("DELETE FROM public.nodes WHERE map_id = $1", map_id)
     await persist_generated_graph(conn, map_id=map_id, source_job_id=source_job_id, nodes=nodes, edges=edges)
 
- async def replace_node_branch(
+
+async def replace_node_branch(
     conn: asyncpg.Connection,
     *,
     map_id: UUID,
