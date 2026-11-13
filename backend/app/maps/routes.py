@@ -307,10 +307,7 @@ async def update_map(
     expected_updated_at = _parse_version_token(raw_version)
 
     # 2. Check at least one field is being updated
-    has_changes = any(
-        x is not None
-        for x in (body.title, body.description, body.tags, body.theme, body.is_public)
-    )
+has_changes = any(x is not None for x in (body.title, body.description, body.tags, body.theme, body.is_public))
     if not has_changes:
         raise HTTPException(status_code=400, detail="No fields to update")
 
