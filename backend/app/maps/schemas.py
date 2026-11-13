@@ -221,6 +221,7 @@ class CommentResponse(BaseModel):
     node_id: UUID
     user_id: UUID
     content: str
+    status: str = "open"
     created_at: datetime
     updated_at: datetime
 

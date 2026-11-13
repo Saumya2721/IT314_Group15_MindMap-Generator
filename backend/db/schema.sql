@@ -394,6 +394,31 @@ CREATE UNIQUE INDEX uq_edges_source_target_label
     ON public.edges (source_node_id, target_node_id, label) NULLS NOT DISTINCT;
 
 -- =====================================================================
+-- 9a. NODE COMMENTS (refinement instructions and collaboration notes)
+-- =====================================================================
+CREATE TABLE public.node_comments (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    map_id      UUID NOT NULL REFERENCES public.mind_maps(id) ON DELETE CASCADE,
+    node_id     UUID NOT NULL REFERENCES public.nodes(id) ON DELETE CASCADE,
+    user_id     UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    content     TEXT NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'resolved')),
+    body        TEXT GENERATED ALWAYS AS (content) STORED,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    CONSTRAINT chk_node_comment_content_non_empty CHECK (LENGTH(BTRIM(content)) > 0)
+);
+
+CREATE INDEX idx_node_comments_node_id ON public.node_comments (node_id);
+CREATE INDEX idx_node_comments_map_id ON public.node_comments (map_id);
+CREATE INDEX idx_node_comments_node_status ON public.node_comments (node_id, status);
+
+CREATE TRIGGER trg_node_comments_updated_at
+    BEFORE UPDATE ON public.node_comments
+    FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+-- =====================================================================
 -- 10. SEED CHUNKS / RETRIEVAL METADATA
 -- NOTE: In the decoupled worker architecture, dense vector embeddings and
 -- similarity search are owned by Pinecone (namespaced per map_id).
@@ -554,6 +579,30 @@ $$;
 CREATE TRIGGER trg_generation_jobs_trigger_message_same_map
     BEFORE INSERT OR UPDATE OF triggered_by_message_id, map_id ON public.generation_jobs
     FOR EACH ROW EXECUTE FUNCTION public.check_job_trigger_message_same_map();
+
+
+-- Same-map integrity trigger for node comments
+CREATE OR REPLACE FUNCTION public.check_node_comment_same_map()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM public.nodes WHERE id = NEW.node_id AND map_id = NEW.map_id
+    ) THEN
+        RAISE EXCEPTION 'node_comment %: node_id % does not belong to map %',
+            NEW.id, NEW.node_id, NEW.map_id;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_node_comments_same_map ON public.node_comments;
+CREATE TRIGGER trg_node_comments_same_map
+    BEFORE INSERT OR UPDATE OF node_id, map_id ON public.node_comments
+    FOR EACH ROW EXECUTE FUNCTION public.check_node_comment_same_map();
 
 -- =====================================================================
 -- 12. ROW LEVEL SECURITY
@@ -748,6 +797,18 @@ CREATE POLICY embeddings_select_own ON public.embeddings
     FOR SELECT TO authenticated
     USING (private.is_map_owner(map_id));
 
+-- ---------- node_comments: CRUD if you own the parent map ----------
+ALTER TABLE public.node_comments ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY node_comments_select_own ON public.node_comments
+    FOR SELECT TO authenticated
+    USING (private.is_map_owner(map_id));
+
+CREATE POLICY node_comments_all_own ON public.node_comments
+    FOR ALL TO authenticated
+    USING (private.is_map_owner(map_id))
+    WITH CHECK (private.is_map_owner(map_id));
+
 -- =====================================================================
 -- 13. TABLE PRIVILEGES (defence in depth on top of RLS)
 -- Supabase grants ALL on new public tables to anon and authenticated by
@@ -757,7 +818,7 @@ CREATE POLICY embeddings_select_own ON public.embeddings
 REVOKE ALL ON
     public.profiles, public.mind_maps, public.chat_threads, public.chat_messages,
     public.generation_jobs, public.seed_assets, public.nodes, public.edges,
-    public.embeddings
+    public.embeddings, public.node_comments
 FROM anon, authenticated;
 
 -- anon: may only read public maps (rows limited by the *_select_public policies)
@@ -779,6 +840,8 @@ GRANT SELECT, INSERT, DELETE ON public.edges TO authenticated;
 GRANT UPDATE (source_node_id, target_node_id, label, edge_data)
     ON public.edges TO authenticated;
 
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.node_comments TO authenticated;
+
 GRANT SELECT ON public.chat_threads, public.chat_messages, public.generation_jobs,
                 public.seed_assets, public.embeddings
     TO authenticated;
@@ -787,7 +850,7 @@ GRANT SELECT ON public.chat_threads, public.chat_messages, public.generation_job
 GRANT ALL ON
     public.profiles, public.mind_maps, public.chat_threads, public.chat_messages,
     public.generation_jobs, public.seed_assets, public.nodes, public.edges,
-    public.embeddings
+    public.embeddings, public.node_comments
 TO service_role;
 
 -- =====================================================================
