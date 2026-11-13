@@ -274,9 +274,7 @@ async def update_map(
 
     occ_token = if_match or (str(body.version) if body.version is not None else None)
     if occ_token is not None:
-        curr = await pool.fetchrow(
-            "SELECT updated_at FROM public.mind_maps WHERE id = $1", map_id
-        )
+        curr = await pool.fetchrow("SELECT updated_at FROM public.mind_maps WHERE id = $1", map_id)
         if curr and curr["updated_at"]:
             expected_dt = _parse_version_token(occ_token)
             if expected_dt is not None:
@@ -1833,5 +1831,4 @@ async def delete_map(map_id: UUID, request: Request, uid: UUID = Depends(current
     await delete_map_storage_files(user_id=uid, map_id=map_id, pool=pool)
 
     await pool.execute("DELETE FROM public.mind_maps WHERE id = $1", map_id)
-    return {"message": "Map deleted successfully"}   
-
+    return {"message": "Map deleted successfully"}
