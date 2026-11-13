@@ -4,7 +4,6 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
-
 from contracts.models import ChunkSource
 from orchestration.nodes import reconstruct_seed_from_namespace
 from rag.ingestion import StructureAwareChunker, ingest_seed_text, ingest_tool_result
