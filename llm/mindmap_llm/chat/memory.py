@@ -104,4 +104,3 @@ async def summarize_conversation(
     except Exception:
         logger.exception("Summarisation call failed; falling back to previous summary")
         return previous_summary or ""
-

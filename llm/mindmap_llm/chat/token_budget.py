@@ -106,4 +106,3 @@ def trim_history_to_budget(
     # Restore chronological order
     kept.reverse()
     return kept, effective_summary
-

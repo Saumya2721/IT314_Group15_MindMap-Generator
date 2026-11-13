@@ -122,3 +122,36 @@
 .flow-handle:hover {
   transform: scale(1.3);
 }
+
+/* Inline Node Editing Input */
+.node-inline-input {
+  width: 100%;
+  border: 1px solid var(--primary, #155e63);
+  border-radius: var(--radius-sm, 4px);
+  padding: 4px 6px;
+  background-color: #ffffff;
+  color: var(--on-surface, #181d1a);
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(21, 94, 99, 0.2);
+  margin-top: 4px;
+  margin-bottom: 4px;
+  box-sizing: border-box;
+}
+
+.root-flow-node .node-inline-input {
+  font-family: var(--font-headline, 'Cinzel', serif);
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.branch-flow-node .node-inline-input {
+  font-family: var(--font-headline, 'Cinzel', serif);
+  font-size: 14.5px;
+  font-weight: 600;
+}
+
+.concept-flow-node .node-inline-input {
+  font-family: var(--font-body, 'Newsreader', serif);
+  font-size: 13.5px;
+  font-weight: 600;
+}

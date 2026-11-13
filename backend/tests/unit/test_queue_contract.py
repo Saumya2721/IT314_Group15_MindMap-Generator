@@ -115,23 +115,86 @@ async def test_create_generation_job_string_and_enum():
     assert job_enum.job_type in (JobType.REGENERATE_FULL, "regenerate_full")
 
 
-def test_reject_node_regeneration_intake_501():
+def test_node_regeneration_intake_202():
     client = TestClient(main.app)
     fake_uid = uuid.uuid4()
     map_id = uuid.uuid4()
     node_id = uuid.uuid4()
 
     mock_pool = MagicMock()
-    # User is owner
-    mock_pool.fetchval = AsyncMock(side_effect=[True, True])
+    mock_conn = MagicMock()
+    mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
+
+    async def mock_fetchrow(query, *args):
+        if "public.nodes" in query:
+            return {
+                "id": node_id,
+                "map_id": map_id,
+                "label": "Target Node",
+                "description": "Desc",
+                "pos_x": 0.0,
+                "pos_y": 0.0,
+                "background_color": None,
+                "text_color": None,
+                "width": 100.0,
+                "height": 50.0,
+                "node_type": "default",
+                "source_job_id": None,
+                "node_data": None,
+                "created_at": datetime.now(UTC),
+                "updated_at": datetime.now(UTC),
+            }
+        return {"id": uuid.uuid4()}
+
+    mock_pool.fetchrow = AsyncMock(side_effect=mock_fetchrow)
+    mock_pool.fetchval = AsyncMock(side_effect=[True, None, None, uuid.uuid4()])
+    mock_pool.fetch = AsyncMock(return_value=[])
+
+    mock_redis = MagicMock()
+    mock_job = MagicMock()
+    mock_job.job_id = "arq-job-123"
+    mock_redis.enqueue_job = AsyncMock(return_value=mock_job)
     main.app.state.pool = mock_pool
+    main.app.state.redis_pool = mock_redis
+
+    job_row = {
+        "id": uuid.uuid4(),
+        "map_id": map_id,
+        "job_type": "regenerate_node",
+        "status": "pending",
+        "progress_percent": 0,
+        "error_message": None,
+        "created_at": datetime.now(UTC),
+        "started_at": None,
+        "completed_at": None,
+        "triggered_by_message_id": None,
+        "target_node_id": node_id,
+        "callback_token_hash": "dummy",
+    }
+
+    async def mock_conn_fetchrow(query, *args):
+        if "generation_jobs" in query:
+            return job_row
+        return {"id": uuid.uuid4()}
+
+    mock_conn.transaction.return_value.__aenter__.return_value = mock_conn
+    mock_conn.fetchrow = AsyncMock(side_effect=mock_conn_fetchrow)
+    mock_conn.fetchval = AsyncMock(return_value=uuid.uuid4())
+    mock_conn.execute = AsyncMock()
 
     main.app.dependency_overrides[current_user_id] = lambda: fake_uid
 
     try:
-        resp = client.post(f"/api/maps/{map_id}/nodes/{node_id}/regenerate")
-        assert resp.status_code == 501
-        assert "not yet supported" in resp.json()["detail"].lower()
+        resp = client.post(
+            f"/api/maps/{map_id}/nodes/{node_id}/regenerate",
+            json={"instruction": "Expand this branch with more concepts"},
+        )
+        assert resp.status_code == 202
+        data = resp.json()
+        assert data["status"] == "accepted"
+        assert data["map_id"] == str(map_id)
+        assert data["target_node_id"] == str(node_id)
+        assert "poll" in data
     finally:
         main.app.dependency_overrides.pop(current_user_id, None)
 

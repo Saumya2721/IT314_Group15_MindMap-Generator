@@ -1,0 +1,78 @@
+/* DashboardSearchSkeleton.css — loading skeleton for server-backed search (S2-FE5 / US-08) */
+
+.dashboard-skeleton-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-lg);
+  padding-bottom: 64px;
+}
+
+@media (min-width: 640px) {
+  .dashboard-skeleton-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (min-width: 1024px) {
+  .dashboard-skeleton-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+.skeleton-card {
+  background-color: var(--surface-container-lowest);
+  border: 1px dashed var(--structural-border);
+  border-radius: var(--radius-lg);
+  height: 340px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.skeleton-line {
+  height: 16px;
+  background-color: var(--surface-container-highest);
+  border-radius: 4px;
+  margin: 0 var(--space-md);
+}
+
+.skeleton-title {
+  width: 55%;
+  height: 20px;
+  margin-top: 18px;
+  animation: skeleton-shimmer 1.4s infinite linear;
+}
+
+.skeleton-meta {
+  width: 35%;
+  height: 14px;
+  margin-top: 8px;
+  animation: skeleton-shimmer 1.4s infinite linear 0.2s;
+}
+
+.skeleton-text {
+  width: 70%;
+  height: 12px;
+  margin-top: 24px;
+  animation: skeleton-shimmer 1.4s infinite linear 0.4s;
+}
+
+.skeleton-text-short {
+  width: 40%;
+  height: 12px;
+  margin-top: 10px;
+  animation: skeleton-shimmer 1.4s infinite linear 0.6s;
+}
+
+@keyframes skeleton-shimmer {
+  0% {
+    background-color: var(--surface-container-highest);
+  }
+  50% {
+    background-color: rgba(191, 200, 201, 0.35);
+  }
+  100% {
+    background-color: var(--surface-container-highest);
+  }
+}

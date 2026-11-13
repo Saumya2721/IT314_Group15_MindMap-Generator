@@ -54,6 +54,7 @@ class VectorChunk:
     source_title: str | None = None
     source_url: str | None = None
     id: str = field(default_factory=lambda: str(uuid4()))
+    section_path: str | None = None
 
 
 @dataclass
@@ -67,6 +68,7 @@ class RetrievedChunkRecord:
     source_title: str | None
     source_url: str | None
     score: float  # Pinecone's own similarity score (pre-rerank)
+    section_path: str | None = None
 
 
 class PineconeVectorStore:
@@ -135,17 +137,20 @@ class PineconeVectorStore:
         for c in chunks:
             sparse = self._sparse_vector(c.chunk_text)
             dense, sparse = self._scale(c.embedding, sparse, self._dense_weight)
+            metadata = {
+                "chunk_text": c.chunk_text,
+                "embedding_model": c.embedding_model,
+                "source": c.source.value,
+                "generation_job_id": str(c.generation_job_id),
+                "source_title": c.source_title or "",
+                "source_url": c.source_url or "",
+            }
+            if c.section_path:
+                metadata["section_path"] = c.section_path
             entry = {
                 "id": c.id,
                 "values": dense,
-                "metadata": {
-                    "chunk_text": c.chunk_text,
-                    "embedding_model": c.embedding_model,
-                    "source": c.source.value,
-                    "generation_job_id": str(c.generation_job_id),
-                    "source_title": c.source_title or "",
-                    "source_url": c.source_url or "",
-                },
+                "metadata": metadata,
             }
             if sparse is not None:
                 entry["sparse_values"] = sparse
@@ -187,6 +192,7 @@ class PineconeVectorStore:
                 source_title=match["metadata"].get("source_title") or None,
                 source_url=match["metadata"].get("source_url") or None,
                 score=match["score"],
+                section_path=match["metadata"].get("section_path") or None,
             )
             for match in result.get("matches", [])
         ]
@@ -219,6 +225,7 @@ class PineconeVectorStore:
                 source_title=match["metadata"].get("source_title") or None,
                 source_url=match["metadata"].get("source_url") or None,
                 score=match["score"],
+                section_path=match["metadata"].get("section_path") or None,
             )
             for match in result.get("matches", [])
         ]

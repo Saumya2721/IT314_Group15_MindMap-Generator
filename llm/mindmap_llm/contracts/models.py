@@ -15,9 +15,9 @@ from __future__ import annotations
 
 from enum import StrEnum
 from typing import Any, Literal
-from uuid import UUID
+from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 DetailLevel = Literal["overview", "balanced", "detailed"]
 
@@ -26,6 +26,7 @@ class JobType(StrEnum):
     GENERATE = "generate"
     REGENERATE_FULL = "regenerate_full"
     REGENERATE_NODE = "regenerate_node"
+    CHAT_TURN = "chat_turn"
 
 
 # ---------------------------------------------------------------------
@@ -112,13 +113,14 @@ class GenerationRequest(BaseModel):
     # backend does not need to resend seed text.
     regeneration_instruction: str | None = None
 
-    # Node-level regeneration (S2-L7):
+    # Node-level regeneration (S2-L7 / S2-BE7):
     # Selected node, attached comment/instruction, branch context, and ancestor labels.
     target_node_id: UUID | None = None
     selected_node: NodeDraft | None = None
     comment: str | None = None
+    instruction: str | None = None
     ancestor_labels: list[str] = Field(default_factory=list)
-    branch_context: BranchContext | None = None
+    branch_context: BranchContext | dict[str, Any] | None = None
     branch_nodes: list[NodeDraft] = Field(default_factory=list)
     branch_edges: list[EdgeDraft] = Field(default_factory=list)
 
@@ -131,21 +133,51 @@ class GenerationRequest(BaseModel):
     callback_base_url: str
     callback_token: str
 
+    # Short-term memory context (US-15 / S2-BE4): rolling summary + recent message turns
+    memory_context: dict[str, Any] | None = None
+
     @property
     def effective_branch_nodes(self) -> list[NodeDraft]:
-        if self.branch_context and self.branch_context.nodes:
-            return self.branch_context.nodes
+        if self.branch_context:
+            if isinstance(self.branch_context, BranchContext) and self.branch_context.nodes:
+                return self.branch_context.nodes
+            elif isinstance(self.branch_context, dict) and "nodes" in self.branch_context:
+                raw_nodes = self.branch_context.get("nodes", [])
+                return [NodeDraft.model_validate(n) if isinstance(n, dict) else n for n in raw_nodes]
         return self.branch_nodes
 
     @property
     def effective_branch_edges(self) -> list[EdgeDraft]:
-        if self.branch_context and self.branch_context.edges:
-            return self.branch_context.edges
+        if self.branch_context:
+            if isinstance(self.branch_context, BranchContext) and self.branch_context.edges:
+                return self.branch_context.edges
+            elif isinstance(self.branch_context, dict) and "edges" in self.branch_context:
+                raw_edges = self.branch_context.get("edges", [])
+                return [EdgeDraft.model_validate(e) if isinstance(e, dict) else e for e in raw_edges]
         return self.branch_edges
 
     @property
     def effective_comment(self) -> str | None:
-        return self.comment or self.regeneration_instruction
+        return self.comment or self.regeneration_instruction or self.instruction
+
+
+# ---------------------------------------------------------------------
+# Specialized Inbound Models (S2-BE7)
+# ---------------------------------------------------------------------
+
+
+class RegenerateNodeRequest(BaseModel):
+    job_id: UUID
+    map_id: UUID
+    target_node_id: UUID
+    job_type: JobType = JobType.REGENERATE_NODE
+    instruction: str | None = None
+    existing_node_label: str | None = None
+    existing_node_description: str | None = None
+    context: str | None = None
+    callback_base_url: str
+    callback_token: str
+    memory_context: dict[str, Any] | None = None
 
 
 # ---------------------------------------------------------------------
@@ -201,6 +233,7 @@ class GenerationResult(BaseModel):
     seed_assets: list[SeedAssetDraft] = Field(default_factory=list)
     rejected_files: list[RejectedFile] = Field(default_factory=list)
     tool_call_log: list[ToolCallLogEntry] = Field(default_factory=list)
+    quality_warnings: list[str] = Field(default_factory=list)
 
     error: GenerationError | None = None
 
@@ -217,7 +250,7 @@ class MapSnapshot(BaseModel):
     and validating node IDs in action proposals.
     """
 
-    map_id: UUID
+    map_id: UUID = Field(default_factory=uuid4)
     nodes: list[NodeDraft] = Field(default_factory=list)
     edges: list[EdgeDraft] = Field(default_factory=list)
 
@@ -230,21 +263,32 @@ class ChatMessage(BaseModel):
 
 
 class ChatTurnRequest(BaseModel):
-    """The payload the backend sends to the chat agent for one turn.
+    """The payload sent to the chat agent across the queue/callback interface."""
 
-    The namespace for Pinecone retrieval follows the existing convention:
-    ``str(map_id)``.  callback_base_url / callback_token are included for
-    consistency with GenerationRequest; the ARQ callback layer (S2-L10)
-    will use them — the agent itself does not make callback HTTP calls.
-    """
-
+    job_id: UUID | None = None
     map_id: UUID
+    job_type: JobType = JobType.CHAT_TURN
     message: str
+    thread_id: UUID | None = None
+    target_node_id: UUID | None = None
     history: list[ChatMessage] = Field(default_factory=list)
     summary: str | None = None  # Rolling conversation summary from backend (S2-L9 / US-15)
-    map_snapshot: MapSnapshot
-    callback_base_url: str
-    callback_token: str
+    rolling_summary: str | None = None
+    map_snapshot: MapSnapshot = Field(default_factory=lambda: MapSnapshot(map_id=uuid4()))
+    context_window: list[dict[str, Any]] = Field(default_factory=list)
+    callback_base_url: str = ""
+    callback_token: str = ""
+    memory_context: dict[str, Any] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def sync_summary(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if not data.get("summary") and data.get("rolling_summary"):
+                data["summary"] = data["rolling_summary"]
+            elif not data.get("rolling_summary") and data.get("summary"):
+                data["rolling_summary"] = data["summary"]
+        return data
 
 
 class SummarizeRequest(BaseModel):
@@ -268,10 +312,13 @@ class ActionProposal(BaseModel):
     change is applied through a separate flow (S2-L10 / S2-BE3).
     """
 
-    action_type: ChatIntent
+    action_type: ChatIntent | str
     target_node_ids: list[UUID] = Field(default_factory=list)
+    target_node_id: UUID | None = None
     parameters: dict[str, Any] = Field(default_factory=dict)
-    explanation: str
+    explanation: str = ""
+    instruction: str | None = None
+    description: str | None = None
 
 
 class ChatTurnResponse(BaseModel):
@@ -288,3 +335,24 @@ class ChatTurnResponse(BaseModel):
     source_refs: list[str] = Field(default_factory=list)
     needs_clarification: bool = False
     clarification_question: str | None = None
+
+
+class RegenerateNodeResult(BaseModel):
+    job_id: UUID
+    map_id: UUID
+    target_node_id: UUID
+    status: Literal["completed", "failed", "rejected"]
+    replacement_node: NodeDraft | None = None
+    new_subnodes: list[NodeDraft] = Field(default_factory=list)
+    new_edges: list[EdgeDraft] = Field(default_factory=list)
+    error: GenerationError | None = None
+
+
+class ChatTurnResult(BaseModel):
+    job_id: UUID
+    map_id: UUID
+    status: Literal["completed", "failed", "rejected"]
+    assistant_message: str | None = None
+    summary: str | None = None
+    proposed_action: dict[str, Any] | None = None
+    error: GenerationError | None = None
