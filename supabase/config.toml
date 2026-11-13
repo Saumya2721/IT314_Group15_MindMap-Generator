@@ -155,7 +155,7 @@ max_indexes = 5
 enabled = true
 # The base URL of your website. Used as an allow-list for redirects and for constructing URLs used
 # in emails.
-# Matches the backend default FRONTEND_URL (backend/core/config.py).
+# Matches the backend default FRONTEND_URL (backend/app/core/config.py).
 site_url = "http://localhost:3000"
 # The public URL that Auth serves on. Defaults to the API external URL with `/auth/v1` appended.
 # external_url = ""
@@ -342,7 +342,7 @@ skip_nonce_check = false
 # If enabled, it will allow the user to successfully authenticate when the provider does not return an email address.
 email_optional = false
 
-# Google sign-in (FR-03 / FR-39). Used by backend/auth/service.py:
+# Google sign-in (FR-03 / FR-39). Used by backend/app/auth/service.py:
 # sign_in_with_oauth(provider="google") + exchange_code_for_session().
 # Disabled by default so `supabase start` works without Google credentials.
 # To use it locally: export the two variables below (never commit them), set
