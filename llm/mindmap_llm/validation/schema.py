@@ -24,7 +24,7 @@ EdgeRecord — the worker never inserts these anywhere itself.
 from __future__ import annotations
 
 import re
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from contracts.models import EdgeDraft, NodeDraft
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -165,9 +165,146 @@ def resolve_to_records(draft: DraftMindMap) -> tuple[list[NodeDraft], list[EdgeD
     GenerationResult. No map_id is threaded through here anymore — the
     backend already knows which map a job belongs to from the job row
     itself, so the result doesn't need to repeat it per node/edge."""
-    from uuid import UUID
-
     id_map: dict[str, UUID] = {n.id: uuid4() for n in draft.nodes}
+
+    nodes = [
+        NodeDraft(
+            id=id_map[n.id],
+            label=n.label,
+            description=n.description,
+            node_type=n.node_type,
+            background_color=n.background_color,
+            text_color=n.text_color,
+            sources=n.sources,
+        )
+        for n in draft.nodes
+    ]
+    edges = [
+        EdgeDraft(
+            id=uuid4(),
+            source_node_id=id_map[e.source],
+            target_node_id=id_map[e.target],
+            label=e.label,
+        )
+        for e in draft.edges
+    ]
+    return nodes, edges
+
+
+def validate_branch_draft(
+    payload: dict,
+    *,
+    selected_node: NodeDraft,
+    allowed_node_ids: set[str] | None = None,
+    ancestor_labels: list[str] | None = None,
+) -> DraftMindMap:
+    """Validates the LLM draft for S2-L7 regenerate_node flow.
+
+    Enforces:
+      - Valid DraftMindMap topology (single branch root, connectedness, unique IDs, etc.)
+      - Branch root ID preservation: rejects attempts to change the branch root ID.
+      - Ancestor immutability: ancestors are read-only; ancestor labels cannot be nodes.
+      - Allowed IDs scoping: rejects any node or reference with IDs outside allowed_node_ids.
+    """
+    draft = validate_draft(payload)
+    errors: list[str] = []
+
+    # 1. Identify branch root in draft (in-degree == 0)
+    incoming: dict[str, int] = {n.id: 0 for n in draft.nodes}
+    for e in draft.edges:
+        if e.target in incoming:
+            incoming[e.target] += 1
+    roots = [n_id for n_id, count in incoming.items() if count == 0]
+    if len(roots) != 1:
+        errors.append(f"Branch draft must have exactly one root, found {len(roots)}")
+        raise ValidationFailure(errors)
+
+    branch_root_id = roots[0]
+    selected_node_id_str = str(selected_node.id).lower()
+
+    # 2. Check for branch root ID modification
+    # Ensure selected_node.id is never assigned to a non-root child node
+    for n in draft.nodes:
+        if n.id != branch_root_id and n.id.lower() == selected_node_id_str:
+            errors.append(
+                f"Selected node ID {selected_node_id_str!r} cannot be assigned to non-root child node {n.id!r}"
+            )
+
+    # Check if the branch root node has an explicit ID (e.g. UUID) that doesn't match selected_node.id
+    is_root_provisional = (
+        bool(re.match(r"^n[0-9]+$", branch_root_id, re.IGNORECASE)) or branch_root_id.lower() == "root"
+    )
+    if not is_root_provisional and branch_root_id.lower() != selected_node_id_str:
+        errors.append(f"Branch root ID cannot be modified (expected {selected_node_id_str!r}, got {branch_root_id!r})")
+
+    # 3. Check for IDs outside the allowed branch
+    if allowed_node_ids is not None:
+        clean_allowed = {str(i).lower() for i in allowed_node_ids}
+        for n in draft.nodes:
+            is_prov = bool(re.match(r"^n[0-9]+$", n.id, re.IGNORECASE)) or n.id.lower() == "root"
+            if not is_prov:
+                try:
+                    UUID(n.id)
+                    is_uuid = True
+                except ValueError:
+                    is_uuid = False
+
+                if is_uuid and n.id.lower() not in clean_allowed:
+                    errors.append(f"Node ID {n.id!r} is outside the allowed branch (DR-03: branch boundary violation)")
+                elif not is_uuid and n.id.lower() not in clean_allowed:
+                    errors.append(f"Node ID {n.id!r} is outside the allowed branch")
+
+    # 4. Check ancestor labels (read-only context enforcement)
+    if ancestor_labels:
+        ancestor_set = {a.strip().lower() for a in ancestor_labels if a and a.strip()}
+        for n in draft.nodes:
+            # Ancestors must never be included as generated/modified nodes in the branch
+            if n.label.strip().lower() in ancestor_set:
+                errors.append(
+                    f"Ancestor label {n.label!r} cannot be included as a node in the regenerated branch (ancestors are read-only)"
+                )
+
+    if errors:
+        raise ValidationFailure(errors)
+
+    return draft
+
+
+def resolve_branch_to_records(
+    draft: DraftMindMap,
+    *,
+    selected_node: NodeDraft,
+    allowed_node_ids: set[str] | None = None,
+) -> tuple[list[NodeDraft], list[EdgeDraft]]:
+    """Resolves branch draft nodes and edges to wire-contract records.
+
+    The branch root is guaranteed to retain selected_node.id.
+    Descendants with existing allowed UUIDs keep them, while newly generated
+    nodes receive fresh UUIDs.
+    """
+    clean_allowed = {str(i).lower() for i in allowed_node_ids} if allowed_node_ids else set()
+
+    # Find root
+    incoming: dict[str, int] = {n.id: 0 for n in draft.nodes}
+    for e in draft.edges:
+        if e.target in incoming:
+            incoming[e.target] += 1
+    roots = [n_id for n_id, count in incoming.items() if count == 0]
+    root_id = roots[0]
+
+    id_map: dict[str, UUID] = {root_id: selected_node.id}
+
+    for n in draft.nodes:
+        if n.id == root_id:
+            continue
+        try:
+            parsed_uuid = UUID(n.id)
+            if str(parsed_uuid).lower() in clean_allowed:
+                id_map[n.id] = parsed_uuid
+            else:
+                id_map[n.id] = uuid4()
+        except ValueError:
+            id_map[n.id] = uuid4()
 
     nodes = [
         NodeDraft(

@@ -30,6 +30,8 @@ from orchestration.prompts import (
     JSONExtractionError,
     build_generation_system_prompt,
     build_generation_user_prompt,
+    build_regenerate_node_system_prompt,
+    build_regenerate_node_user_prompt,
     estimate_tokens,
     extract_json_object,
     size_targets,
@@ -40,7 +42,13 @@ from rag.ingestion import ingest_seed_text, ingest_tool_result
 from rag.retrieval import rerank_context, retrieve_context
 from seed.normalizer import NoUsableSeedContent
 from tools.base import ToolError
-from validation.schema import ValidationFailure, resolve_to_records, validate_draft
+from validation.schema import (
+    ValidationFailure,
+    resolve_branch_to_records,
+    resolve_to_records,
+    validate_branch_draft,
+    validate_draft,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -295,6 +303,106 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
         await deps.callback.progress(85)
         return {"nodes": nodes, "edges": edges, "validation_errors": []}
 
+    async def retrieve_branch_node(state: GenerationState) -> dict:
+        selected_node = state.get("selected_node")
+        if selected_node is None:
+            raise ValueError("regenerate_node requires state['selected_node']")
+
+        ancestor_labels = state.get("ancestor_labels", [])
+        breadcrumb = state.get("breadcrumb_path") or " > ".join([*ancestor_labels, selected_node.label])
+        comment = state.get("comment") or state.get("regeneration_instruction")
+        scoped_query = f"{breadcrumb}: {comment or selected_node.description or selected_node.label}"
+
+        candidates = await retrieve_context(
+            vector_store=deps.vector_store,
+            namespace=state["namespace"],
+            query=scoped_query,
+            embedding_provider=deps.embedding_provider,
+            top_k=deps.settings.generation.rag_top_k,
+        )
+        reranked = await rerank_context(
+            decision_model=deps.decision_model,
+            query=scoped_query,
+            candidates=candidates,
+            keep_top_k=deps.settings.generation.rag_rerank_top_k,
+        )
+
+        await deps.callback.progress(40)
+        return {"retrieved_chunks": reranked, "breadcrumb_path": breadcrumb}
+
+    async def generate_branch_node(state: GenerationState) -> dict:
+        selected_node = state.get("selected_node")
+        if selected_node is None:
+            raise ValueError("regenerate_node requires state['selected_node']")
+
+        ancestor_labels = state.get("ancestor_labels", [])
+        breadcrumb = state.get("breadcrumb_path") or " > ".join([*ancestor_labels, selected_node.label])
+        comment = state.get("comment") or state.get("regeneration_instruction")
+        branch_nodes = state.get("branch_nodes", [])
+        retrieved_chunks = state.get("retrieved_chunks", [])
+
+        system_prompt = build_regenerate_node_system_prompt()
+        prompt = build_regenerate_node_user_prompt(
+            selected_node_label=selected_node.label,
+            selected_node_description=selected_node.description,
+            comment=comment,
+            ancestor_labels=ancestor_labels,
+            breadcrumb_path=breadcrumb,
+            branch_context_nodes=branch_nodes,
+            supporting_context=retrieved_chunks,
+            previous_validation_errors=state.get("validation_errors") or None,
+        )
+
+        response = await deps.llm.generate(
+            [Message(role="user", content=prompt)],
+            system=system_prompt,
+            max_tokens=deps.settings.llm.max_output_tokens,
+            temperature=0.3,
+        )
+        try:
+            payload = extract_json_object(response.text or "")
+        except JSONExtractionError as exc:
+            return {"draft_payload": None, "validation_errors": [str(exc)]}
+
+        await deps.callback.progress(70)
+        return {"draft_payload": payload}
+
+    async def validate_branch_node(state: GenerationState) -> dict:
+        payload = state.get("draft_payload")
+        retry_count = state.get("retry_count", 0)
+
+        if payload is None:
+            return {
+                "validation_errors": state.get("validation_errors", ["No draft produced"]),
+                "retry_count": retry_count + 1,
+            }
+
+        selected_node = state.get("selected_node")
+        if selected_node is None:
+            raise ValueError("regenerate_node requires state['selected_node']")
+
+        allowed_ids = state.get("allowed_node_ids")
+        if allowed_ids is None:
+            allowed_ids = {str(selected_node.id), *(str(n.id) for n in state.get("branch_nodes", []))}
+
+        try:
+            draft = validate_branch_draft(
+                payload,
+                selected_node=selected_node,
+                allowed_node_ids=allowed_ids,
+                ancestor_labels=state.get("ancestor_labels", []),
+            )
+        except ValidationFailure as exc:
+            return {"validation_errors": exc.errors, "retry_count": retry_count + 1}
+
+        nodes, edges = resolve_branch_to_records(
+            draft,
+            selected_node=selected_node,
+            allowed_node_ids=allowed_ids,
+        )
+        await deps.callback.progress(85)
+        return {"nodes": nodes, "edges": edges, "validation_errors": []}
+
     async def finalize_success_node(state: GenerationState) -> dict:
         """No I/O — just marks the state terminal. worker/tasks.py reports
         100% and calls callback.complete() after the graph returns."""
@@ -316,6 +424,9 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
         "validate": validate_node,
         "finalize_success": finalize_success_node,
         "finalize_failure": finalize_failure_node,
+        "retrieve_branch": retrieve_branch_node,
+        "generate_branch": generate_branch_node,
+        "validate_branch": validate_branch_node,
     }
 
 

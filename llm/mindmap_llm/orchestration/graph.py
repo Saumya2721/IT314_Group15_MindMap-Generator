@@ -60,3 +60,55 @@ async def run_generation(
     seeded_state: GenerationState = {**initial_state, "_max_retries": max_retries, "retry_count": 0}  # type: ignore[typeddict-item]
     final_state = await graph.ainvoke(seeded_state)
     return final_state
+
+
+def _validate_branch_router(state: GenerationState) -> str:
+    """After validate_branch: proceed to finalize_success on success, retry
+    generate_branch with feedback on a recoverable failure, or give up and
+    go to finalize_failure once max_generation_retries is exhausted."""
+    if not state.get("validation_errors"):
+        return "finalize_success"
+    max_retries = state.get("_max_retries", 2)
+    if state.get("retry_count", 0) <= max_retries:
+        return "generate_branch"
+    return "finalize_failure"
+
+
+def build_regenerate_node_graph(deps: GenerationDeps):
+    nodes = make_nodes(deps)
+
+    graph = StateGraph(GenerationState)
+    graph.add_node("retrieve_branch", nodes["retrieve_branch"])
+    graph.add_node("generate_branch", nodes["generate_branch"])
+    graph.add_node("validate_branch", nodes["validate_branch"])
+    graph.add_node("finalize_success", nodes["finalize_success"])
+    graph.add_node("finalize_failure", nodes["finalize_failure"])
+
+    graph.set_entry_point("retrieve_branch")
+    graph.add_edge("retrieve_branch", "generate_branch")
+    graph.add_edge("generate_branch", "validate_branch")
+    graph.add_conditional_edges(
+        "validate_branch",
+        _validate_branch_router,
+        {
+            "finalize_success": "finalize_success",
+            "generate_branch": "generate_branch",
+            "finalize_failure": "finalize_failure",
+        },
+    )
+    graph.add_edge("finalize_success", END)
+    graph.add_edge("finalize_failure", END)
+
+    return graph.compile()
+
+
+async def run_regenerate_node(
+    deps: GenerationDeps,
+    *,
+    initial_state: GenerationState,
+    max_retries: int,
+) -> GenerationState:
+    graph = build_regenerate_node_graph(deps)
+    seeded_state: GenerationState = {**initial_state, "_max_retries": max_retries, "retry_count": 0}  # type: ignore[typeddict-item]
+    final_state = await graph.ainvoke(seeded_state)
+    return final_state

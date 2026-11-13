@@ -30,7 +30,7 @@ from contracts.models import (
     ToolCallLogEntry,
 )
 from orchestration.deps import GenerationDeps
-from orchestration.graph import run_generation
+from orchestration.graph import run_generation, run_regenerate_node
 from orchestration.nodes import NoPriorSeedError, reconstruct_seed_from_namespace
 from seed.normalizer import NoUsableSeedContent, SeedSubmission, normalize_seed
 from worker.files import fetch_all
@@ -122,6 +122,63 @@ async def _run(request: GenerationRequest, namespace: str, deps: GenerationDeps)
     elif request.job_type == JobType.REGENERATE_FULL:
         seed_text = await reconstruct_seed_from_namespace(deps, namespace=namespace)
         is_regeneration = True
+
+    elif request.job_type == JobType.REGENERATE_NODE:
+        if not request.selected_node:
+            raise ValueError("regenerate_node request must include selected_node")
+
+        branch_nodes = request.effective_branch_nodes
+        branch_edges = request.effective_branch_edges
+        comment = request.effective_comment
+        ancestor_labels = request.ancestor_labels or []
+        breadcrumb = " > ".join([*ancestor_labels, request.selected_node.label])
+        allowed_ids = {str(request.selected_node.id), *(str(n.id) for n in branch_nodes)}
+
+        final_state = await run_regenerate_node(
+            deps,
+            initial_state={
+                "job_id": request.job_id,
+                "map_id": request.map_id,
+                "namespace": namespace,
+                "selected_node": request.selected_node,
+                "target_node_id": request.target_node_id or request.selected_node.id,
+                "comment": comment,
+                "ancestor_labels": ancestor_labels,
+                "branch_nodes": branch_nodes,
+                "branch_edges": branch_edges,
+                "allowed_node_ids": allowed_ids,
+                "breadcrumb_path": breadcrumb,
+                "is_regeneration": True,
+            },
+            max_retries=deps.settings.generation.max_generation_retries,
+        )
+
+        if final_state.get("status") == "completed":
+            return GenerationResult(
+                job_id=request.job_id,
+                map_id=request.map_id,
+                status="completed",
+                resolved_detail_level=final_state.get("resolved_detail_level"),
+                nodes=final_state.get("nodes", []),
+                edges=final_state.get("edges", []),
+                seed_assets=[],
+                rejected_files=[],
+                tool_call_log=[ToolCallLogEntry(**e) for e in final_state.get("tool_call_log", [])],
+            )
+
+        return GenerationResult(
+            job_id=request.job_id,
+            map_id=request.map_id,
+            status="failed",
+            seed_assets=[],
+            rejected_files=[],
+            error=GenerationError(
+                stage=final_state.get("failed_stage") or "validate",
+                error_type="ValidationFailure",
+                message=final_state.get("error_message") or "Node regeneration failed for an unknown reason.",
+                retryable=True,
+            ),
+        )
 
     else:
         raise NotImplementedError(f"{request.job_type} is not implemented yet (see llm.md section 15)")
