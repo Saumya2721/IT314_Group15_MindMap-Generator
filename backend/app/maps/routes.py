@@ -279,7 +279,9 @@ async def update_map(
             expected_dt = _parse_version_token(occ_token)
             if expected_dt is not None:
                 curr_dt = curr["updated_at"]
-                if abs((curr_dt - expected_dt).total_seconds()) > 0.001:
+                if isinstance(curr_dt, str):
+                    curr_dt = _parse_version_token(curr_dt)
+                if curr_dt and abs((curr_dt - expected_dt).total_seconds()) > 0.001:
                     raise HTTPException(
                         status_code=409,
                         detail="Map has been modified by another operation. Please reload.",
@@ -328,8 +330,12 @@ async def update_map(
         result["tags"] = body.tags
     if body.theme is not None:
         result["theme"] = body.theme
-    if row["updated_at"]:
-        response.headers["ETag"] = f'"{row["updated_at"].isoformat()}"'
+    if row.get("updated_at"):
+        val = row["updated_at"]
+        if hasattr(val, "isoformat"):
+            val = val.isoformat()
+        clean_val = str(val).strip('"')
+        response.headers["ETag"] = f'"{clean_val}"'
     return result
 
 
