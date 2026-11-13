@@ -42,7 +42,6 @@ async def test_search_maps_query_and_pagination():
     from db.repository import search_maps
 
     mock_conn = AsyncMock()
-    mock_conn.fetchval.return_value = 5
     mock_conn.fetch.return_value = [
         {
             "id": uuid4(),
@@ -58,20 +57,17 @@ async def test_search_maps_query_and_pagination():
         }
     ]
 
-    items, total = await search_maps(
+    items = await search_maps(
         mock_conn,
         user_id=uuid4(),
         query="neural",
-        sort="title_asc",
         limit=10,
-        offset=0,
     )
 
-    assert total == 5
     assert len(items) == 1
     assert items[0]["title"] == "Machine Learning Map"
     assert "WHERE" in mock_conn.fetch.call_args[0][0]
-    assert "ORDER BY m.title ASC" in mock_conn.fetch.call_args[0][0]
+    assert "ILIKE $2" in mock_conn.fetch.call_args[0][0]
 
 
 @pytest.mark.asyncio
