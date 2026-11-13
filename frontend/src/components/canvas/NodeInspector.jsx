@@ -1,14 +1,43 @@
-import React from 'react'
+import React, { useState, useEffect } from 'react'
 import './NodeInspector.css'
 
-export function NodeInspector({ selectedNode, onClose }) {
+export function NodeInspector({
+  selectedNode,
+  onClose,
+  onUpdateLabel,
+  onUpdateDescription,
+  onAddChild,
+  onAddSibling,
+  onDeleteNode,
+}) {
+  const [labelDraft, setLabelDraft] = useState('')
+  const [descDraft, setDescDraft] = useState('')
+
+  useEffect(() => {
+    if (selectedNode) {
+      setLabelDraft(selectedNode.title || selectedNode.label || '')
+      setDescDraft(selectedNode.description || selectedNode.subtitle || '')
+    }
+  }, [selectedNode])
+
   if (!selectedNode) return null
 
   const currentTint = selectedNode.tint || selectedNode.backgroundColor || '#155E63'
   const nodeType = selectedNode.nodeType || selectedNode.type || 'concept'
-  const category =
-    selectedNode.category ||
-    (nodeType === 'root' || nodeType === 'rootNode' ? 'Central Theme' : 'Concept')
+  const isRoot = nodeType === 'root' || nodeType === 'rootNode'
+  const category = selectedNode.category || (isRoot ? 'Central Theme' : 'Concept')
+
+  const handleLabelBlur = () => {
+    if (labelDraft.trim() && labelDraft.trim() !== (selectedNode.title || selectedNode.label)) {
+      onUpdateLabel?.(selectedNode.id, labelDraft.trim())
+    }
+  }
+
+  const handleDescBlur = () => {
+    if (descDraft !== (selectedNode.description || selectedNode.subtitle || '')) {
+      onUpdateDescription?.(selectedNode.id, descDraft)
+    }
+  }
 
   return (
     <div className="node-inspector-flyout">
@@ -52,79 +81,150 @@ export function NodeInspector({ selectedNode, onClose }) {
         </span>
       </div>
 
-      {/* Read-Only Node Title */}
+      {/* Editable Node Title */}
       <div className="inspector-field">
         <label className="inspector-field-label">Concept Title</label>
-        <div
+        <input
+          type="text"
+          value={labelDraft}
+          onChange={(e) => setLabelDraft(e.target.value)}
+          onBlur={handleLabelBlur}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.currentTarget.blur()
+            }
+          }}
           style={{
-            padding: '10px 12px',
-            backgroundColor: 'var(--surface-container-low, #f2f5f4)',
+            width: '100%',
+            padding: '8px 10px',
             borderRadius: '6px',
+            border: '1px solid var(--structural-border, #e1e3e0)',
             fontSize: '14px',
             fontFamily: 'var(--font-headline, serif)',
             color: 'var(--on-surface, #181d1a)',
             fontWeight: 500,
+            backgroundColor: 'var(--surface-container-low, #f2f5f4)',
+            boxSizing: 'border-box',
           }}
-        >
-          {selectedNode.title || selectedNode.label || 'Untitled Concept'}
-        </div>
+          aria-label="Edit node title"
+        />
       </div>
 
-      {/* Read-Only Description */}
+      {/* Editable Description */}
       <div className="inspector-field" style={{ marginTop: '12px' }}>
         <label className="inspector-field-label">Description &amp; Reasoning</label>
-        <div
+        <textarea
+          rows={3}
+          value={descDraft}
+          onChange={(e) => setDescDraft(e.target.value)}
+          onBlur={handleDescBlur}
+          placeholder="Add detailed explanation or reasoning for this node..."
           style={{
-            padding: '10px 12px',
-            backgroundColor: 'var(--surface-container-low, #f2f5f4)',
+            width: '100%',
+            padding: '8px 10px',
             borderRadius: '6px',
+            border: '1px solid var(--structural-border, #e1e3e0)',
             fontSize: '13px',
             lineHeight: 1.5,
             fontFamily: 'var(--font-body, serif)',
             color: 'var(--on-surface-variant, #404947)',
-            minHeight: '60px',
+            backgroundColor: 'var(--surface-container-low, #f2f5f4)',
+            boxSizing: 'border-box',
+            resize: 'vertical',
           }}
-        >
-          {selectedNode.subtitle ||
-            selectedNode.description ||
-            'No additional notes provided for this concept.'}
+          aria-label="Edit node description"
+        />
+      </div>
+
+      {/* Quick Actions (Add Child, Add Sibling, Delete) */}
+      <div style={{ marginTop: '16px' }}>
+        <label className="inspector-field-label">Node Actions</label>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '6px' }}>
+          {/* Add Child Node */}
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => onAddChild?.(selectedNode.id)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '6px',
+              fontSize: '12.5px',
+              padding: '7px 12px',
+              width: '100%',
+            }}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>
+              subdirectory_arrow_right
+            </span>
+            <span>Add Child Concept (Tab)</span>
+          </button>
+
+          {/* Add Sibling Node (allowed for non-root nodes) */}
+          {!isRoot && (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => onAddSibling?.(selectedNode.id)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '6px',
+                fontSize: '12.5px',
+                padding: '7px 12px',
+                width: '100%',
+              }}
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>
+                add_circle_outline
+              </span>
+              <span>Add Sibling Concept (Enter)</span>
+            </button>
+          )}
+
+          {/* Delete Node (allowed for non-root nodes) */}
+          {!isRoot && (
+            <button
+              type="button"
+              onClick={() => onDeleteNode?.(selectedNode.id)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '6px',
+                fontSize: '12px',
+                padding: '7px 12px',
+                width: '100%',
+                borderRadius: '6px',
+                border: '1px solid #ffdad6',
+                backgroundColor: '#fff8f7',
+                color: '#ba1a1a',
+                cursor: 'pointer',
+                fontFamily: 'var(--font-label, sans-serif)',
+                fontWeight: 500,
+              }}
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>
+                delete_outline
+              </span>
+              <span>Delete Node (Del)</span>
+            </button>
+          )}
         </div>
       </div>
 
       {/* Connections Info */}
-      {(selectedNode.incomingEdges?.length > 0 || selectedNode.outgoingEdges?.length > 0) && (
-        <div style={{ marginTop: '14px', fontSize: '12px', color: 'var(--outline, #6f7977)' }}>
-          <div>
-            Direct connections:{' '}
-            {(selectedNode.incomingEdges?.length || 0) + (selectedNode.outgoingEdges?.length || 0)}{' '}
-            links
-          </div>
+      <div style={{ marginTop: '16px', fontSize: '12px', color: 'var(--outline, #6f7977)' }}>
+        <div>
+          Direct connections:{' '}
+          {(selectedNode.incomingEdges?.length || 0) + (selectedNode.outgoingEdges?.length || 0)}{' '}
+          links
         </div>
-      )}
-
-      {/* Sprint 2 Roadmap Notice */}
-      <div
-        style={{
-          marginTop: '20px',
-          padding: '10px 12px',
-          borderRadius: '6px',
-          backgroundColor: '#eff5f5',
-          border: '1px solid #d4e3e3',
-          fontSize: '11.5px',
-          color: '#155e63',
-          display: 'flex',
-          gap: '8px',
-          alignItems: 'flex-start',
-        }}
-      >
-        <span className="material-symbols-outlined" style={{ fontSize: '16px', marginTop: '1px' }}>
-          info
-        </span>
-        <span>
-          <strong>Sprint 1 Presentation Mode:</strong> Full interactive node mutation, canvas drag
-          persistence, and node expansion will be enabled in Sprint 2.
-        </span>
       </div>
     </div>
   )
 }
+
+export default NodeInspector

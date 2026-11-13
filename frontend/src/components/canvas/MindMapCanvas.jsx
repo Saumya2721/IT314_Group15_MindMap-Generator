@@ -1,12 +1,23 @@
-import React, { useState, useMemo, useCallback } from 'react'
-import { ReactFlow, Background, Controls, MiniMap, ReactFlowProvider } from '@xyflow/react'
+import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react'
+import {
+  ReactFlow,
+  Background,
+  Controls,
+  MiniMap,
+  ReactFlowProvider,
+  useReactFlow,
+  useNodesState,
+  useEdgesState,
+  getNodesBounds,
+} from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 
 import { RootNode } from './nodes/RootNode'
 import { BranchNode } from './nodes/BranchNode'
 import { ConceptNode } from './nodes/ConceptNode'
-import { NodeInspector } from './NodeInspector'
 import { adaptBackendGraphToFlow } from '../../utils/graphAdapter'
+import { validateConnection } from '../../utils/connectionGuards'
+import { useCanvasViewport } from './useCanvasViewport'
 import './MindMapCanvas.css'
 
 const nodeTypes = {
@@ -15,35 +26,220 @@ const nodeTypes = {
   conceptNode: ConceptNode,
 }
 
-function FlowCanvas({ rawNodes = [], rawEdges = [], toastMessage = '', onClearToast }) {
-  const [selectedNode, setSelectedNode] = useState(null)
+/**
+ * Exportable React Flow instance wrapper.
+ */
+function useExportableFlowApi(flowApiRef) {
+  const rf = useReactFlow()
+
+  useEffect(() => {
+    if (!flowApiRef) return
+    flowApiRef.current = {
+      fitAllNodes: async () => {
+        const nodes = rf.getNodes()
+        if (nodes.length === 0) return
+        const rect = getNodesBounds(nodes)
+        const padding = 80
+        const bounds = {
+          x: rect.x - padding,
+          y: rect.y - padding,
+          width: rect.width + padding * 2,
+          height: rect.height + padding * 2,
+        }
+        await rf.fitBounds(bounds, { duration: 0 })
+      },
+      getViewport: () => rf.getViewport(),
+      setViewport: (viewport) => rf.setViewport(viewport),
+    }
+  }, [rf, flowApiRef])
+}
+
+function FlowCanvas({
+  rawNodes = [],
+  rawEdges = [],
+  toastMessage = '',
+  onClearToast,
+  onToast,
+  flowApiRef,
+  onCaptureViewport,
+  selectedNode = null,
+  editingNodeId = null,
+  onNodeSelect,
+  onPaneClick,
+  onNodePositionChange,
+  onConnect,
+  onReconnect,
+  onStartEditing,
+  onSaveLabel,
+  onCancelEditing,
+  onDeleteNode,
+  onAddChild,
+  onAddSibling,
+}) {
+  const [localSelectedNode, setLocalSelectedNode] = useState(null)
+  const lastInvalidRef = useRef(null)
+  useExportableFlowApi(flowApiRef)
 
   // Transform backend graph nodes and edges into React Flow elements
   const { flowNodes, flowEdges } = useMemo(() => {
-    return adaptBackendGraphToFlow(rawNodes, rawEdges)
-  }, [rawNodes, rawEdges])
+    return adaptBackendGraphToFlow(rawNodes, rawEdges, {
+      editingNodeId,
+      onStartEditing,
+      onSaveLabel,
+      onCancelEditing,
+    })
+  }, [rawNodes, rawEdges, editingNodeId, onStartEditing, onSaveLabel, onCancelEditing])
+
+  // React Flow state for smooth interactive manipulation (drag / connect)
+  const [nodes, setNodes, onNodesChange] = useNodesState(flowNodes)
+  const [edges, setEdges, onEdgesChange] = useEdgesState(flowEdges)
+
+  useEffect(() => {
+    setNodes(flowNodes)
+  }, [flowNodes, setNodes])
+
+  useEffect(() => {
+    setEdges(flowEdges)
+  }, [flowEdges, setEdges])
+
+  // Capture the current viewport after the graph is (re)rendered so the
+  // parent can persist it (S2-FE5 / US-08).
+  useEffect(() => {
+    if (onCaptureViewport) {
+      const id = requestAnimationFrame(() => onCaptureViewport())
+      return () => cancelAnimationFrame(id)
+    }
+  }, [flowNodes, flowEdges, onCaptureViewport])
 
   // Handle node selection
-  const handleNodeClick = useCallback((event, node) => {
-    setSelectedNode({
-      id: node.id,
-      title: node.data?.label,
-      label: node.data?.label,
-      subtitle: node.data?.description,
-      description: node.data?.description,
-      tint: node.data?.backgroundColor,
-      backgroundColor: node.data?.backgroundColor,
-      category: node.data?.category,
-      nodeType: node.data?.nodeType,
-      incomingEdges: node.data?.incomingEdges,
-      outgoingEdges: node.data?.outgoingEdges,
-    })
-  }, [])
+  const handleNodeClick = useCallback(
+    (event, node) => {
+      const selected = {
+        id: node.id,
+        title: node.data?.label,
+        label: node.data?.label,
+        subtitle: node.data?.description,
+        description: node.data?.description,
+        tint: node.data?.backgroundColor,
+        backgroundColor: node.data?.backgroundColor,
+        category: node.data?.category,
+        nodeType: node.data?.nodeType,
+        pos_x: node.position?.x,
+        pos_y: node.position?.y,
+        incomingEdges: node.data?.incomingEdges,
+        outgoingEdges: node.data?.outgoingEdges,
+      }
+      setLocalSelectedNode(selected)
+      if (onNodeSelect) {
+        onNodeSelect(selected)
+      }
+    },
+    [onNodeSelect],
+  )
 
-  // Handle pane click to dismiss inspector
+  // Handle pane click to dismiss inspector and deselect
   const handlePaneClick = useCallback(() => {
-    setSelectedNode(null)
-  }, [])
+    setLocalSelectedNode(null)
+    if (onPaneClick) {
+      onPaneClick()
+    }
+  }, [onPaneClick])
+
+  // Node drag stop handler: commits new position
+  const handleNodeDragStop = useCallback(
+    (event, node) => {
+      if (onNodePositionChange && node) {
+        onNodePositionChange(node.id, Math.round(node.position.x), Math.round(node.position.y))
+      }
+    },
+    [onNodePositionChange],
+  )
+
+  // Connection validation
+  const isValidConnection = useCallback(
+    (connection) => {
+      const result = validateConnection(rawNodes, rawEdges, connection)
+      if (!result.valid) {
+        lastInvalidRef.current = { reason: result.reason, time: Date.now() }
+        return false
+      }
+      lastInvalidRef.current = null
+      return true
+    },
+    [rawNodes, rawEdges],
+  )
+
+  // Connect handler
+  const handleConnect = useCallback(
+    (connection) => {
+      lastInvalidRef.current = null
+      const result = validateConnection(rawNodes, rawEdges, connection)
+      if (!result.valid) {
+        if (onToast) onToast(result.reason)
+        return
+      }
+      if (onConnect) {
+        onConnect(connection)
+      }
+    },
+    [rawNodes, rawEdges, onConnect, onToast],
+  )
+
+  // Edge reconnect handler
+  const handleReconnect = useCallback(
+    (oldEdge, newConnection) => {
+      lastInvalidRef.current = null
+      const filteredEdges = rawEdges.filter((e) => String(e.id) !== String(oldEdge.id || oldEdge))
+      const result = validateConnection(rawNodes, filteredEdges, newConnection)
+      if (!result.valid) {
+        if (onToast) onToast(result.reason)
+        return
+      }
+      if (onReconnect) {
+        onReconnect(oldEdge, newConnection)
+      }
+    },
+    [rawNodes, rawEdges, onReconnect, onToast],
+  )
+
+  // Releasing an invalid connection reports the validation warning
+  const handleConnectEnd = useCallback(() => {
+    if (lastInvalidRef.current) {
+      const elapsed = Date.now() - lastInvalidRef.current.time
+      if (elapsed < 600) {
+        if (onToast) onToast(lastInvalidRef.current.reason)
+      }
+      lastInvalidRef.current = null
+    }
+  }, [onToast])
+
+  // Keyboard navigation on canvas (Delete, Tab, Enter)
+  const handleKeyDown = useCallback(
+    (e) => {
+      if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return
+
+      const active = selectedNode || localSelectedNode
+      if (!active) return
+
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault()
+        if (onDeleteNode) {
+          onDeleteNode(active.id)
+        }
+      } else if (e.key === 'Tab') {
+        e.preventDefault()
+        if (onAddChild) {
+          onAddChild(active.id)
+        }
+      } else if (e.key === 'Enter') {
+        e.preventDefault()
+        if (onAddSibling) {
+          onAddSibling(active.id)
+        }
+      }
+    },
+    [selectedNode, localSelectedNode, onDeleteNode, onAddChild, onAddSibling],
+  )
 
   // Empty state handling
   if (!rawNodes || rawNodes.length === 0) {
@@ -59,7 +255,13 @@ function FlowCanvas({ rawNodes = [], rawEdges = [], toastMessage = '', onClearTo
   }
 
   return (
-    <div className="canvas-viewport-container">
+    <div
+      className="canvas-viewport-container"
+      id="mindmap-canvas-export"
+      onKeyDown={handleKeyDown}
+      tabIndex={0}
+      style={{ outline: 'none' }}
+    >
       {/* Toast Alert Feedback */}
       {toastMessage && (
         <div className="canvas-toast-alert">
@@ -78,6 +280,7 @@ function FlowCanvas({ rawNodes = [], rawEdges = [], toastMessage = '', onClearTo
                 cursor: 'pointer',
                 padding: 0,
               }}
+              aria-label="Dismiss toast"
             >
               <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>
                 close
@@ -89,14 +292,22 @@ function FlowCanvas({ rawNodes = [], rawEdges = [], toastMessage = '', onClearTo
 
       {/* React Flow Graph Engine */}
       <ReactFlow
-        nodes={flowNodes}
-        edges={flowEdges}
+        nodes={nodes}
+        edges={edges}
         nodeTypes={nodeTypes}
-        nodesDraggable={false}
-        nodesConnectable={false}
+        onNodesChange={onNodesChange}
+        onEdgesChange={onEdgesChange}
+        onNodeDragStop={handleNodeDragStop}
+        nodesDraggable={true}
+        nodesConnectable={true}
         elementsSelectable={true}
+        isValidConnection={isValidConnection}
+        onConnect={handleConnect}
+        onReconnect={handleReconnect}
+        onConnectEnd={handleConnectEnd}
         onNodeClick={handleNodeClick}
         onPaneClick={handlePaneClick}
+        onNodeDoubleClick={(event, node) => onStartEditing && onStartEditing(node.id)}
         fitView
         fitViewOptions={{ padding: 0.25 }}
         minZoom={0.2}
@@ -118,16 +329,19 @@ function FlowCanvas({ rawNodes = [], rawEdges = [], toastMessage = '', onClearTo
           }}
         />
       </ReactFlow>
-
-      {/* Flyout Inspector for Node Details */}
-      {selectedNode && (
-        <NodeInspector selectedNode={selectedNode} onClose={() => setSelectedNode(null)} />
-      )}
     </div>
   )
 }
 
 export function MindMapCanvas(props) {
+  const { initialViewport = null, onViewportChange = null, flowApiRef = null } = props
+
+  const { capture } = useCanvasViewport({
+    initialViewport,
+    flowApiRef,
+    onViewportChange,
+  })
+
   return (
     <ReactFlowProvider>
       <FlowCanvas
@@ -135,7 +349,25 @@ export function MindMapCanvas(props) {
         rawEdges={props.rawEdges || []}
         toastMessage={props.toastMessage}
         onClearToast={props.onClearToast}
+        flowApiRef={flowApiRef}
+        onCaptureViewport={capture}
+        onToast={props.onToast}
+        selectedNode={props.selectedNode}
+        editingNodeId={props.editingNodeId}
+        onNodeSelect={props.onNodeSelect}
+        onPaneClick={props.onPaneClick}
+        onNodePositionChange={props.onNodePositionChange}
+        onConnect={props.onConnect}
+        onReconnect={props.onReconnect}
+        onStartEditing={props.onStartEditing}
+        onSaveLabel={props.onSaveLabel}
+        onCancelEditing={props.onCancelEditing}
+        onDeleteNode={props.onDeleteNode}
+        onAddChild={props.onAddChild}
+        onAddSibling={props.onAddSibling}
       />
     </ReactFlowProvider>
   )
 }
+
+export default MindMapCanvas

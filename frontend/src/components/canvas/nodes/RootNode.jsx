@@ -1,9 +1,40 @@
-import React, { memo } from 'react'
+import React, { memo, useState, useEffect } from 'react'
 import { Handle, Position } from '@xyflow/react'
 import './nodes.css'
 
-export const RootNode = memo(({ data, selected }) => {
+export const RootNode = memo(({ id, data, selected }) => {
   const tint = data?.backgroundColor || '#155E63'
+  const isEditing = Boolean(data?.isEditing)
+  const [labelDraft, setLabelDraft] = useState(data?.label || 'Central Concept')
+
+  useEffect(() => {
+    setLabelDraft(data?.label || 'Central Concept')
+  }, [data?.label, isEditing])
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      e.stopPropagation()
+      if (labelDraft.trim()) {
+        data?.onSaveLabel?.(id, labelDraft.trim())
+      } else {
+        data?.onCancelEditing?.(id)
+      }
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      e.stopPropagation()
+      setLabelDraft(data?.label || 'Central Concept')
+      data?.onCancelEditing?.(id)
+    }
+  }
+
+  const handleBlur = () => {
+    if (labelDraft.trim()) {
+      data?.onSaveLabel?.(id, labelDraft.trim())
+    } else {
+      data?.onCancelEditing?.(id)
+    }
+  }
 
   return (
     <div
@@ -22,7 +53,32 @@ export const RootNode = memo(({ data, selected }) => {
         <span>{data?.category || 'Core Focus'}</span>
       </div>
 
-      <div className="root-node-title">{data?.label || 'Central Concept'}</div>
+      {isEditing ? (
+        <input
+          type="text"
+          className="nodrag nopan node-inline-input"
+          value={labelDraft}
+          onChange={(e) => setLabelDraft(e.target.value)}
+          onKeyDown={handleKeyDown}
+          onBlur={handleBlur}
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+          onDoubleClick={(e) => e.stopPropagation()}
+          autoFocus
+          aria-label="Edit central concept title"
+        />
+      ) : (
+        <div
+          className="root-node-title"
+          onDoubleClick={(e) => {
+            e.stopPropagation()
+            data?.onStartEditing?.(id)
+          }}
+          title="Double-click to rename"
+        >
+          {data?.label || 'Central Concept'}
+        </div>
+      )}
 
       {data?.description && <div className="root-node-description">{data.description}</div>}
     </div>
