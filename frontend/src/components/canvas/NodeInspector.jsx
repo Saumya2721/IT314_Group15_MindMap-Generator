@@ -1,5 +1,102 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import './NodeInspector.css'
+
+// S2-FE8: Source attribution config — badge label, icon, colour, and tooltip
+const SOURCE_CONFIG = {
+  seed: {
+    label: 'From Seed',
+    icon: 'eco',
+    color: '#2d6a4f',
+    bg: '#d8f3dc',
+    tooltip: 'This concept was derived directly from your original seed topic or prompt.',
+  },
+  web_research: {
+    label: 'Web Research',
+    icon: 'travel_explore',
+    color: '#1a5276',
+    bg: '#d6eaf8',
+    tooltip: 'This concept was grounded using live web search results.',
+  },
+  arxiv: {
+    label: 'arXiv Paper',
+    icon: 'menu_book',
+    color: '#6c3483',
+    bg: '#e8daef',
+    tooltip: 'This concept was synthesised from a peer-reviewed arXiv publication.',
+  },
+  general: {
+    label: 'General Knowledge',
+    icon: 'lightbulb',
+    color: '#7d6608',
+    bg: '#fef9e7',
+    tooltip: "This concept is based on the model's general knowledge without a specific source.",
+  },
+}
+
+/**
+ * S2-FE8: SourceAttributionBadge
+ * Renders a coloured pill badge showing how a node was derived,
+ * with a tooltip and an optional clickable external link.
+ */
+function SourceAttributionBadge({ sourceType, sourceUrl, sourceLabel }) {
+  const [tooltipVisible, setTooltipVisible] = useState(false)
+  const timeoutRef = useRef(null)
+
+  const key = sourceType && SOURCE_CONFIG[sourceType] ? sourceType : 'general'
+  const cfg = SOURCE_CONFIG[key]
+  const displayLabel = sourceLabel || cfg.label
+
+  const handleMouseEnter = () => {
+    timeoutRef.current = setTimeout(() => setTooltipVisible(true), 300)
+  }
+  const handleMouseLeave = () => {
+    clearTimeout(timeoutRef.current)
+    setTooltipVisible(false)
+  }
+
+  return (
+    <div className="source-attribution-wrap">
+      <div
+        className="source-badge"
+        style={{ backgroundColor: cfg.bg, color: cfg.color, borderColor: `${cfg.color}33` }}
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={handleMouseLeave}
+        onFocus={handleMouseEnter}
+        onBlur={handleMouseLeave}
+        tabIndex={0}
+        role="img"
+        aria-label={`Source: ${displayLabel}. ${cfg.tooltip}`}
+      >
+        <span className="material-symbols-outlined source-badge-icon">{cfg.icon}</span>
+        <span className="source-badge-label">{displayLabel}</span>
+        {sourceUrl && (key === 'web_research' || key === 'arxiv') && (
+          <a
+            href={sourceUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="source-badge-link"
+            style={{ color: cfg.color }}
+            onClick={(e) => e.stopPropagation()}
+            aria-label={`Open source: ${sourceUrl}`}
+            title={sourceUrl}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: '12px' }}>
+              open_in_new
+            </span>
+          </a>
+        )}
+      </div>
+      {tooltipVisible && (
+        <div className="source-tooltip" role="tooltip">
+          {cfg.tooltip}
+          {sourceUrl && (
+            <span className="source-tooltip-url"> — {sourceUrl.replace(/^https?:\/\//, '')}</span>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
 
 export function NodeInspector({
   selectedNode,
@@ -93,8 +190,16 @@ export function NodeInspector({
         </button>
       </div>
 
-      {/* Category / Type Badge */}
-      <div style={{ marginBottom: '14px' }}>
+      {/* Category / Type Badge & Source Attribution Badge */}
+      <div
+        style={{
+          marginBottom: '14px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px',
+          flexWrap: 'wrap',
+        }}
+      >
         <span
           style={{
             display: 'inline-block',
@@ -111,6 +216,11 @@ export function NodeInspector({
         >
           {category}
         </span>
+        <SourceAttributionBadge
+          sourceType={selectedNode.source_type || selectedNode.sourceType}
+          sourceUrl={selectedNode.source_url || selectedNode.sourceUrl}
+          sourceLabel={selectedNode.source_label || selectedNode.sourceLabel}
+        />
       </div>
 
       {/* Editable Node Title */}
