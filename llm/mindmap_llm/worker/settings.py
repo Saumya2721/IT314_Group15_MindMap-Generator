@@ -32,7 +32,7 @@ from embeddings.registry import get_embedding_provider
 from providers.registry import get_decision_model, get_llm_provider
 from rag.pinecone_store import PineconeVectorStore
 from tools.registry import build_tool_registry
-from worker.tasks import generate_mindmap
+from worker.tasks import chat_turn_task, generate_mindmap, regenerate_node_task
 
 logging.basicConfig(level=logging.INFO)
 
@@ -63,7 +63,7 @@ async def on_shutdown(ctx: dict) -> None:
 
 
 class WorkerSettings:
-    functions = [generate_mindmap]
+    functions = [generate_mindmap, regenerate_node_task, chat_turn_task]
     on_startup = on_startup
     on_shutdown = on_shutdown
     redis_settings = RedisSettings.from_dsn(get_settings().arq.redis_url)

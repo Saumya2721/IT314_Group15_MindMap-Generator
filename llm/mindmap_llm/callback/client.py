@@ -15,9 +15,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from uuid import UUID
 
 import httpx
-from contracts.models import GenerationResult
+from contracts.models import ChatCompleteCallback, GenerationResult
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +118,79 @@ class JobCallbackClient:
             raise last_exc
         return {}
 
+    async def complete_chat(
+        self,
+        *,
+        map_id: UUID,
+        assistant_message: str,
+        summary: str | None = None,
+    ) -> dict:
+        """Report successful chat turn completion to /internal/chat/{job_id}/complete."""
+        if self._terminal_sent:
+            raise CallbackAlreadySent(f"job {self._job_id}: complete_chat() called twice")
+        self._terminal_sent = True
+        payload = ChatCompleteCallback(
+            map_id=map_id,
+            job_id=UUID(str(self._job_id)),
+            assistant_message=assistant_message,
+            summary=summary,
+            status="completed",
+        )
+        last_exc = None
+        for attempt in range(1, 4):
+            try:
+                resp = await self._client.post(
+                    f"/internal/chat/{self._job_id}/complete",
+                    content=payload.model_dump_json(),
+                    headers={"Content-Type": "application/json"},
+                )
+                resp.raise_for_status()
+                return resp.json() if resp.content else {"status": "completed"}
+            except (httpx.TransportError, httpx.TimeoutException) as exc:
+                last_exc = exc
+                logger.warning("job %s: complete_chat callback attempt %d/3 failed: %s", self._job_id, attempt, exc)
+                if attempt < 3:
+                    await asyncio.sleep(0.5 * (2 ** (attempt - 1)))
+        if last_exc:
+            raise last_exc
+        return {}
+
+    async def fail_chat(
+        self,
+        *,
+        map_id: UUID,
+        error: str,
+    ) -> dict:
+        """Report chat turn failure to /internal/chat/{job_id}/complete."""
+        if self._terminal_sent:
+            raise CallbackAlreadySent(f"job {self._job_id}: fail_chat() called twice")
+        self._terminal_sent = True
+        payload = ChatCompleteCallback(
+            map_id=map_id,
+            job_id=UUID(str(self._job_id)),
+            assistant_message="",
+            status="failed",
+            error=error,
+        )
+        last_exc = None
+        for attempt in range(1, 4):
+            try:
+                resp = await self._client.post(
+                    f"/internal/chat/{self._job_id}/complete",
+                    content=payload.model_dump_json(),
+                    headers={"Content-Type": "application/json"},
+                )
+                resp.raise_for_status()
+                return resp.json() if resp.content else {"status": "failed"}
+            except (httpx.TransportError, httpx.TimeoutException) as exc:
+                last_exc = exc
+                logger.warning("job %s: fail_chat callback attempt %d/3 failed: %s", self._job_id, attempt, exc)
+                if attempt < 3:
+                    await asyncio.sleep(0.5 * (2 ** (attempt - 1)))
+        if last_exc:
+            raise last_exc
+        return {}
+
     async def aclose(self) -> None:
         await self._client.aclose()
 
@@ -145,6 +219,12 @@ class NullCallbackClient:
 
     async def fail(self, result) -> None:
         logger.info("job %s: failed — %s", self._job_id, result.error.message if result.error else "unknown")
+
+    async def complete_chat(self, *, map_id, assistant_message, summary=None) -> None:
+        logger.info("job %s: chat completed for map %s: %s", self._job_id, map_id, assistant_message[:50])
+
+    async def fail_chat(self, *, map_id, error) -> None:
+        logger.info("job %s: chat failed for map %s: %s", self._job_id, map_id, error)
 
     async def aclose(self) -> None:
         pass

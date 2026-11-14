@@ -19,9 +19,12 @@ from __future__ import annotations
 
 import logging
 import traceback
+from uuid import uuid4
 
 from callback.client import CallbackAlreadySent, JobCallbackClient
+from chat.agent import run_chat_turn
 from contracts.models import (
+    ChatTurnRequest,
     GenerationError,
     GenerationRequest,
     GenerationResult,
@@ -103,6 +106,192 @@ async def generate_mindmap(ctx: dict, request_payload: dict) -> dict:
     return result.model_dump(mode="json")
 
 
+async def _run_regenerate_node(
+    request: GenerationRequest,
+    namespace: str,
+    deps: GenerationDeps,
+) -> GenerationResult:
+    """Core logic for node-level regeneration (S2-L7, S2-L10)."""
+    selected_node = request.selected_node
+    branch_nodes = request.effective_branch_nodes
+    branch_edges = request.effective_branch_edges
+    comment = request.effective_comment
+
+    if not selected_node:
+        target_id = request.target_node_id
+        if target_id and branch_nodes:
+            for n in branch_nodes:
+                if n.id == target_id:
+                    selected_node = n
+                    break
+        if not selected_node and target_id and isinstance(request.branch_context, dict):
+            label = request.branch_context.get("target_node_label") or "Target Node"
+            desc = request.branch_context.get("target_node_description")
+            selected_node = NodeDraft(
+                id=target_id,
+                label=label,
+                description=desc,
+                node_type="default",
+            )
+
+    if not selected_node:
+        raise ValueError("regenerate_node request must include selected_node")
+
+    ancestor_labels = request.ancestor_labels or []
+    breadcrumb = " > ".join([*ancestor_labels, selected_node.label])
+    allowed_ids = {str(selected_node.id), *(str(n.id) for n in branch_nodes)}
+
+    final_state = await run_regenerate_node(
+        deps,
+        initial_state={
+            "job_id": request.job_id,
+            "map_id": request.map_id,
+            "namespace": namespace,
+            "selected_node": selected_node,
+            "target_node_id": request.target_node_id or selected_node.id,
+            "comment": comment,
+            "ancestor_labels": ancestor_labels,
+            "branch_nodes": branch_nodes,
+            "branch_edges": branch_edges,
+            "allowed_node_ids": allowed_ids,
+            "breadcrumb_path": breadcrumb,
+            "is_regeneration": True,
+        },
+        max_retries=deps.settings.generation.max_generation_retries,
+    )
+
+    if final_state.get("status") == "completed":
+        return GenerationResult(
+            job_id=request.job_id,
+            map_id=request.map_id,
+            status="completed",
+            resolved_detail_level=final_state.get("resolved_detail_level"),
+            nodes=final_state.get("nodes", []),
+            edges=final_state.get("edges", []),
+            seed_assets=[],
+            rejected_files=[],
+            tool_call_log=[ToolCallLogEntry(**e) for e in final_state.get("tool_call_log", [])],
+        )
+
+    return GenerationResult(
+        job_id=request.job_id,
+        map_id=request.map_id,
+        status="failed",
+        seed_assets=[],
+        rejected_files=[],
+        error=GenerationError(
+            stage=final_state.get("failed_stage") or "validate",
+            error_type="ValidationFailure",
+            message=final_state.get("error_message") or "Node regeneration failed for an unknown reason.",
+            retryable=True,
+        ),
+    )
+
+
+async def regenerate_node_task(ctx: dict, request_payload: dict) -> dict:
+    """ARQ entry point for node-level regeneration (S2-L7, S2-L10, US-06)."""
+    request = GenerationRequest.model_validate(request_payload)
+    request.job_type = JobType.REGENERATE_NODE
+    namespace = str(request.map_id)
+
+    callback = ctx.get("callback") or JobCallbackClient(
+        job_id=request.job_id,
+        base_url=request.callback_base_url,
+        token=request.callback_token,
+    )
+    deps = GenerationDeps(
+        llm=ctx["llm"],
+        decision_model=ctx["decision_model"],
+        embedding_provider=ctx["embedding_provider"],
+        vector_store=ctx["vector_store"],
+        tools=ctx["tools"],
+        settings=ctx["settings"],
+        callback=callback,
+    )
+
+    try:
+        result = await _run_regenerate_node(request, namespace, deps)
+    except Exception as exc:  # noqa: BLE001 - catch-all for terminal failure reporting
+        logger.exception("job %s: unhandled exception during node regeneration", request.job_id)
+        result = GenerationResult(
+            job_id=request.job_id,
+            map_id=request.map_id,
+            status="failed",
+            error=GenerationError(
+                stage="unknown",
+                error_type=type(exc).__name__,
+                message=f"{exc}\n\n{traceback.format_exc(limit=5)}",
+                retryable=True,
+            ),
+        )
+        await _send_terminal(callback, result)
+    else:
+        await _send_terminal(callback, result)
+    finally:
+        await callback.aclose()
+
+    return result.model_dump(mode="json")
+
+
+async def chat_turn_task(ctx: dict, request_payload: dict) -> dict:
+    """ARQ entry point for chat turns (S2-L8, S2-L9, S2-L10, US-14, US-15)."""
+    request = ChatTurnRequest.model_validate(request_payload)
+    job_id = request.job_id or uuid4()
+    request.job_id = job_id
+
+    callback = ctx.get("callback") or JobCallbackClient(
+        job_id=job_id,
+        base_url=request.callback_base_url,
+        token=request.callback_token,
+    )
+    deps = GenerationDeps(
+        llm=ctx["llm"],
+        decision_model=ctx["decision_model"],
+        embedding_provider=ctx["embedding_provider"],
+        vector_store=ctx["vector_store"],
+        tools=ctx["tools"],
+        settings=ctx["settings"],
+        callback=callback,
+    )
+
+    try:
+        response = await run_chat_turn(deps, request)
+
+        if response.answer:
+            assistant_message = response.answer
+        elif response.action_proposal:
+            assistant_message = response.action_proposal.explanation or "Proposed an action on the map."
+        elif response.needs_clarification:
+            assistant_message = response.clarification_question or "Could you clarify your request?"
+        else:
+            assistant_message = "Processed your request."
+
+        await callback.complete_chat(
+            map_id=request.map_id,
+            assistant_message=assistant_message,
+            summary=request.summary,
+        )
+        return response.model_dump(mode="json")
+    except Exception as exc:  # noqa: BLE001 - catch-all for terminal failure reporting
+        logger.exception("job %s: unhandled exception during chat turn", job_id)
+        error_msg = f"{type(exc).__name__}: {exc}"
+        try:
+            await callback.fail_chat(
+                map_id=request.map_id,
+                error=error_msg,
+            )
+        except Exception as cb_exc:
+            logger.error("job %s: fail_chat callback also failed: %s", job_id, cb_exc)
+        return {
+            "intent": "question",
+            "needs_clarification": True,
+            "clarification_question": "An error occurred while processing your request. Please try again.",
+            "error": error_msg,
+        }
+    finally:
+        await callback.aclose()
+
+
 async def _run(request: GenerationRequest, namespace: str, deps: GenerationDeps) -> GenerationResult:
     seed_assets = []
     rejected_files: list[RejectedFile] = []
@@ -125,80 +314,7 @@ async def _run(request: GenerationRequest, namespace: str, deps: GenerationDeps)
         is_regeneration = True
 
     elif request.job_type == JobType.REGENERATE_NODE:
-        selected_node = request.selected_node
-        branch_nodes = request.effective_branch_nodes
-        branch_edges = request.effective_branch_edges
-        comment = request.effective_comment
-
-        if not selected_node:
-            target_id = request.target_node_id
-            if target_id and branch_nodes:
-                for n in branch_nodes:
-                    if n.id == target_id:
-                        selected_node = n
-                        break
-            if not selected_node and target_id and isinstance(request.branch_context, dict):
-                label = request.branch_context.get("target_node_label") or "Target Node"
-                desc = request.branch_context.get("target_node_description")
-                selected_node = NodeDraft(
-                    id=target_id,
-                    label=label,
-                    description=desc,
-                    node_type="default",
-                )
-
-        if not selected_node:
-            raise ValueError("regenerate_node request must include selected_node")
-
-        ancestor_labels = request.ancestor_labels or []
-        breadcrumb = " > ".join([*ancestor_labels, selected_node.label])
-        allowed_ids = {str(selected_node.id), *(str(n.id) for n in branch_nodes)}
-
-        final_state = await run_regenerate_node(
-            deps,
-            initial_state={
-                "job_id": request.job_id,
-                "map_id": request.map_id,
-                "namespace": namespace,
-                "selected_node": selected_node,
-                "target_node_id": request.target_node_id or selected_node.id,
-                "comment": comment,
-                "ancestor_labels": ancestor_labels,
-                "branch_nodes": branch_nodes,
-                "branch_edges": branch_edges,
-                "allowed_node_ids": allowed_ids,
-                "breadcrumb_path": breadcrumb,
-                "is_regeneration": True,
-            },
-            max_retries=deps.settings.generation.max_generation_retries,
-        )
-
-        if final_state.get("status") == "completed":
-            return GenerationResult(
-                job_id=request.job_id,
-                map_id=request.map_id,
-                status="completed",
-                resolved_detail_level=final_state.get("resolved_detail_level"),
-                nodes=final_state.get("nodes", []),
-                edges=final_state.get("edges", []),
-                seed_assets=[],
-                rejected_files=[],
-                tool_call_log=[ToolCallLogEntry(**e) for e in final_state.get("tool_call_log", [])],
-            )
-
-        return GenerationResult(
-            job_id=request.job_id,
-            map_id=request.map_id,
-            status="failed",
-            seed_assets=[],
-            rejected_files=[],
-            error=GenerationError(
-                stage=final_state.get("failed_stage") or "validate",
-                error_type="ValidationFailure",
-                message=final_state.get("error_message") or "Node regeneration failed for an unknown reason.",
-                retryable=True,
-            ),
-        )
+        return await _run_regenerate_node(request, namespace, deps)
 
     else:
         raise NotImplementedError(f"{request.job_type} is not implemented yet (see llm.md section 15)")
