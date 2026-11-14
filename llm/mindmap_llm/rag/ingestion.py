@@ -46,6 +46,7 @@ async def ingest_seed_text(
             source=ChunkSource.UPLOADED_SEED,
             generation_job_id=generation_job_id,
             section_path=getattr(chunk, "section_path", None),
+            heading_level=getattr(chunk, "heading_level", None),
         )
         for chunk, vector in zip(chunks, vectors)
     ]
@@ -81,6 +82,7 @@ async def ingest_tool_result(
             source_title=source_title,
             source_url=source_url,
             section_path=getattr(chunk, "section_path", None),
+            heading_level=getattr(chunk, "heading_level", None),
         )
         for chunk, vector in zip(chunks, vectors)
     ]
