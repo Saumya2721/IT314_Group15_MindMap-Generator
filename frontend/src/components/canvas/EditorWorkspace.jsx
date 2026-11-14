@@ -3,6 +3,7 @@ import { CanvasTopBar } from './CanvasTopBar'
 import { MindMapCanvas } from './MindMapCanvas'
 import { NodeInspector } from './NodeInspector'
 import { VersionHistoryPanel } from '../history/VersionHistoryPanel'
+import { ChatPanel } from './ChatPanel'
 import { ExportModal } from './ExportModal'
 import { exportMindMap } from '../../services/exportService'
 import { mindMapService } from '../../services/mindMapService'
@@ -224,6 +225,34 @@ export function EditorWorkspace({
     activeNodeId: canvas.selectedNode?.id,
   })
   const commentsChat = customCommentsChatState || defaultCommentsChat
+
+  // S2-FE4: Load chat history when map is ready
+  useEffect(() => {
+    if (mapId) commentsChat.loadChatHistory(mapId)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapId])
+
+  // S2-FE4: Handle chat action proposal confirmation
+  const handleConfirmChatAction = useCallback(
+    async (messageId, proposedAction) => {
+      const action = await commentsChat.confirmAction(messageId, proposedAction)
+      // If the confirmed action triggers a branch regeneration, apply it
+      if (action && action.type === 'regenerate_branch' && action.node_id) {
+        await handleRegenerateBranch(action.node_id, action.instruction || '')
+      }
+    },
+    // handleRegenerateBranch is defined later in this scope; use ref to avoid stale closure issues
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [commentsChat],
+  )
+
+  // S2-FE4: Handle chat action proposal dismissal
+  const handleDismissChatAction = useCallback(
+    (messageId) => {
+      commentsChat.dismissAction(messageId)
+    },
+    [commentsChat],
+  )
 
   // FE-3: Export & History State
   const defaultExportHistory = useExportHistory({
@@ -911,6 +940,19 @@ export function EditorWorkspace({
           </div>
         </div>
       )}
+      {/* S2-FE4: Conversational Chat Panel (US-14) */}
+      <ChatPanel
+        isOpen={commentsChat.isChatOpen}
+        onClose={() => commentsChat.toggleChat(false)}
+        messages={commentsChat.messages}
+        isSending={commentsChat.isSending}
+        chatError={commentsChat.chatError}
+        onSendMessage={commentsChat.sendChatMessage}
+        onRetry={commentsChat.retryLastMessage}
+        onConfirmAction={handleConfirmChatAction}
+        onDismissAction={handleDismissChatAction}
+        selectedNode={canvas.selectedNode}
+      />
     </div>
   )
 }
