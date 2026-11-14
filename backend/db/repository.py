@@ -52,11 +52,12 @@ def _row_to_job(row: asyncpg.Record) -> GenerationJob:
 
 
 async def create_mind_map(conn: asyncpg.Connection, user_id: UUID, title: str = "Untitled mind map") -> dict:
+    clean_title = (title or "").strip()[:255] or "Untitled mind map"
     row = await conn.fetchrow(
         "INSERT INTO public.mind_maps (user_id, title) VALUES ($1, $2) "
         "RETURNING id, title, is_public, created_at, updated_at",
         user_id,
-        title.strip(),
+        clean_title,
     )
     return dict(row)
 
@@ -206,11 +207,18 @@ async def get_or_create_chat_thread(conn: asyncpg.Connection, map_id: UUID, user
     if row:
         return row["id"]
     row = await conn.fetchrow(
-        "INSERT INTO public.chat_threads (map_id, user_id) VALUES ($1, $2) RETURNING id",
+        "INSERT INTO public.chat_threads (map_id, user_id) VALUES ($1, $2) "
+        "ON CONFLICT (map_id) DO NOTHING RETURNING id",
         map_id,
         user_id,
     )
-    return row["id"]
+    if row:
+        return row["id"]
+    # Another request created the map's single chat thread first.
+    existing = await conn.fetchrow("SELECT id FROM public.chat_threads WHERE map_id = $1", map_id)
+    if existing is None:
+        raise RuntimeError("Chat thread disappeared after concurrent creation")
+    return existing["id"]
 
 
 async def insert_chat_message(conn: asyncpg.Connection, thread_id: UUID, role: str, content: str) -> UUID:
