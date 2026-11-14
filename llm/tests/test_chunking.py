@@ -281,3 +281,67 @@ def test_document_chunk_model_compatibility():
     assert chunk.breadcrumbs == ["Root", "Chapter 1", "Section A"]
     assert chunk.section_path == "Root > Chapter 1 > Section A"
     assert chunk.metadata["heading_level"] == 2
+
+
+def test_recursive_fallback_splitting_large_section():
+    # Long text with multiple paragraphs exceeding chunk_size=1500
+    paragraphs = [
+        f"Paragraph {i}: This is detailed content discussing distributed neural networks and system architecture. " * 4
+        for i in range(15)
+    ]
+    text = "\n\n".join(paragraphs)
+    chunker = StructureAwareChunker(chunk_size=1500, overlap=200)
+    chunks = chunker.chunk(text)
+
+    assert len(chunks) > 1
+    assert all(len(c) <= 1500 for c in chunks)
+    for i in range(len(chunks) - 1):
+        assert chunks[i] != chunks[i + 1]
+
+
+def test_recursive_fallback_unbreakable_string_emergency_split():
+    # Continuous unbroken sequence without spaces
+    unbreakable = "x" * 3500
+    chunker = StructureAwareChunker(chunk_size=1500, overlap=200)
+    chunks = chunker.chunk(unbreakable)
+
+    assert len(chunks) >= 3
+    assert all(len(c) <= 1500 for c in chunks)
+    assert sum(len(c) for c in chunks) >= len(unbreakable)
+
+
+def test_plain_unstructured_text_fallback_to_root():
+    plain_text = (
+        "This is an unstructured document without any markdown headings or numbered sections. "
+        "It should cleanly fall back to a [Root] breadcrumb path."
+    )
+    chunker = StructureAwareChunker(chunk_size=1500, overlap=200)
+    chunks = chunker.chunk(plain_text)
+
+    assert len(chunks) == 1
+    assert chunks[0].breadcrumb == "Root"
+    assert chunks[0].breadcrumb_path == "Root"
+    assert chunks[0].breadcrumbs == ["Root"]
+
+
+def test_plain_unstructured_text_explicit_disable_fallback():
+    plain_text = "Plain text without structure and fallback root disabled."
+    chunker = StructureAwareChunker(fallback_root=None, chunk_size=1500)
+    chunks = chunker.chunk(plain_text)
+
+    assert len(chunks) == 1
+    assert chunks[0].breadcrumb is None
+    assert chunks[0].breadcrumbs == []
+
+
+def test_overlap_never_slices_words():
+    words = [f"token{i}" for i in range(500)]
+    text = " ".join(words)
+    chunker = StructureAwareChunker(chunk_size=500, overlap=100)
+    chunks = chunker.chunk(text)
+
+    assert len(chunks) > 1
+    token_pattern = re.compile(r"^token\d+$")
+    for chunk in chunks:
+        for w in chunk.split():
+            assert token_pattern.match(w), f"Word '{w}' was cut mid-word!"
