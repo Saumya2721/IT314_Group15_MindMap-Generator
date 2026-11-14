@@ -8,7 +8,7 @@ DEFAULT_CHUNK_OVERLAP_CHARS = 150
 
 
 class TextChunk(str):
-    """A string chunk that preserves structural metadata (breadcrumbs / section_path).
+    """A string chunk that preserves structural metadata (breadcrumbs / section_path / heading_level).
 
     Inheriting from str ensures full backward compatibility with any code expecting
     a plain str (e.g., len(), ==, JSON serialization, embeddings, Pinecone upsert).
@@ -18,6 +18,7 @@ class TextChunk(str):
     section_path: str | None
     breadcrumb_path: str | None
     breadcrumbs: list[str]
+    heading_level: int | None
     metadata: dict[str, Any]
 
     def __new__(
@@ -27,6 +28,7 @@ class TextChunk(str):
         section_path: str | None = None,
         breadcrumb_path: str | None = None,
         breadcrumbs: list[str] | None = None,
+        heading_level: int | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> TextChunk:
         obj = super().__new__(cls, content)
@@ -38,6 +40,7 @@ class TextChunk(str):
         obj.breadcrumb = path
         obj.section_path = path
         obj.breadcrumb_path = path
+        obj.heading_level = heading_level
 
         if breadcrumbs is not None:
             obj.breadcrumbs = list(breadcrumbs)
@@ -47,6 +50,8 @@ class TextChunk(str):
             obj.breadcrumbs = []
 
         obj.metadata = dict(metadata) if metadata is not None else {}
+        if heading_level is not None:
+            obj.metadata["heading_level"] = heading_level
         return obj
 
 
@@ -58,7 +63,7 @@ class StructureAwareChunker:
     """Structure-aware chunker that parses Markdown headings (# to ###),
     numbered section headers (1., 1.1), and bullet lists while maintaining
     an active breadcrumb stack (e.g. 'Root > Chapter 1 > Section A')
-    and attaching breadcrumb paths to each emitted text chunk.
+    and attaching breadcrumb paths and heading levels to each emitted text chunk.
     """
 
     HEADING_PATTERN = re.compile(r"^(#{1,6})\s+(.+)$")
@@ -122,7 +127,7 @@ class StructureAwareChunker:
         text: str,
         root_title: str | None = None,
     ) -> list[TextChunk]:
-        """Parse structured text and emit chunks with breadcrumbs attached."""
+        """Parse structured text and emit chunks with breadcrumbs and heading_level attached."""
         if not text or not text.strip():
             return []
 
@@ -132,8 +137,9 @@ class StructureAwareChunker:
         self._reset_stack()
 
         lines = text.split("\n")
-        sections: list[tuple[str | None, list[str], str]] = []
+        sections: list[tuple[str | None, list[str], int | None, str]] = []
         current_lines: list[str] = []
+        current_heading_level: int | None = None
 
         def flush_current_section() -> None:
             nonlocal current_lines
@@ -144,6 +150,7 @@ class StructureAwareChunker:
                         (
                             self.get_breadcrumb_path(),
                             self.get_breadcrumb_stack(),
+                            current_heading_level,
                             content,
                         )
                     )
@@ -159,6 +166,7 @@ class StructureAwareChunker:
                 hashes, title = heading_match.groups()
                 level = len(hashes)
                 self._current_md_level = level
+                current_heading_level = level
                 self._push_breadcrumb(level, title)
                 continue
 
@@ -166,11 +174,10 @@ class StructureAwareChunker:
             numbered_match = self.NUMBERED_HEADER_PATTERN.match(stripped)
             if numbered_match:
                 num_str, title = numbered_match.groups()
-                # Determine hierarchical depth: "1." or "1" -> 1, "1.1" -> 2, "1.1.1" -> 3
                 num_clean = num_str.rstrip(".")
                 depth = len(num_clean.split("."))
-                # Position beneath any active markdown heading
                 level = self._current_md_level + depth
+                current_heading_level = level
 
                 flush_current_section()
                 display_title = f"{num_str} {title}" if self.preserve_numbered_prefix else title
@@ -183,6 +190,7 @@ class StructureAwareChunker:
                 indent, marker, item_text = bullet_match.groups()
                 indent_level = len(indent) // 2 + 1
                 level = self._current_md_level + 10 + indent_level
+                current_heading_level = level
 
                 flush_current_section()
                 self._push_breadcrumb(level, item_text)
@@ -198,21 +206,24 @@ class StructureAwareChunker:
         # Handle edge case: Document had headings but no trailing body text
         if not sections and self.breadcrumb_stack:
             last_title = self.breadcrumb_stack[-1][1]
+            last_level = self.breadcrumb_stack[-1][0] if self.breadcrumb_stack[-1][0] > 0 else None
             return [
                 TextChunk(
                     last_title,
                     breadcrumb=self.get_breadcrumb_path(),
                     breadcrumbs=self.get_breadcrumb_stack(),
+                    heading_level=last_level,
                 )
             ]
 
         # Split sections into boundary-aligned chunks
         all_chunks: list[TextChunk] = []
-        for path_str, stack_list, sec_text in sections:
+        for path_str, stack_list, lvl, sec_text in sections:
             sec_chunks = self._split_into_boundary_chunks(
                 sec_text,
                 breadcrumb_path=path_str,
                 breadcrumbs=stack_list,
+                heading_level=lvl,
                 chunk_size=self.chunk_size,
                 overlap=self.overlap,
             )
@@ -225,6 +236,7 @@ class StructureAwareChunker:
         text: str,
         breadcrumb_path: str | None,
         breadcrumbs: list[str],
+        heading_level: int | None,
         chunk_size: int,
         overlap: int,
     ) -> list[TextChunk]:
@@ -239,6 +251,7 @@ class StructureAwareChunker:
                     text,
                     breadcrumb=breadcrumb_path,
                     breadcrumbs=breadcrumbs,
+                    heading_level=heading_level,
                 )
             ]
 
@@ -248,7 +261,6 @@ class StructureAwareChunker:
         last_end = 0
 
         while start < total_len:
-            # If remaining text fits within chunk_size, finalize if it adds new content
             if total_len - start <= chunk_size:
                 final_slice = text[start:].strip()
                 if final_slice and total_len > last_end:
@@ -257,6 +269,7 @@ class StructureAwareChunker:
                             final_slice,
                             breadcrumb=breadcrumb_path,
                             breadcrumbs=breadcrumbs,
+                            heading_level=heading_level,
                         )
                     )
                 break
@@ -301,6 +314,7 @@ class StructureAwareChunker:
                         chunk_content,
                         breadcrumb=breadcrumb_path,
                         breadcrumbs=breadcrumbs,
+                        heading_level=heading_level,
                     )
                 )
                 last_end = chunk_end
