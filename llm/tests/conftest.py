@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 from callback.client import CallbackAlreadySent
-from contracts.models import GenerationResult
+from contracts.models import ChatCompleteCallback, GenerationResult
 from providers.base import LLMProvider, LLMResponse, Message, ToolSpec
 from providers.decision_model import ClassifyResult, DecisionModel, ScoreResult
 from rag.pinecone_store import RetrievedChunkRecord, VectorChunk
@@ -145,6 +145,8 @@ class FakeCallbackClient:
         self.progress_calls: list[int] = []
         self.complete_result: GenerationResult | None = None
         self.fail_result: GenerationResult | None = None
+        self.chat_complete_result: ChatCompleteCallback | None = None
+        self.chat_fail_result: ChatCompleteCallback | None = None
         self._terminal_sent = False
 
     async def progress(self, percent: int) -> None:
@@ -163,6 +165,45 @@ class FakeCallbackClient:
             raise CallbackAlreadySent("fail() called twice")
         self._terminal_sent = True
         self.fail_result = result
+
+    async def complete_chat(
+        self,
+        *,
+        map_id,
+        assistant_message: str,
+        summary: str | None = None,
+    ) -> None:
+        if self._terminal_sent:
+            raise CallbackAlreadySent("complete_chat() called twice")
+        self._terminal_sent = True
+        import uuid
+
+        self.chat_complete_result = ChatCompleteCallback(
+            map_id=map_id,
+            job_id=uuid.uuid4(),
+            assistant_message=assistant_message,
+            summary=summary,
+            status="completed",
+        )
+
+    async def fail_chat(
+        self,
+        *,
+        map_id,
+        error: str,
+    ) -> None:
+        if self._terminal_sent:
+            raise CallbackAlreadySent("fail_chat() called twice")
+        self._terminal_sent = True
+        import uuid
+
+        self.chat_fail_result = ChatCompleteCallback(
+            map_id=map_id,
+            job_id=uuid.uuid4(),
+            assistant_message="",
+            status="failed",
+            error=error,
+        )
 
     async def aclose(self) -> None:
         pass

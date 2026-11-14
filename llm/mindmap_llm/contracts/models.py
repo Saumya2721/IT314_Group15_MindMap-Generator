@@ -356,3 +356,14 @@ class ChatTurnResult(BaseModel):
     summary: str | None = None
     proposed_action: dict[str, Any] | None = None
     error: GenerationError | None = None
+
+
+class ChatCompleteCallback(BaseModel):
+    """Payload sent to /internal/chat/{job_id}/complete callback."""
+
+    map_id: UUID
+    job_id: UUID
+    assistant_message: str
+    summary: str | None = None
+    status: str = "completed"
+    error: str | None = None
