@@ -56,9 +56,6 @@ class VectorChunk:
     id: str = field(default_factory=lambda: str(uuid4()))
     section_path: str | None = None
     heading_level: int | None = None
-    page_number: int | None = None
-    char_length: int | None = None
-    chunk_index: int | None = None
 
 
 @dataclass
@@ -74,9 +71,6 @@ class RetrievedChunkRecord:
     score: float  # Pinecone's own similarity score (pre-rerank)
     section_path: str | None = None
     heading_level: int | None = None
-    page_number: int | None = None
-    char_length: int | None = None
-    chunk_index: int | None = None
 
 
 class PineconeVectorStore:
@@ -143,10 +137,9 @@ class PineconeVectorStore:
 
         vectors = []
         for c in chunks:
-            # Breadcrumbs improve the sparse/BM25 representation without changing the displayed chunk.
-            sparse = self._sparse_vector(f"{c.section_path}\n{c.chunk_text}" if c.section_path else c.chunk_text)
+            sparse = self._sparse_vector(c.chunk_text)
             dense, sparse = self._scale(c.embedding, sparse, self._dense_weight)
-            metadata: dict[str, str | int] = {
+            metadata = {
                 "chunk_text": c.chunk_text,
                 "embedding_model": c.embedding_model,
                 "source": c.source.value,
@@ -158,11 +151,6 @@ class PineconeVectorStore:
                 metadata["section_path"] = c.section_path
             if c.heading_level is not None:
                 metadata["heading_level"] = c.heading_level
-            if c.page_number is not None:
-                metadata["page_number"] = c.page_number
-            metadata["char_length"] = c.char_length if c.char_length is not None else len(c.chunk_text)
-            if c.chunk_index is not None:
-                metadata["chunk_index"] = c.chunk_index
             entry = {
                 "id": c.id,
                 "values": dense,
@@ -210,9 +198,6 @@ class PineconeVectorStore:
                 score=match["score"],
                 section_path=match["metadata"].get("section_path") or None,
                 heading_level=match["metadata"].get("heading_level"),
-                page_number=match["metadata"].get("page_number"),
-                char_length=match["metadata"].get("char_length"),
-                chunk_index=match["metadata"].get("chunk_index"),
             )
             for match in result.get("matches", [])
         ]
@@ -247,9 +232,6 @@ class PineconeVectorStore:
                 score=match["score"],
                 section_path=match["metadata"].get("section_path") or None,
                 heading_level=match["metadata"].get("heading_level"),
-                page_number=match["metadata"].get("page_number"),
-                char_length=match["metadata"].get("char_length"),
-                chunk_index=match["metadata"].get("chunk_index"),
             )
             for match in result.get("matches", [])
         ]
