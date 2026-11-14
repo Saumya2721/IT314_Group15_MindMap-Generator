@@ -1,0 +1,113 @@
+[
+  {
+    "id": "short_01",
+    "category": "short_topic",
+    "title": "Photosynthesis",
+    "detail_level": "overview",
+    "seed_text": "Photosynthesis converts sunlight into chemical energy through light reactions and carbon fixation.",
+    "word_count": 12,
+    "source_format": "text"
+  },
+  {
+    "id": "short_02",
+    "category": "short_topic",
+    "title": "Binary search",
+    "detail_level": "balanced",
+    "seed_text": "Binary search divides a sorted sequence into halves; discuss time complexity and boundary cases.",
+    "word_count": 14,
+    "source_format": "text"
+  },
+  {
+    "id": "short_03",
+    "category": "short_topic",
+    "title": "Water cycle",
+    "detail_level": "overview",
+    "seed_text": "Evaporation, condensation, precipitation, collection and the role of solar heating.",
+    "word_count": 10,
+    "source_format": "text"
+  },
+  {
+    "id": "long_01",
+    "category": "long_document",
+    "title": "Community garden planning",
+    "detail_level": "balanced",
+    "seed_text": "## Section 1: planning, validation, and monitoring\nGoals: improve biodiversity. Stakeholders: residents and volunteers. Phases: site survey, planting, irrigation, feedback. Risks: weather, access, maintenance. The design team records stakeholder objectives, assumptions, measurable outcomes, dependencies, quality checks, risks, mitigation actions, tradeoffs and a review cycle. Each section should become a coherent set of concepts rather than duplicated nodes.\n\n## Section 2: planning, validation, and monitoring\nGoals: improve biodiversity. Stakeholders: residents and volunteers. Phases: site survey, planting, irrigation, feedback. Risks: weather, access, maintenance. The design team records stakeholder objectives, assumptions, measurable outcomes, dependencies, quality checks, risks, mitigation actions, tradeoffs and a review cycle. Each section should become a coherent set of concepts rather than duplicated nodes.\n\n## Section 3: planning, validation, and monitoring\nGoals: improve biodiversity. Stakeholders: residents and volunteers. Phases: site survey, planting, irrigation, feedback. Risks: weather, access, maintenance. The design team records stakeholder objectives, assumptions, measurable outcomes, dependencies, quality checks, risks, mitigation actions, tradeoffs and a review cycle. Each section should become a coherent set of concepts rather than duplicated nodes.\n\n## Section 4: planning, validation, and monitoring\nGoals: improve biodiversity. Stakeholders: residents and volunteers. Phases: site survey, planting, irrigation, feedback. Risks: weather, access, maintenance. The design team records stakeholder objectives, assumptions, measurable outcomes, dependencies, quality checks, risks, mitigation actions, tradeoffs and a review cycle. Each section should become a coherent set of concepts rather than duplicated nodes.\n\n## Section 5: planning, validation, and monitoring\nGoals: improve biodiversity. Stakeholders: residents and volunteers. Phases: site survey, planting, irrigation, feedback. Risks: weather, access, maintenance. The design team records stakeholder objectives, assumptions, measurable outcomes, dependencies, quality checks, risks, mitigation actions, tradeoffs and a review cycle. Each section should become a coherent set of concepts rather than duplicated nodes.\n\n## Section 6: planning, validation, and monitoring\nGoals: improve biodiversity. Stakeholders: residents and volunteers. Phases: site survey, planting, irrigation, feedback. Risks: weather, access, maintenance. The design team records stakeholder objectives, assumptions, measurable outcomes, dependencies, quality checks, risks, mitigation actions, tradeoffs and a review cycle. Each section should become a coherent set of concepts rather than duplicated nodes.\n\n## Section 7: planning, validation, and monitoring\nGoals: improve biodiversity. Stakeholders: residents and volunteers. Phases: site survey, planting, irrigation, feedback. Risks: weather, access, maintenance. The design team records stakeholder objectives, assumptions, measurable outcomes, dependencies, quality checks, risks, mitigation actions, tradeoffs and a review cycle. Each section should become a coherent set of concepts rather than duplicated nodes.\n\n## Section 8: planning, validation, and monitoring\nGoals: improve biodiversity. Stakeholders: residents and volunteers. Phases: site survey, planting, irrigation, feedback. Risks: weather, access, maintenance. The design team records stakeholder objectives, assumptions, measurable outcomes, dependencies, quality checks, risks, mitigation actions, tradeoffs and a review cycle. Each section should become a coherent set of concepts rather than duplicated nodes.\n\n## Section 9: planning, validation, and monitoring\nGoals: improve biodiversity. Stakeholders: residents and volunteers. Phases: site survey, planting, irrigation, feedback. Risks: weather, access, maintenance. The design team records stakeholder objectives, assumptions, measurable outcomes, dependencies, quality checks, risks, mitigation actions, tradeoffs and a review cycle. Each section should become a coherent set of concepts rather than duplicated nodes.\n\n## Section 10: planning, validation, and monitoring\nGoals: improve biodiversity. Stakeholders: residents and volunteers. Phases: site survey, planting, irrigation, feedback. Risks: weather, access, maintenance. The design team records stakeholder objectives, assumptions, measurable outcomes, dependencies, quality checks, risks, mitigation actions, tradeoffs and a review cycle. Each section should become a coherent set of concepts rather than duplicated nodes.\n\n## Section 11: planning, validation, and monitoring\nGoals: improve biodiversity. Stakeholders: residents and volunteers. Phases: site survey, planting, irrigation, feedback. Risks: weather, access, maintenance. The design team records stakeholder objectives, assumptions, measurable outcomes, dependencies, quality checks, risks, mitigation actions, tradeoffs and a review cycle. Each section should become a coherent set of concepts rather than duplicated nodes.\n",
+    "word_count": 627,
+    "source_format": "text"
+  },
+  {
+    "id": "long_02",
+    "category": "long_document",
+    "title": "University course proposal",
+    "detail_level": "detailed",
+    "seed_text": "## Section 1: planning, validation, and monitoring\nCourse objectives: algorithms, testing, accessibility. Modules: foundations, projects, assessment. Evaluation: weekly exercises and capstone. The design team records stakeholder objectives, assumptions, measurable outcomes, dependencies, quality checks, risks, mitigation actions, tradeoffs and a review cycle. Each section should become a coherent set of concepts rather than duplicated nodes.\n\n## Section 2: planning, validation, and monitoring\nCourse objectives: algorithms, testing, accessibility. Modules: foundations, projects, assessment. Evaluation: weekly exercises and capstone. The design team records stakeholder objectives, assumptions, measurable outcomes, dependencies, quality checks, risks, mitigation actions, tradeoffs and a review cycle. Each section should become a coherent set of concepts rather than duplicated nodes.\n\n## Section 3: planning, validation, and monitoring\nCourse objectives: algorithms, testing, accessibility. Modules: foundations, projects, assessment. Evaluation: weekly exercises and capstone. The design team records stakeholder objectives, assumptions, measurable outcomes, dependencies, quality checks, risks, mitigation actions, tradeoffs and a review cycle. Each section should become a coherent set of concepts rather than duplicated nodes.\n\n## Section 4: planning, validation, and monitoring\nCourse objectives: algorithms, testing, accessibility. Modules: foundations, projects, assessment. Evaluation: weekly exercises and capstone. The design team records stakeholder objectives, assumptions, measurable outcomes, dependencies, quality checks, risks, mitigation actions, tradeoffs and a review cycle. Each section should become a coherent set of concepts rather than duplicated nodes.\n\n## Section 5: planning, validation, and monitoring\nCourse objectives: algorithms, testing, accessibility. Modules: foundations, projects, assessment. Evaluation: weekly exercises and capstone. The design team records stakeholder objectives, assumptions, measurable outcomes, dependencies, quality checks, risks, mitigation actions, tradeoffs and a review cycle. Each section should become a coherent set of concepts rather than duplicated nodes.\n\n## Section 6: planning, validation, and monitoring\nCourse objectives: algorithms, testing, accessibility. Modules: foundations, projects, assessment. Evaluation: weekly exercises and capstone. The design team records stakeholder objectives, assumptions, measurable outcomes, dependencies, quality checks, risks, mitigation actions, tradeoffs and a review cycle. Each section should become a coherent set of concepts rather than duplicated nodes.\n\n## Section 7: planning, validation, and monitoring\nCourse objectives: algorithms, testing, accessibility. Modules: foundations, projects, assessment. Evaluation: weekly exercises and capstone. The design team records stakeholder objectives, assumptions, measurable outcomes, dependencies, quality checks, risks, mitigation actions, tradeoffs and a review cycle. Each section should become a coherent set of concepts rather than duplicated nodes.\n\n## Section 8: planning, validation, and monitoring\nCourse objectives: algorithms, testing, accessibility. Modules: foundations, projects, assessment. Evaluation: weekly exercises and capstone. The design team records stakeholder objectives, assumptions, measurable outcomes, dependencies, quality checks, risks, mitigation actions, tradeoffs and a review cycle. Each section should become a coherent set of concepts rather than duplicated nodes.\n\n## Section 9: planning, validation, and monitoring\nCourse objectives: algorithms, testing, accessibility. Modules: foundations, projects, assessment. Evaluation: weekly exercises and capstone. The design team records stakeholder objectives, assumptions, measurable outcomes, dependencies, quality checks, risks, mitigation actions, tradeoffs and a review cycle. Each section should become a coherent set of concepts rather than duplicated nodes.\n\n## Section 10: planning, validation, and monitoring\nCourse objectives: algorithms, testing, accessibility. Modules: foundations, projects, assessment. Evaluation: weekly exercises and capstone. The design team records stakeholder objectives, assumptions, measurable outcomes, dependencies, quality checks, risks, mitigation actions, tradeoffs and a review cycle. Each section should become a coherent set of concepts rather than duplicated nodes.\n\n## Section 11: planning, validation, and monitoring\nCourse objectives: algorithms, testing, accessibility. Modules: foundations, projects, assessment. Evaluation: weekly exercises and capstone. The design team records stakeholder objectives, assumptions, measurable outcomes, dependencies, quality checks, risks, mitigation actions, tradeoffs and a review cycle. Each section should become a coherent set of concepts rather than duplicated nodes.\n",
+    "word_count": 594,
+    "source_format": "text"
+  },
+  {
+    "id": "long_03",
+    "category": "long_document",
+    "title": "Public transport plan",
+    "detail_level": "balanced",
+    "seed_text": "## Section 1: planning, validation, and monitoring\nDemand analysis, routes, accessibility, pricing, operations, emissions, risk and quality measures. The design team records stakeholder objectives, assumptions, measurable outcomes, dependencies, quality checks, risks, mitigation actions, tradeoffs and a review cycle. Each section should become a coherent set of concepts rather than duplicated nodes.\n\n## Section 2: planning, validation, and monitoring\nDemand analysis, routes, accessibility, pricing, operations, emissions, risk and quality measures. The design team records stakeholder objectives, assumptions, measurable outcomes, dependencies, quality checks, risks, mitigation actions, tradeoffs and a review cycle. Each section should become a coherent set of concepts rather than duplicated nodes.\n\n## Section 3: planning, validation, and monitoring\nDemand analysis, routes, accessibility, pricing, operations, emissions, risk and quality measures. The design team records stakeholder objectives, assumptions, measurable outcomes, dependencies, quality checks, risks, mitigation actions, tradeoffs and a review cycle. Each section should become a coherent set of concepts rather than duplicated nodes.\n\n## Section 4: planning, validation, and monitoring\nDemand analysis, routes, accessibility, pricing, operations, emissions, risk and quality measures. The design team records stakeholder objectives, assumptions, measurable outcomes, dependencies, quality checks, risks, mitigation actions, tradeoffs and a review cycle. Each section should become a coherent set of concepts rather than duplicated nodes.\n\n## Section 5: planning, validation, and monitoring\nDemand analysis, routes, accessibility, pricing, operations, emissions, risk and quality measures. The design team records stakeholder objectives, assumptions, measurable outcomes, dependencies, quality checks, risks, mitigation actions, tradeoffs and a review cycle. Each section should become a coherent set of concepts rather than duplicated nodes.\n\n## Section 6: planning, validation, and monitoring\nDemand analysis, routes, accessibility, pricing, operations, emissions, risk and quality measures. The design team records stakeholder objectives, assumptions, measurable outcomes, dependencies, quality checks, risks, mitigation actions, tradeoffs and a review cycle. Each section should become a coherent set of concepts rather than duplicated nodes.\n\n## Section 7: planning, validation, and monitoring\nDemand analysis, routes, accessibility, pricing, operations, emissions, risk and quality measures. The design team records stakeholder objectives, assumptions, measurable outcomes, dependencies, quality checks, risks, mitigation actions, tradeoffs and a review cycle. Each section should become a coherent set of concepts rather than duplicated nodes.\n\n## Section 8: planning, validation, and monitoring\nDemand analysis, routes, accessibility, pricing, operations, emissions, risk and quality measures. The design team records stakeholder objectives, assumptions, measurable outcomes, dependencies, quality checks, risks, mitigation actions, tradeoffs and a review cycle. Each section should become a coherent set of concepts rather than duplicated nodes.\n\n## Section 9: planning, validation, and monitoring\nDemand analysis, routes, accessibility, pricing, operations, emissions, risk and quality measures. The design team records stakeholder objectives, assumptions, measurable outcomes, dependencies, quality checks, risks, mitigation actions, tradeoffs and a review cycle. Each section should become a coherent set of concepts rather than duplicated nodes.\n\n## Section 10: planning, validation, and monitoring\nDemand analysis, routes, accessibility, pricing, operations, emissions, risk and quality measures. The design team records stakeholder objectives, assumptions, measurable outcomes, dependencies, quality checks, risks, mitigation actions, tradeoffs and a review cycle. Each section should become a coherent set of concepts rather than duplicated nodes.\n\n## Section 11: planning, validation, and monitoring\nDemand analysis, routes, accessibility, pricing, operations, emissions, risk and quality measures. The design team records stakeholder objectives, assumptions, measurable outcomes, dependencies, quality checks, risks, mitigation actions, tradeoffs and a review cycle. Each section should become a coherent set of concepts rather than duplicated nodes.\n",
+    "word_count": 561,
+    "source_format": "text"
+  },
+  {
+    "id": "pdf_01",
+    "category": "technical_pdf",
+    "title": "Networking lab notes (PDF-derived text)",
+    "detail_level": "detailed",
+    "seed_text": "Page 1: TCP/IP layers. Page 2: routing tables and subnet masks. Page 3: ping, traceroute, packet loss.",
+    "word_count": 17,
+    "source_format": "pdf_extracted_text",
+    "pdf_fixture": "tests/evaluation/fixtures/pdf_01.pdf"
+  },
+  {
+    "id": "pdf_02",
+    "category": "technical_pdf",
+    "title": "Communication systems notes (PDF-derived text)",
+    "detail_level": "detailed",
+    "seed_text": "Page 1: sampling theorem. Page 2: ASK, FSK, PSK. Page 3: matched filters and signal-to-noise ratio.",
+    "word_count": 16,
+    "source_format": "pdf_extracted_text",
+    "pdf_fixture": "tests/evaluation/fixtures/pdf_02.pdf"
+  },
+  {
+    "id": "pdf_03",
+    "category": "technical_pdf",
+    "title": "Database design notes (PDF-derived text)",
+    "detail_level": "balanced",
+    "seed_text": "Page 1: primary and foreign keys. Page 2: transactions and ACID. Page 3: indexes and row level security.",
+    "word_count": 18,
+    "source_format": "pdf_extracted_text",
+    "pdf_fixture": "tests/evaluation/fixtures/pdf_03.pdf"
+  },
+  {
+    "id": "multi_01",
+    "category": "multi_section",
+    "title": "Software requirements",
+    "detail_level": "balanced",
+    "seed_text": "# Functional Requirements\nAuthentication, map editing, saving.\n# Nonfunctional Requirements\nLatency, security, reliability.",
+    "word_count": 13,
+    "source_format": "text"
+  },
+  {
+    "id": "multi_02",
+    "category": "multi_section",
+    "title": "Climate adaptation",
+    "detail_level": "detailed",
+    "seed_text": "# Risk assessment\nFlooding and heat.\n# Mitigation\nDrainage and tree cover.\n# Monitoring\nSensors and feedback.",
+    "word_count": 17,
+    "source_format": "text"
+  },
+  {
+    "id": "multi_03",
+    "category": "multi_section",
+    "title": "Renewable energy overview",
+    "detail_level": "overview",
+    "seed_text": "# Solar\nPhotovoltaic conversion.\n# Wind\nTurbine power.\n# Storage\nBattery and grid integration.",
+    "word_count": 14,
+    "source_format": "text"
+  }
+]
