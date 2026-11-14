@@ -3,7 +3,6 @@ from __future__ import annotations
 from uuid import uuid4
 
 import pytest
-
 from rag.chunking import StructureAwareChunker
 from rag.ingestion import ingest_seed_text
 from rag.pinecone_store import PineconeVectorStore, VectorChunk
