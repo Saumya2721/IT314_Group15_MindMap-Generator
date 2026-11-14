@@ -33,6 +33,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
+from typing import Any
 from uuid import UUID, uuid4
 
 from contracts.models import ChunkSource
@@ -42,10 +43,6 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class VectorChunk:
-    """One chunk, ready to upsert. Mirrors the old EmbeddingRecord, minus
-    the Postgres-specific fields (generation_job_id stays as metadata,
-    not a foreign key)."""
-
     chunk_text: str
     embedding: list[float]
     embedding_model: str = "default"
@@ -60,15 +57,12 @@ class VectorChunk:
 
 @dataclass
 class RetrievedChunkRecord:
-    """What queries return — enough to feed rag/retrieval.py's rerank
-    step without it needing to know this is Pinecone underneath."""
-
     id: str
     chunk_text: str
     source: ChunkSource
     source_title: str | None
     source_url: str | None
-    score: float  # Pinecone's own similarity score (pre-rerank)
+    score: float
     section_path: str | None = None
     heading_level: int | None = None
 
@@ -139,7 +133,7 @@ class PineconeVectorStore:
         for c in chunks:
             sparse = self._sparse_vector(c.chunk_text)
             dense, sparse = self._scale(c.embedding, sparse, self._dense_weight)
-            metadata = {
+            metadata: dict[str, Any] = {
                 "chunk_text": c.chunk_text,
                 "embedding_model": c.embedding_model,
                 "source": c.source.value,
