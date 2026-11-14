@@ -19,6 +19,8 @@ class TextChunk(str):
     breadcrumb_path: str | None
     breadcrumbs: list[str]
     heading_level: int | None
+    page_number: int | None
+    char_length: int
     metadata: dict[str, Any]
 
     def __new__(
@@ -29,6 +31,7 @@ class TextChunk(str):
         breadcrumb_path: str | None = None,
         breadcrumbs: list[str] | None = None,
         heading_level: int | None = None,
+        page_number: int | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> TextChunk:
         obj = super().__new__(cls, content)
@@ -41,6 +44,8 @@ class TextChunk(str):
         obj.section_path = path
         obj.breadcrumb_path = path
         obj.heading_level = heading_level
+        obj.page_number = page_number
+        obj.char_length = len(content)
 
         if breadcrumbs is not None:
             obj.breadcrumbs = list(breadcrumbs)
@@ -52,6 +57,9 @@ class TextChunk(str):
         obj.metadata = dict(metadata) if metadata is not None else {}
         if heading_level is not None:
             obj.metadata["heading_level"] = heading_level
+        if page_number is not None:
+            obj.metadata["page_number"] = page_number
+        obj.metadata["char_length"] = len(content)
         return obj
 
 
@@ -71,6 +79,8 @@ class StructureAwareChunker:
     NUMBERED_HEADER_PATTERN = re.compile(r"^(\d+(?:\.\d+)+|\d+\.)\s+([A-Za-z0-9].*)$")
     # Matches bullet lists with markers "-", "*", "+", or "1)"
     BULLET_PATTERN = re.compile(r"^(\s*)([-*+]|\d+\))\s+(.+)$")
+    # Matches page break comments/headers, e.g. --- Page 3 --- or <!-- page: 3 -->
+    PAGE_PATTERN = re.compile(r"^(?:--- Page (\d+) ---|<!--\s*page\s*:\s*(\d+)\s*-->)$", re.IGNORECASE)
 
     def __init__(
         self,
@@ -137,9 +147,10 @@ class StructureAwareChunker:
         self._reset_stack()
 
         lines = text.split("\n")
-        sections: list[tuple[str | None, list[str], int | None, str]] = []
+        sections: list[tuple[str | None, list[str], int | None, int | None, str]] = []
         current_lines: list[str] = []
         current_heading_level: int | None = None
+        current_page: int | None = None
 
         def flush_current_section() -> None:
             nonlocal current_lines
@@ -151,6 +162,7 @@ class StructureAwareChunker:
                             self.get_breadcrumb_path(),
                             self.get_breadcrumb_stack(),
                             current_heading_level,
+                            current_page,
                             content,
                         )
                     )
@@ -158,6 +170,13 @@ class StructureAwareChunker:
 
         for line in lines:
             stripped = line.strip()
+
+            # 0. Check for page markers
+            page_match = self.PAGE_PATTERN.match(stripped)
+            if page_match:
+                flush_current_section()
+                current_page = int(page_match.group(1) or page_match.group(2))
+                continue
 
             # 1. Check for Markdown Headings (# to ######)
             heading_match = self.HEADING_PATTERN.match(stripped)
@@ -213,17 +232,19 @@ class StructureAwareChunker:
                     breadcrumb=self.get_breadcrumb_path(),
                     breadcrumbs=self.get_breadcrumb_stack(),
                     heading_level=last_level,
+                    page_number=current_page,
                 )
             ]
 
         # Split sections into boundary-aligned chunks
         all_chunks: list[TextChunk] = []
-        for path_str, stack_list, lvl, sec_text in sections:
+        for path_str, stack_list, lvl, page_num, sec_text in sections:
             sec_chunks = self._split_into_boundary_chunks(
                 sec_text,
                 breadcrumb_path=path_str,
                 breadcrumbs=stack_list,
                 heading_level=lvl,
+                page_number=page_num,
                 chunk_size=self.chunk_size,
                 overlap=self.overlap,
             )
@@ -239,6 +260,7 @@ class StructureAwareChunker:
         heading_level: int | None,
         chunk_size: int,
         overlap: int,
+        page_number: int | None = None,
     ) -> list[TextChunk]:
         """Split text while preserving sentence, word, and bullet boundaries (no cut words)."""
         text = text.strip()
@@ -252,6 +274,7 @@ class StructureAwareChunker:
                     breadcrumb=breadcrumb_path,
                     breadcrumbs=breadcrumbs,
                     heading_level=heading_level,
+                    page_number=page_number,
                 )
             ]
 
@@ -270,6 +293,7 @@ class StructureAwareChunker:
                             breadcrumb=breadcrumb_path,
                             breadcrumbs=breadcrumbs,
                             heading_level=heading_level,
+                            page_number=page_number,
                         )
                     )
                 break
@@ -315,6 +339,7 @@ class StructureAwareChunker:
                         breadcrumb=breadcrumb_path,
                         breadcrumbs=breadcrumbs,
                         heading_level=heading_level,
+                        page_number=page_number,
                     )
                 )
                 last_end = chunk_end

@@ -34,7 +34,7 @@ async def ingest_seed_text(
 ) -> int:
     """Chunks + embeds the normalized seed text and upserts it into
     Pinecone under the map's namespace, source=uploaded_seed."""
-    chunks = chunk_text(seed_text)
+    chunks = StructureAwareChunker().chunk(seed_text)
     if not chunks:
         return 0
     vectors = await embedding_provider.embed([str(c) for c in chunks])
@@ -45,10 +45,13 @@ async def ingest_seed_text(
             embedding_model=embedding_provider.model_name,
             source=ChunkSource.UPLOADED_SEED,
             generation_job_id=generation_job_id,
-            section_path=getattr(chunk, "section_path", None),
-            heading_level=getattr(chunk, "heading_level", None),
+            section_path=chunk.section_path,
+            heading_level=chunk.heading_level,
+            page_number=getattr(chunk, "page_number", None),
+            char_length=getattr(chunk, "char_length", len(chunk)),
+            chunk_index=index,
         )
-        for chunk, vector in zip(chunks, vectors)
+        for index, (chunk, vector) in enumerate(zip(chunks, vectors))
     ]
     return await vector_store.upsert_chunks(namespace=namespace, chunks=records)
 
@@ -68,7 +71,7 @@ async def ingest_tool_result(
     where source_url is always populated (mirrors the old
     chk_embeddings_source_url constraint, now enforced by convention
     rather than a DB CHECK)."""
-    chunks = chunk_text(text)
+    chunks = StructureAwareChunker().chunk(text)
     if not chunks:
         return 0
     vectors = await embedding_provider.embed([str(c) for c in chunks])
@@ -77,11 +80,16 @@ async def ingest_tool_result(
             chunk_text=chunk,
             embedding=vector,
             embedding_model=embedding_provider.model_name,
-            source=ChunkSource.UPLOADED_SEED,
+            source=source,
             generation_job_id=generation_job_id,
-            section_path=getattr(chunk, "section_path", None),
-            heading_level=getattr(chunk, "heading_level", None),
+            source_title=source_title,
+            source_url=source_url,
+            section_path=chunk.section_path,
+            heading_level=chunk.heading_level,
+            page_number=getattr(chunk, "page_number", None),
+            char_length=getattr(chunk, "char_length", len(chunk)),
+            chunk_index=index,
         )
-        for chunk, vector in zip(chunks, vectors)
+        for index, (chunk, vector) in enumerate(zip(chunks, vectors))
     ]
     return await vector_store.upsert_chunks(namespace=namespace, chunks=records)
