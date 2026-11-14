@@ -783,7 +783,9 @@ export function EditorWorkspace({
                 rows={4}
                 className="thoughts-input"
                 style={{ width: '100%', marginBottom: '12px', boxSizing: 'border-box' }}
-                placeholder="e.g. Expand on supply chain vulnerabilities and remove introductory overviews..."
+                placeholder={
+                  'e.g. Expand on supply chain vulnerabilities and remove introductory overviews...'
+                }
                 value={regenInstruction}
                 onChange={(e) => setRegenInstruction(e.target.value)}
                 required

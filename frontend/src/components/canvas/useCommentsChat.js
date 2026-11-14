@@ -51,7 +51,7 @@ export function commentsChatReducer(state, action) {
         commentsByNodeId: {
           ...state.commentsByNodeId,
           [nodeId]: (state.commentsByNodeId[nodeId] || []).map((c) =>
-            c.id === commentId ? { ...c, resolved: !c.resolved } : c
+            c.id === commentId ? { ...c, resolved: !c.resolved } : c,
           ),
         },
       }

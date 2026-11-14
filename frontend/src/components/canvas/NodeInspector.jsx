@@ -254,7 +254,10 @@ export function NodeInspector({
       <div className="inspector-section branch-regen-section">
         <div className="inspector-section-header">
           <div className="section-title-wrap">
-            <span className="material-symbols-outlined section-icon" style={{ color: 'var(--accent-terracotta, #c96b4b)' }}>
+            <span
+              className="material-symbols-outlined section-icon"
+              style={{ color: 'var(--accent-terracotta, #c96b4b)' }}
+            >
               neurology
             </span>
             <span className="inspector-field-label">Branch AI Regeneration</span>
@@ -302,7 +305,10 @@ export function NodeInspector({
         >
           <span
             className="material-symbols-outlined"
-            style={{ fontSize: '16px', animation: isRegenerating ? 'spin 1s linear infinite' : 'none' }}
+            style={{
+              fontSize: '16px',
+              animation: isRegenerating ? 'spin 1s linear infinite' : 'none',
+            }}
           >
             {isRegenerating ? 'sync' : 'auto_awesome'}
           </span>
@@ -317,7 +323,10 @@ export function NodeInspector({
       <div className="inspector-section comments-section">
         <div className="inspector-section-header">
           <div className="section-title-wrap">
-            <span className="material-symbols-outlined section-icon" style={{ color: 'var(--accent-teal, #155e63)' }}>
+            <span
+              className="material-symbols-outlined section-icon"
+              style={{ color: 'var(--accent-teal, #155e63)' }}
+            >
               forum
             </span>
             <span className="inspector-field-label">Node Discussion</span>
@@ -362,7 +371,10 @@ export function NodeInspector({
         <div className="comments-thread-list">
           {filteredComments.length === 0 ? (
             <div className="comments-empty-state">
-              <span className="material-symbols-outlined" style={{ fontSize: '20px', color: 'var(--outline-variant, #bfc8c9)' }}>
+              <span
+                className="material-symbols-outlined"
+                style={{ fontSize: '20px', color: 'var(--outline-variant, #bfc8c9)' }}
+              >
                 chat_bubble_outline
               </span>
               <p className="empty-state-text">
@@ -381,7 +393,9 @@ export function NodeInspector({
               >
                 <div className="comment-item-top">
                   <div className="comment-author-badge">
-                    <span className="author-avatar">{comment.author ? comment.author[0] : 'U'}</span>
+                    <span className="author-avatar">
+                      {comment.author ? comment.author[0] : 'U'}
+                    </span>
                     <span className="comment-author-name">{comment.author || 'User'}</span>
                     <span className="comment-timestamp">{comment.createdAt || 'Just now'}</span>
                   </div>
@@ -431,7 +445,8 @@ export function NodeInspector({
       <div style={{ marginTop: '16px', fontSize: '12px', color: 'var(--outline, #6f7977)' }}>
         <div>
           Direct connections:{' '}
-          {(selectedNode.incomingEdges?.length || 0) + (selectedNode.outgoingEdges?.length || 0)}{' '}
+          {(selectedNode.incomingEdges?.length || 0) +
+            (selectedNode.outgoingEdges?.length || 0)}{' '}
           links
         </div>
       </div>
