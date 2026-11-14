@@ -381,8 +381,8 @@ export function NodeInspector({
                 {commentFilter === 'resolved'
                   ? 'No resolved comments.'
                   : commentFilter === 'active'
-                  ? 'No open comments on this node.'
-                  : 'No comments yet. Leave a review note or branch idea.'}
+                    ? 'No open comments on this node.'
+                    : 'No comments yet. Leave a review note or branch idea.'}
               </p>
             </div>
           ) : (
@@ -445,8 +445,7 @@ export function NodeInspector({
       <div style={{ marginTop: '16px', fontSize: '12px', color: 'var(--outline, #6f7977)' }}>
         <div>
           Direct connections:{' '}
-          {(selectedNode.incomingEdges?.length || 0) +
-            (selectedNode.outgoingEdges?.length || 0)}{' '}
+          {(selectedNode.incomingEdges?.length || 0) + (selectedNode.outgoingEdges?.length || 0)}{' '}
           links
         </div>
       </div>

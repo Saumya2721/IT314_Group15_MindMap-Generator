@@ -192,19 +192,27 @@
 /* Regenerated Node Highlighting */
 .atelier-node-card.regenerated-highlight {
   border: 2px solid var(--accent-terracotta) !important;
-  box-shadow: 0 0 0 4px rgba(201, 107, 75, 0.22), 0 8px 24px rgba(201, 107, 75, 0.2) !important;
+  box-shadow:
+    0 0 0 4px rgba(201, 107, 75, 0.22),
+    0 8px 24px rgba(201, 107, 75, 0.2) !important;
   animation: pulseRegenerated 2s infinite ease-in-out;
 }
 
 @keyframes pulseRegenerated {
   0% {
-    box-shadow: 0 0 0 3px rgba(201, 107, 75, 0.35), 0 6px 18px rgba(201, 107, 75, 0.2);
+    box-shadow:
+      0 0 0 3px rgba(201, 107, 75, 0.35),
+      0 6px 18px rgba(201, 107, 75, 0.2);
   }
   50% {
-    box-shadow: 0 0 0 7px rgba(201, 107, 75, 0.15), 0 8px 26px rgba(201, 107, 75, 0.28);
+    box-shadow:
+      0 0 0 7px rgba(201, 107, 75, 0.15),
+      0 8px 26px rgba(201, 107, 75, 0.28);
   }
   100% {
-    box-shadow: 0 0 0 3px rgba(201, 107, 75, 0.35), 0 6px 18px rgba(201, 107, 75, 0.2);
+    box-shadow:
+      0 0 0 3px rgba(201, 107, 75, 0.35),
+      0 6px 18px rgba(201, 107, 75, 0.2);
   }
 }
 

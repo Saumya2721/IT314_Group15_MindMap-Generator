@@ -120,7 +120,9 @@
   font-size: 13px;
   color: var(--on-surface);
   outline: none;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
 }
 
 .inspector-input:focus {
@@ -141,7 +143,9 @@
   resize: vertical;
   min-height: 48px;
   line-height: 1.4;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
 }
 
 .inspector-textarea:focus {
