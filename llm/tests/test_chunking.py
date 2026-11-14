@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import re
 
-from rag.ingestion import TextChunk, chunk_text
+from rag.chunking import (
+    DocumentChunk,
+    StructureAwareChunker,
+    TextChunk,
+    chunk_text,
+)
 
 
 def test_text_chunk_inherits_str_and_exposes_metadata():
@@ -169,3 +174,110 @@ def test_headings_only_without_body():
     assert len(chunks) == 1
     assert chunks[0] == "Leaf"
     assert chunks[0].breadcrumb == "Root > Branch > Leaf"
+
+
+def test_structure_aware_chunker_numbered_headings_and_root_breadcrumb():
+    text = (
+        "1. Chapter 1\n"
+        "Introductory content for Chapter 1.\n\n"
+        "1.1 Section A\n"
+        "Detailed explanation of Section A.\n"
+        "- Bullet item 1\n"
+        "- Bullet item 2\n"
+        "  - Sub-bullet 2.1"
+    )
+    chunker = StructureAwareChunker(root_title="Root")
+    chunks = chunker.chunk(text)
+
+    assert len(chunks) == 2
+    assert chunks[0] == "Introductory content for Chapter 1."
+    assert chunks[0].breadcrumb == "Root > Chapter 1"
+    assert chunks[0].breadcrumb_path == "Root > Chapter 1"
+    assert chunks[0].breadcrumbs == ["Root", "Chapter 1"]
+
+    assert "Detailed explanation of Section A." in chunks[1]
+    assert "- Bullet item 1" in chunks[1]
+    assert chunks[1].breadcrumb == "Root > Chapter 1 > Section A"
+    assert chunks[1].breadcrumb_path == "Root > Chapter 1 > Section A"
+    assert chunks[1].breadcrumbs == ["Root", "Chapter 1", "Section A"]
+
+
+def test_structure_aware_chunker_numbered_sibling_reset():
+    text = (
+        "1. Chapter 1\n"
+        "Chapter 1 content.\n\n"
+        "1.1 Section A\n"
+        "Section A content.\n\n"
+        "1.2 Section B\n"
+        "Section B content.\n\n"
+        "2. Chapter 2\n"
+        "Chapter 2 content."
+    )
+    chunker = StructureAwareChunker(root_title="Root")
+    chunks = chunker.chunk(text)
+
+    assert len(chunks) == 4
+    assert chunks[0].breadcrumb == "Root > Chapter 1"
+    assert chunks[1].breadcrumb == "Root > Chapter 1 > Section A"
+    assert chunks[2].breadcrumb == "Root > Chapter 1 > Section B"
+    assert chunks[3].breadcrumb == "Root > Chapter 2"
+    assert chunks[3].breadcrumbs == ["Root", "Chapter 2"]
+
+
+def test_structure_aware_chunker_mixed_markdown_and_numbered():
+    text = (
+        "# System Architecture\n"
+        "High level system design.\n\n"
+        "1. Ingestion Pipeline\n"
+        "Parses input documents.\n\n"
+        "1.1 Normalizer\n"
+        "Normalizes file formats to text.\n\n"
+        "2. Retrieval Pipeline\n"
+        "Performs hybrid dense and sparse search."
+    )
+    chunker = StructureAwareChunker()
+    chunks = chunker.chunk(text)
+
+    breadcrumbs = [c.breadcrumb for c in chunks]
+    assert breadcrumbs == [
+        "System Architecture",
+        "System Architecture > Ingestion Pipeline",
+        "System Architecture > Ingestion Pipeline > Normalizer",
+        "System Architecture > Retrieval Pipeline",
+    ]
+
+
+def test_structure_aware_chunker_preserve_numbered_prefix():
+    text = "1. Overview\nProject overview.\n\n1.1 Goals\nProject goals."
+    chunker = StructureAwareChunker(preserve_numbered_prefix=True)
+    chunks = chunker.chunk(text)
+
+    assert chunks[0].breadcrumb == "1. Overview"
+    assert chunks[1].breadcrumb == "1. Overview > 1.1 Goals"
+
+
+def test_structure_aware_chunker_track_bullets():
+    text = "# Topics\n- Machine Learning\n  - Supervised\n    - Linear Models\n"
+    chunker = StructureAwareChunker(track_bullets=True)
+    chunks = chunker.chunk(text)
+
+    assert len(chunks) >= 3
+    paths = [c.breadcrumb for c in chunks]
+    assert any("Topics > Machine Learning" in p for p in paths)
+    assert any("Supervised" in p for p in paths)
+    assert any("Linear Models" in p for p in paths)
+
+
+def test_document_chunk_model_compatibility():
+    chunk = DocumentChunk(
+        "Content body",
+        breadcrumbs=["Root", "Chapter 1", "Section A"],
+        metadata={"heading_level": 2},
+    )
+    assert isinstance(chunk, str)
+    assert chunk == "Content body"
+    assert chunk.breadcrumb == "Root > Chapter 1 > Section A"
+    assert chunk.breadcrumb_path == "Root > Chapter 1 > Section A"
+    assert chunk.breadcrumbs == ["Root", "Chapter 1", "Section A"]
+    assert chunk.section_path == "Root > Chapter 1 > Section A"
+    assert chunk.metadata["heading_level"] == 2
