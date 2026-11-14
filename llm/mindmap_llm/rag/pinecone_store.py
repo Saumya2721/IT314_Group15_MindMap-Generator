@@ -146,7 +146,7 @@ class PineconeVectorStore:
             # Breadcrumbs improve the sparse/BM25 representation without changing the displayed chunk.
             sparse = self._sparse_vector(f"{c.section_path}\n{c.chunk_text}" if c.section_path else c.chunk_text)
             dense, sparse = self._scale(c.embedding, sparse, self._dense_weight)
-            metadata = {
+            metadata: dict[str, str | int] = {
                 "chunk_text": c.chunk_text,
                 "embedding_model": c.embedding_model,
                 "source": c.source.value,
