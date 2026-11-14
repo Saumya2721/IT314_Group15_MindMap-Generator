@@ -3,12 +3,12 @@ from __future__ import annotations
 import re
 from typing import Any
 
-DEFAULT_CHUNK_SIZE_CHARS = 1200
-DEFAULT_CHUNK_OVERLAP_CHARS = 150
+DEFAULT_CHUNK_SIZE_CHARS = 1500
+DEFAULT_CHUNK_OVERLAP_CHARS = 200
 
 
 class TextChunk(str):
-    """A string chunk that preserves structural metadata (breadcrumbs / section_path / heading_level).
+    """A string chunk that preserves structural metadata (breadcrumbs, heading_level, page_number).
 
     Inheriting from str ensures full backward compatibility with any code expecting
     a plain str (e.g., len(), ==, JSON serialization, embeddings, Pinecone upsert).
@@ -32,6 +32,7 @@ class TextChunk(str):
         breadcrumbs: list[str] | None = None,
         heading_level: int | None = None,
         page_number: int | None = None,
+        char_length: int | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> TextChunk:
         obj = super().__new__(cls, content)
@@ -45,7 +46,7 @@ class TextChunk(str):
         obj.breadcrumb_path = path
         obj.heading_level = heading_level
         obj.page_number = page_number
-        obj.char_length = len(content)
+        obj.char_length = len(content) if char_length is None else char_length
 
         if breadcrumbs is not None:
             obj.breadcrumbs = list(breadcrumbs)
@@ -59,7 +60,7 @@ class TextChunk(str):
             obj.metadata["heading_level"] = heading_level
         if page_number is not None:
             obj.metadata["page_number"] = page_number
-        obj.metadata["char_length"] = len(content)
+        obj.metadata["char_length"] = obj.char_length
         return obj
 
 
@@ -70,8 +71,17 @@ DocumentChunk = TextChunk
 class StructureAwareChunker:
     """Structure-aware chunker that parses Markdown headings (# to ###),
     numbered section headers (1., 1.1), and bullet lists while maintaining
-    an active breadcrumb stack (e.g. 'Root > Chapter 1 > Section A')
-    and attaching breadcrumb paths and heading levels to each emitted text chunk.
+    an active breadcrumb stack.
+
+    Implements recursive fallback splitting:
+    When a section exceeds chunk_size=1500, it splits recursively at:
+      1. Paragraphs (\\n\\n)
+      2. Lines (\\n)
+      3. Sentences ([.!?])
+      4. Words (\\s)
+      5. Emergency hard split for continuous unbreakable strings.
+    Maintains overlap across split chunks without cutting mid-word.
+    Falls back to a clean [Root] breadcrumb path for plain/unstructured text.
     """
 
     HEADING_PATTERN = re.compile(r"^(#{1,6})\s+(.+)$")
@@ -79,12 +89,13 @@ class StructureAwareChunker:
     NUMBERED_HEADER_PATTERN = re.compile(r"^(\d+(?:\.\d+)+|\d+\.)\s+([A-Za-z0-9].*)$")
     # Matches bullet lists with markers "-", "*", "+", or "1)"
     BULLET_PATTERN = re.compile(r"^(\s*)([-*+]|\d+\))\s+(.+)$")
-    # Matches page break comments/headers, e.g. --- Page 3 --- or <!-- page: 3 -->
-    PAGE_PATTERN = re.compile(r"^(?:--- Page (\d+) ---|<!--\s*page\s*:\s*(\d+)\s*-->)$", re.IGNORECASE)
+    # Matches page boundary marker: "--- Page <n> ---" or "<!-- page: <n> -->"
+    PAGE_PATTERN = re.compile(r"^(?:---\s*Page\s+(\d+)\s*---|<!--\s*page\s*:\s*(\d+)\s*-->)$", re.IGNORECASE)
 
     def __init__(
         self,
         root_title: str | None = None,
+        fallback_root: str | None = "Root",
         chunk_size: int = DEFAULT_CHUNK_SIZE_CHARS,
         overlap: int = DEFAULT_CHUNK_OVERLAP_CHARS,
         separator: str = " > ",
@@ -93,6 +104,7 @@ class StructureAwareChunker:
         preserve_numbered_prefix: bool = False,
     ) -> None:
         self.root_title = root_title
+        self.fallback_root = fallback_root
         self.chunk_size = chunk_size
         self.overlap = overlap
         self.separator = separator
@@ -136,14 +148,16 @@ class StructureAwareChunker:
         self,
         text: str,
         root_title: str | None = None,
+        fallback_root: str | None = None,
     ) -> list[TextChunk]:
-        """Parse structured text and emit chunks with breadcrumbs and heading_level attached."""
+        """Parse structured text and emit chunks with breadcrumbs, heading_level, and page numbers."""
         if not text or not text.strip():
             return []
 
-        # Allow per-call override of root_title
         if root_title is not None:
             self.root_title = root_title
+        eff_fallback_root = fallback_root if fallback_root is not None else self.fallback_root
+
         self._reset_stack()
 
         lines = text.split("\n")
@@ -151,6 +165,7 @@ class StructureAwareChunker:
         current_lines: list[str] = []
         current_heading_level: int | None = None
         current_page: int | None = None
+        has_structure = False
 
         def flush_current_section() -> None:
             nonlocal current_lines
@@ -171,16 +186,18 @@ class StructureAwareChunker:
         for line in lines:
             stripped = line.strip()
 
-            # 0. Check for page markers
+            # Check for page boundary marker
             page_match = self.PAGE_PATTERN.match(stripped)
             if page_match:
-                flush_current_section()
-                current_page = int(page_match.group(1) or page_match.group(2))
+                p1, p2 = page_match.groups()
+                current_page = int(p1 or p2)
+                current_lines.append(line)
                 continue
 
             # 1. Check for Markdown Headings (# to ######)
             heading_match = self.HEADING_PATTERN.match(stripped)
             if heading_match:
+                has_structure = True
                 flush_current_section()
                 hashes, title = heading_match.groups()
                 level = len(hashes)
@@ -192,6 +209,7 @@ class StructureAwareChunker:
             # 2. Check for Numbered Section Headers (e.g. 1. Introduction, 1.1 Background)
             numbered_match = self.NUMBERED_HEADER_PATTERN.match(stripped)
             if numbered_match:
+                has_structure = True
                 num_str, title = numbered_match.groups()
                 num_clean = num_str.rstrip(".")
                 depth = len(num_clean.split("."))
@@ -206,6 +224,7 @@ class StructureAwareChunker:
             # 3. Check for Bullet Lists
             bullet_match = self.BULLET_PATTERN.match(line)
             if bullet_match and self.track_bullets:
+                has_structure = True
                 indent, marker, item_text = bullet_match.groups()
                 indent_level = len(indent) // 2 + 1
                 level = self._current_md_level + 10 + indent_level
@@ -236,7 +255,16 @@ class StructureAwareChunker:
                 )
             ]
 
-        # Split sections into boundary-aligned chunks
+        # Plain/unstructured text fallback:
+        # If no document structure was detected and no explicit root_title was set,
+        # fall back to clean [Root] breadcrumb path if eff_fallback_root is specified.
+        if not has_structure and not self.root_title and eff_fallback_root:
+            updated_sections: list[tuple[str | None, list[str], int | None, int | None, str]] = []
+            for _path_str, _stack_list, lvl, p_num, content in sections:
+                updated_sections.append((eff_fallback_root, [eff_fallback_root], lvl, p_num, content))
+            sections = updated_sections
+
+        # Split sections into boundary-aligned chunks via recursive fallback
         all_chunks: list[TextChunk] = []
         for path_str, stack_list, lvl, page_num, sec_text in sections:
             sec_chunks = self._split_into_boundary_chunks(
@@ -262,7 +290,14 @@ class StructureAwareChunker:
         overlap: int,
         page_number: int | None = None,
     ) -> list[TextChunk]:
-        """Split text while preserving sentence, word, and bullet boundaries (no cut words)."""
+        """Split text while preserving boundaries via recursive fallback:
+        1. Paragraphs (\\n\\n)
+        2. Lines (\\n)
+        3. Sentences ([.!?])
+        4. Words (\\s)
+        5. Emergency hard split for unbreakable strings.
+        Maintains overlap across split chunks without cutting mid-word.
+        """
         text = text.strip()
         if not text:
             return []
@@ -303,30 +338,31 @@ class StructureAwareChunker:
 
             split_pos = -1
 
-            # 1. Paragraph break (\n\n) in second half of window
+            # 1. Paragraph break (\\n\\n)
             para_idx = window.rfind("\n\n")
-            if para_idx >= chunk_size // 2:
+            if para_idx >= chunk_size // 3:
                 split_pos = para_idx + 2
             else:
-                # 2. Bullet line break (\n- or \n* or \n+) in second half
-                bullet_matches = list(re.finditer(r"\n\s*[-*+]\s+", window))
-                if bullet_matches and bullet_matches[-1].start() >= chunk_size // 3:
-                    split_pos = bullet_matches[-1].start() + 1
+                # 2. Line break (\\n)
+                line_idx = window.rfind("\n")
+                if line_idx >= chunk_size // 3:
+                    split_pos = line_idx + 1
                 else:
-                    # 3. Sentence boundary (.!?) in second half of window
+                    # 3. Sentence boundary ([.!?])
                     sentence_matches = list(re.finditer(r"[.!?](?:\s+|\n|$)", window))
                     if sentence_matches and sentence_matches[-1].end() >= chunk_size // 3:
                         split_pos = sentence_matches[-1].end()
 
-            # 4. Word boundary (space or newline)
+            # 4. Word boundary (whitespace)
             if split_pos == -1:
                 space_idx = window.rfind(" ")
+                tab_idx = window.rfind("\t")
                 newline_idx = window.rfind("\n")
-                best_space = max(space_idx, newline_idx)
+                best_space = max(space_idx, tab_idx, newline_idx)
                 if best_space > 0:
                     split_pos = best_space + 1
 
-            # 5. Fallback for continuous unbroken string
+            # 5. Emergency split for unbreakable strings (no whitespace or boundaries in window)
             if split_pos == -1:
                 split_pos = chunk_size
 
@@ -347,7 +383,7 @@ class StructureAwareChunker:
             if chunk_end >= total_len:
                 break
 
-            # Calculate next start with overlap aligned to a word boundary
+            # Calculate next start with overlap aligned to a word boundary (never split mid-word)
             if overlap > 0 and split_pos > overlap:
                 raw_next_start = chunk_end - overlap
                 next_space = text.find(" ", raw_next_start, chunk_end)
@@ -366,11 +402,13 @@ def chunk_text(
     chunk_size: int = DEFAULT_CHUNK_SIZE_CHARS,
     overlap: int = DEFAULT_CHUNK_OVERLAP_CHARS,
     root_title: str | None = None,
+    fallback_root: str | None = None,
     **kwargs: Any,
 ) -> list[TextChunk]:
     """Structure-aware chunker functional entrypoint."""
     chunker = StructureAwareChunker(
         root_title=root_title,
+        fallback_root=fallback_root,
         chunk_size=chunk_size,
         overlap=overlap,
         **kwargs,
