@@ -24,6 +24,7 @@ from typing import Literal, cast
 
 from contracts.models import ChunkSource
 from orchestration.deps import GenerationDeps
+from orchestration.expansion import execute_two_pass_generation, expand_branch
 from orchestration.policy import SeedMode, plan_research
 from orchestration.prompts import (
     DETAIL_LEVEL_QUESTION,
@@ -31,8 +32,6 @@ from orchestration.prompts import (
     JSONExtractionError,
     build_generation_system_prompt,
     build_generation_user_prompt,
-    build_regenerate_node_system_prompt,
-    build_regenerate_node_user_prompt,
     estimate_tokens,
     extract_json_object,
     size_targets,
@@ -365,6 +364,41 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
         }
 
     async def generate_node(state: GenerationState) -> dict:
+        use_two_pass = state.get("two_pass_enabled", deps.settings.generation.enable_two_pass)
+        if use_two_pass:
+            targets = state.get("targets")
+            target_node_range = state.get("target_node_range") or (
+                (targets.min_nodes, targets.max_nodes) if targets else (10, 35)
+            )
+            target_max_depth = state.get("target_max_depth") or (targets.max_depth if targets else 4)
+
+            try:
+                nodes, edges, chunks, warnings = await execute_two_pass_generation(
+                    deps,
+                    namespace=state["namespace"],
+                    seed_text=state["seed_text"],
+                    detail_level=state.get("resolved_detail_level"),
+                    concurrency_limit=deps.settings.generation.branch_expansion_concurrency,
+                    min_branches=deps.settings.generation.min_outline_branches,
+                    max_branches=deps.settings.generation.max_outline_branches,
+                    target_node_range=target_node_range,
+                    target_max_depth=target_max_depth,
+                )
+                await deps.callback.progress(70)
+                return {
+                    "nodes": nodes,
+                    "edges": edges,
+                    "retrieved_chunks": chunks,
+                    "quality_warnings": warnings,
+                    "validation_errors": [],
+                    "two_pass_complete": True,
+                }
+            except ValidationFailure as exc:
+                return {"draft_payload": None, "validation_errors": exc.errors}
+            except Exception as exc:
+                logger.exception("Two-pass generation encountered error: %s", exc)
+                return {"draft_payload": None, "validation_errors": [str(exc)]}
+
         retrieved_chunks = state.get("retrieved_chunks", [])
         enable_dynamic = deps.settings.generation.enable_dynamic_prompts
 
@@ -417,6 +451,15 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
         return {"draft_payload": payload}
 
     async def validate_node(state: GenerationState) -> dict:
+        if state.get("two_pass_complete"):
+            await deps.callback.progress(85)
+            return {
+                "nodes": state.get("nodes", []),
+                "edges": state.get("edges", []),
+                "quality_warnings": state.get("quality_warnings", []),
+                "validation_errors": [],
+            }
+
         payload = state.get("draft_payload")
         retry_count = state.get("retry_count", 0)
         max_retries = state.get("_max_retries", deps.settings.generation.max_generation_retries)
@@ -538,34 +581,42 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
         comment = state.get("comment") or state.get("regeneration_instruction")
         branch_nodes = state.get("branch_nodes", [])
         retrieved_chunks = state.get("retrieved_chunks", [])
+        allowed_ids = state.get("allowed_node_ids")
+        if allowed_ids is None:
+            allowed_ids = {str(selected_node.id), *(str(n.id) for n in branch_nodes)}
 
-        system_prompt = build_regenerate_node_system_prompt()
-        prompt = build_regenerate_node_user_prompt(
-            selected_node_label=selected_node.label,
-            selected_node_description=selected_node.description,
-            comment=comment,
+        # Reuse shared branch expansion engine (S2-L12)
+        res = await expand_branch(
+            deps,
+            namespace=state["namespace"],
+            selected_node=selected_node,
             ancestor_labels=ancestor_labels,
             breadcrumb_path=breadcrumb,
+            comment=comment,
             branch_context_nodes=branch_nodes,
-            supporting_context=retrieved_chunks,
-            previous_validation_errors=state.get("validation_errors") or None,
+            allowed_node_ids=allowed_ids,
+            existing_chunks=retrieved_chunks,
+            previous_validation_errors=state.get("validation_errors"),
+            max_retries=0,  # LangGraph graph controls outer retry loop via _validate_branch_router
         )
 
-        response = await deps.llm.generate(
-            [Message(role="user", content=prompt)],
-            system=system_prompt,
-            max_tokens=deps.settings.llm.max_output_tokens,
-            temperature=0.3,
-        )
-        try:
-            payload = extract_json_object(response.text or "")
-        except JSONExtractionError as exc:
-            return {"draft_payload": None, "validation_errors": [str(exc)]}
+        if res.status != "completed" or res.draft is None:
+            return {"draft_payload": None, "validation_errors": res.errors}
 
         await deps.callback.progress(70)
-        return {"draft_payload": payload}
+        return {
+            "draft_payload": res.draft.model_dump(),
+            "nodes": res.nodes,
+            "edges": res.edges,
+            "branch_result": res,
+        }
 
     async def validate_branch_node(state: GenerationState) -> dict:
+        if state.get("branch_result") and state["branch_result"].status == "completed":
+            res = state["branch_result"]
+            await deps.callback.progress(85)
+            return {"nodes": res.nodes, "edges": res.edges, "validation_errors": []}
+
         payload = state.get("draft_payload")
         retry_count = state.get("retry_count", 0)
 

@@ -297,6 +297,90 @@ RULES & BOUNDARIES:
 """
 
 
+_OUTLINE_SYSTEM_TEMPLATE = """You are an expert curriculum designer and knowledge architect.
+Your task is to generate Pass 1 of a two-pass mind map: a high-level STRUCTURAL OUTLINE.
+
+Requirements for Pass 1:
+1. Exactly ONE central root node representing the central topic / concept.
+2. Between 4 and 8 top-level branch nodes directly connected to the root.
+3. Every branch node must represent a major category, theme, or structural heading from the content.
+4. Each branch node MUST include:
+   - "id": A provisional string ID (e.g. "root", "n1", "n2", ...)
+   - "label": A concise title (1-5 words)
+   - "description": A 1-2 sentence description explaining what aspect of the topic this branch covers.
+5. Edges: Connect ONLY the root node to each of the 4-8 branch nodes.
+6. Do NOT generate deeper sub-concepts or leaf nodes in this pass. Keep the tree depth to exactly 1 level below the root.
+
+Output format:
+Return ONLY a valid JSON object matching this schema:
+{
+  "nodes": [
+    {"id": "root", "label": "<Central Topic>", "description": "<Overview description>", "node_type": "default"},
+    {"id": "n1", "label": "<Branch 1 Label>", "description": "<1-2 sentence description of Branch 1>", "node_type": "default"},
+    {"id": "n2", "label": "<Branch 2 Label>", "description": "<1-2 sentence description of Branch 2>", "node_type": "default"}
+  ],
+  "edges": [
+    {"source": "root", "target": "n1", "label": "<relationship label>"},
+    {"source": "root", "target": "n2", "label": "<relationship label>"}
+  ]
+}
+"""
+
+
+def build_outline_system_prompt() -> str:
+    return _OUTLINE_SYSTEM_TEMPLATE
+
+
+def extract_headings_from_text(text: str) -> list[str]:
+    """Extract markdown heading hierarchy from text to guide outline branch generation."""
+    if not text or not text.strip():
+        return []
+    pattern = re.compile(r"^(#{1,3})\s+(.+)$", re.MULTILINE)
+    headings = []
+    for match in pattern.finditer(text):
+        hashes, title = match.groups()
+        headings.append(f"{hashes} {title.strip()}")
+    return headings
+
+
+def build_outline_user_prompt(
+    *,
+    seed_text: str,
+    detail_level: str | None = None,
+    headings: list[str] | None = None,
+    previous_validation_errors: list[str] | None = None,
+) -> str:
+    parts = [
+        "Generate a high-level structural outline (Pass 1) for a mind map based on the following content.",
+        "",
+        "## Source Content",
+        seed_text.strip()[:8000],
+    ]
+    if headings:
+        parts += [
+            "",
+            "## Structural Heading Hierarchy (Follow these major sections for top-level branches):",
+            *[f"- {h}" for h in headings],
+        ]
+    if detail_level:
+        parts += [
+            "",
+            f"Target detail level for overall map: {detail_level}. Ensure the 4-8 top-level branches cover the breadth necessary for this level.",
+        ]
+    if previous_validation_errors:
+        parts += [
+            "",
+            "Your previous outline attempt was rejected. Fix all of these issues in this attempt:",
+            *[f"- {e}" for e in previous_validation_errors],
+        ]
+    parts += [
+        "",
+        "Remember: Generate exactly 1 root node and between 4 and 8 top-level branch nodes directly attached to the root.",
+        "Respond with ONLY the JSON object described in the system prompt.",
+    ]
+    return "\n".join(parts)
+
+
 def build_regenerate_node_system_prompt() -> str:
     return _REGENERATE_NODE_SYSTEM_TEMPLATE
 

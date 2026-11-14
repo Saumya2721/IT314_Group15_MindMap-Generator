@@ -295,4 +295,34 @@ export const mindMapService = {
     }
     return res.data
   },
+
+  /**
+   * Send a chat message (US-14 / S2-FE4)
+   * Endpoint: POST /api/chat/messages
+   */
+  async sendChatMessage(mapId, content, proposedAction = null) {
+    const res = await apiClient.post('/api/chat/messages', {
+      map_id: mapId,
+      content,
+      proposed_action: proposedAction,
+    })
+    if (!res.ok) {
+      throw new Error(res.error || 'Failed to send message')
+    }
+    return res.data
+  },
+
+  /**
+   * Confirm or reject a proposed action (US-14 / S2-FE4)
+   * Endpoint: POST /api/chat/actions/{message_id}/confirm
+   */
+  async confirmProposedAction(messageId, isConfirmed) {
+    const res = await apiClient.post(`/api/chat/actions/${messageId}/confirm`, {
+      is_confirmed: isConfirmed,
+    })
+    if (!res.ok) {
+      throw new Error(res.error || 'Failed to confirm action')
+    }
+    return res.data
+  },
 }

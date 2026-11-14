@@ -148,6 +148,10 @@ class GenerationConfig:
     research_queries_per_tool: int = field(default_factory=lambda: _get_int("RESEARCH_QUERIES_PER_TOOL", 4))
     max_search_queries_per_tool: int = field(default_factory=lambda: _get_int("MAX_SEARCH_QUERIES_PER_TOOL", 3))
     seed_dedup_overlap_threshold: float = field(default_factory=lambda: _get_float("SEED_DEDUP_OVERLAP_THRESHOLD", 0.6))
+    enable_two_pass: bool = field(default_factory=lambda: _get_bool("ENABLE_TWO_PASS", False))
+    branch_expansion_concurrency: int = field(default_factory=lambda: _get_int("BRANCH_EXPANSION_CONCURRENCY", 3))
+    min_outline_branches: int = field(default_factory=lambda: _get_int("MIN_OUTLINE_BRANCHES", 4))
+    max_outline_branches: int = field(default_factory=lambda: _get_int("MAX_OUTLINE_BRANCHES", 8))
 
 
 @dataclass(frozen=True)
