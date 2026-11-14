@@ -643,5 +643,33 @@ async def reconstruct_seed_from_namespace(deps: GenerationDeps, *, namespace: st
         raise NoPriorSeedError(
             f"No original seed chunks found in namespace {namespace!r} — cannot regenerate without a seed."
         )
-    sorted_chunks = sorted(chunks, key=lambda c: getattr(c, "chunk_index", 0))
-    return "\n\n".join(c.chunk_text for c in sorted_chunks)
+    # Pinecone similarity queries do not return document order. Older records lack
+    # chunk_index, so their original order is retained as a best-effort fallback.
+    sorted_chunks = sorted(chunks, key=lambda c: (c.chunk_index is None, c.chunk_index or 0))
+    reconstructed: list[str] = []
+    previous_chunk = None
+    for chunk in sorted_chunks:
+        current = chunk.chunk_text
+        if not current:
+            continue
+        if previous_chunk is None:
+            reconstructed.append(current)
+        elif chunk.section_path == previous_chunk.section_path:
+            # Trim the exact suffix/prefix overlap, accounting for whitespace
+            # stripped from chunk edges by the chunker.
+            previous = previous_chunk.chunk_text
+            overlap = 0
+            for size in range(min(len(previous), len(current)), 0, -1):
+                if previous.endswith(current[:size]):
+                    overlap = size
+                    break
+            remainder = current[overlap:]
+            if remainder:
+                if overlap == 0:
+                    reconstructed.append(" " + remainder)
+                else:
+                    reconstructed.append(remainder)
+        else:
+            reconstructed.append("\n\n" + current)
+        previous_chunk = chunk
+    return "".join(reconstructed)
