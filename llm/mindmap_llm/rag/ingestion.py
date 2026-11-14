@@ -77,10 +77,8 @@ async def ingest_tool_result(
             chunk_text=chunk,
             embedding=vector,
             embedding_model=embedding_provider.model_name,
-            source=source,
+            source=ChunkSource.UPLOADED_SEED,
             generation_job_id=generation_job_id,
-            source_title=source_title,
-            source_url=source_url,
             section_path=getattr(chunk, "section_path", None),
             heading_level=getattr(chunk, "heading_level", None),
         )
