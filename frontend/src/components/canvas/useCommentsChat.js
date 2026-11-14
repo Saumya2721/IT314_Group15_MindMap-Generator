@@ -44,6 +44,18 @@ export function commentsChatReducer(state, action) {
         },
       }
     }
+    case 'TOGGLE_RESOLVE_COMMENT': {
+      const { nodeId, commentId } = action.payload
+      return {
+        ...state,
+        commentsByNodeId: {
+          ...state.commentsByNodeId,
+          [nodeId]: (state.commentsByNodeId[nodeId] || []).map((c) =>
+            c.id === commentId ? { ...c, resolved: !c.resolved } : c,
+          ),
+        },
+      }
+    }
     case 'ADD_MESSAGE':
       return {
         ...state,
@@ -99,6 +111,10 @@ export function useCommentsChat({ mapId = null, activeNodeId = null } = {}) {
     dispatch({ type: 'DELETE_COMMENT', payload: { nodeId, commentId } })
   }, [])
 
+  const resolveComment = useCallback((nodeId, commentId) => {
+    dispatch({ type: 'TOGGLE_RESOLVE_COMMENT', payload: { nodeId, commentId } })
+  }, [])
+
   const sendChatMessage = useCallback(
     async (text) => {
       if (!text?.trim()) return null
@@ -135,6 +151,7 @@ export function useCommentsChat({ mapId = null, activeNodeId = null } = {}) {
     openChatForNode,
     addComment,
     deleteComment,
+    resolveComment,
     sendChatMessage,
     applyProposedAction,
   }

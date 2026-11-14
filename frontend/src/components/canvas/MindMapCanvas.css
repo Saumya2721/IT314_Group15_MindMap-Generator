@@ -189,6 +189,48 @@
   line-height: 1.35;
 }
 
+/* Regenerated Node Highlighting */
+.atelier-node-card.regenerated-highlight {
+  border: 2px solid var(--accent-terracotta) !important;
+  box-shadow:
+    0 0 0 4px rgba(201, 107, 75, 0.22),
+    0 8px 24px rgba(201, 107, 75, 0.2) !important;
+  animation: pulseRegenerated 2s infinite ease-in-out;
+}
+
+@keyframes pulseRegenerated {
+  0% {
+    box-shadow:
+      0 0 0 3px rgba(201, 107, 75, 0.35),
+      0 6px 18px rgba(201, 107, 75, 0.2);
+  }
+  50% {
+    box-shadow:
+      0 0 0 7px rgba(201, 107, 75, 0.15),
+      0 8px 26px rgba(201, 107, 75, 0.28);
+  }
+  100% {
+    box-shadow:
+      0 0 0 3px rgba(201, 107, 75, 0.35),
+      0 6px 18px rgba(201, 107, 75, 0.2);
+  }
+}
+
+.badge-regenerated-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-family: var(--font-label);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background-color: var(--secondary-container);
+  color: var(--on-secondary-container);
+  padding: 1px 6px;
+  border-radius: var(--radius-full);
+}
+
 /* Toast Alert Message */
 .canvas-toast-alert {
   position: absolute;
@@ -205,8 +247,59 @@
   z-index: 100;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   animation: toastFadeIn 0.2s ease-out;
+  max-width: 90vw;
+}
+
+.canvas-toast-alert.error {
+  background-color: #762c11;
+  border: 1px solid rgba(254, 149, 114, 0.4);
+  box-shadow: 0 6px 20px rgba(118, 44, 17, 0.3);
+}
+
+.canvas-toast-alert.success {
+  background-color: #155e63;
+  border: 1px solid rgba(148, 213, 218, 0.4);
+}
+
+.toast-message-content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn-toast-retry {
+  background-color: #ffffff;
+  color: #762c11;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  font-family: var(--font-label);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.btn-toast-retry:hover {
+  background-color: #fce8e2;
+}
+
+.btn-toast-dismiss {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.8);
+  cursor: pointer;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  border-radius: var(--radius-sm);
+}
+
+.btn-toast-dismiss:hover {
+  color: #ffffff;
 }
 
 @keyframes toastFadeIn {
