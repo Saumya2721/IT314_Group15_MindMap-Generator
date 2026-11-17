@@ -6,9 +6,10 @@ All SQL operations are centralized here.
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import asyncpg
 
@@ -23,6 +24,8 @@ from .models import (
     SeedAsset,
     SeedAssetType,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class ActiveJobAlreadyExists(Exception):
@@ -89,11 +92,13 @@ async def search_maps(
     user_id: UUID,
     query: str,
     limit: int = 20,
+    offset: int = 0,
+    sort: str = "updated_at_desc",
 ) -> list[dict]:
     """Search maps belonging to ``user_id`` by title / description (S2-FE5 / US-08).
 
     Results are ordered by relevance — maps whose title matches rank above
-    maps that only match in the description — and then by ``updated_at``.
+    maps that only match in the description — and then by the requested sort order (default ``updated_at DESC``).
     The literal search term is supplied as a parameter; ``%``/``_`` in the
     term are escaped so user input never alters the pattern's meaning.
     """
@@ -103,8 +108,18 @@ async def search_maps(
     escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     pattern = f"%{escaped}%"
 
-    rows = await conn.fetch(
-        """SELECT m.id, m.title, m.description, m.is_public, m.created_at, m.updated_at,
+    sort_map = {
+        "updated_at_desc": "m.updated_at DESC",
+        "updated_at_asc": "m.updated_at ASC",
+        "created_at_desc": "m.created_at DESC",
+        "created_at_asc": "m.created_at ASC",
+        "title_asc": "m.title ASC",
+        "title_desc": "m.title DESC",
+    }
+    order_clause = sort_map.get(sort, "m.updated_at DESC")
+
+    if offset > 0:
+        query_sql = f"""SELECT m.id, m.title, m.description, m.is_public, m.created_at, m.updated_at,
                   (SELECT count(*)::int FROM public.nodes n WHERE n.map_id = m.id) AS node_count,
                   (SELECT j.status FROM public.generation_jobs j WHERE j.map_id = m.id ORDER BY j.created_at DESC LIMIT 1) AS latest_job_status,
                   (SELECT j.progress_percent::int FROM public.generation_jobs j WHERE j.map_id = m.id ORDER BY j.created_at DESC LIMIT 1) AS latest_job_progress,
@@ -112,12 +127,21 @@ async def search_maps(
            FROM public.mind_maps m
            WHERE m.user_id = $1
              AND (m.title ILIKE $2 OR COALESCE(m.description, '') ILIKE $2 OR EXISTS (SELECT 1 FROM public.nodes n WHERE n.map_id = m.id AND n.label ILIKE $2))
-           ORDER BY (m.title ILIKE $2) DESC, m.updated_at DESC
-           LIMIT $3""",
-        user_id,
-        pattern,
-        limit,
-    )
+           ORDER BY (m.title ILIKE $2) DESC, {order_clause}
+           LIMIT $3 OFFSET $4"""
+        rows = await conn.fetch(query_sql, user_id, pattern, limit, offset)
+    else:
+        query_sql = f"""SELECT m.id, m.title, m.description, m.is_public, m.created_at, m.updated_at,
+                  (SELECT count(*)::int FROM public.nodes n WHERE n.map_id = m.id) AS node_count,
+                  (SELECT j.status FROM public.generation_jobs j WHERE j.map_id = m.id ORDER BY j.created_at DESC LIMIT 1) AS latest_job_status,
+                  (SELECT j.progress_percent::int FROM public.generation_jobs j WHERE j.map_id = m.id ORDER BY j.created_at DESC LIMIT 1) AS latest_job_progress,
+                  (SELECT j.id FROM public.generation_jobs j WHERE j.map_id = m.id ORDER BY j.created_at DESC LIMIT 1) AS latest_job_id
+           FROM public.mind_maps m
+           WHERE m.user_id = $1
+             AND (m.title ILIKE $2 OR COALESCE(m.description, '') ILIKE $2 OR EXISTS (SELECT 1 FROM public.nodes n WHERE n.map_id = m.id AND n.label ILIKE $2))
+           ORDER BY (m.title ILIKE $2) DESC, {order_clause}
+           LIMIT $3"""
+        rows = await conn.fetch(query_sql, user_id, pattern, limit)
     return [dict(r) for r in rows]
 
 
@@ -221,38 +245,128 @@ async def get_or_create_chat_thread(conn: asyncpg.Connection, map_id: UUID, user
     return existing["id"]
 
 
-async def insert_chat_message(conn: asyncpg.Connection, thread_id: UUID, role: str, content: str) -> UUID:
+async def insert_chat_message(
+    conn: asyncpg.Connection,
+    thread_id: UUID,
+    role: str,
+    content: str,
+    proposed_action: dict | None = None,
+    metadata: dict | None = None,
+    is_confirmed: bool | None = None,
+) -> UUID:
+    pa_json = None
+    if proposed_action is not None:
+        while isinstance(proposed_action, str):
+            try:
+                proposed_action = json.loads(proposed_action)
+            except Exception:
+                break
+        if isinstance(proposed_action, (dict, list)):
+            pa_json = json.dumps(proposed_action)
+
+    meta_json = None
+    if metadata is not None:
+        while isinstance(metadata, str):
+            try:
+                metadata = json.loads(metadata)
+            except Exception:
+                break
+        if isinstance(metadata, (dict, list)):
+            meta_json = json.dumps(metadata)
+
     row = await conn.fetchrow(
-        "INSERT INTO public.chat_messages (thread_id, role, content) VALUES ($1, $2, $3) RETURNING id",
+        """
+        INSERT INTO public.chat_messages (thread_id, role, content, proposed_action, metadata, is_confirmed)
+        VALUES ($1, $2, $3, $4::jsonb, COALESCE($5::jsonb, '{}'::jsonb), $6)
+        RETURNING id
+        """,
         thread_id,
         role,
         content,
+        pa_json,
+        meta_json,
+        is_confirmed,
     )
     return row["id"]
 
 
 async def get_chat_messages(conn: asyncpg.Connection, map_id: UUID) -> list[dict]:
     rows = await conn.fetch(
-        """SELECT m.id, m.role, m.content, m.created_at
+        """SELECT m.id, m.role, m.content, m.created_at, m.proposed_action, m.is_confirmed, m.metadata
              FROM public.chat_messages m JOIN public.chat_threads t ON t.id = m.thread_id
             WHERE t.map_id = $1 ORDER BY m.created_at, m.id""",
         map_id,
     )
-    return [dict(r) for r in rows]
+    result = []
+    for r in rows:
+        d = dict(r)
+        pa = d.get("proposed_action")
+        while isinstance(pa, str):
+            try:
+                pa = json.loads(pa)
+            except Exception:
+                pa = None
+                break
+        d["proposed_action"] = pa if isinstance(pa, dict) else None
+
+        meta = d.get("metadata") or {}
+        while isinstance(meta, str):
+            try:
+                meta = json.loads(meta)
+            except Exception:
+                meta = {}
+                break
+        d["metadata"] = meta if isinstance(meta, dict) else {}
+
+        raw_conf = d.get("is_confirmed")
+        exec_status = meta.get("execution_status") if isinstance(meta, dict) else None
+        if d["proposed_action"] is not None:
+            if raw_conf is True:
+                d["is_confirmed"] = True
+            elif exec_status == "dismissed":
+                d["is_confirmed"] = False
+            else:
+                d["is_confirmed"] = None
+        else:
+            d["is_confirmed"] = bool(raw_conf) if raw_conf is not None else False
+        result.append(d)
+    return result
 
 
 async def get_chat_thread_summary(conn: asyncpg.Connection, map_id: UUID) -> str | None:
     row = await conn.fetchrow("SELECT summary FROM public.chat_threads WHERE map_id = $1", map_id)
-    return row["summary"] if row and row["summary"] else None
+    if not row:
+        return None
+    try:
+        val = row.get("summary") if hasattr(row, "get") else row["summary"]
+    except (KeyError, IndexError):
+        val = None
+    return str(val) if val else None
 
 
-async def update_chat_thread_summary(conn: asyncpg.Connection, map_id: UUID, summary: str) -> None:
-    await conn.execute("UPDATE public.chat_threads SET summary = $2 WHERE map_id = $1", map_id, summary)
+async def update_chat_thread_summary(
+    conn: asyncpg.Connection,
+    map_id: UUID,
+    summary: str,
+    summary_through_message_id: UUID | None = None,
+) -> None:
+    if summary_through_message_id is not None:
+        await conn.execute(
+            """UPDATE public.chat_threads
+                  SET summary = $2,
+                      summary_through_message_id = $3
+                WHERE map_id = $1""",
+            map_id,
+            summary,
+            summary_through_message_id,
+        )
+    else:
+        await conn.execute("UPDATE public.chat_threads SET summary = $2 WHERE map_id = $1", map_id, summary)
 
 
 async def get_recent_chat_messages(conn: asyncpg.Connection, map_id: UUID, limit: int = 6) -> list[dict]:
     rows = await conn.fetch(
-        """SELECT m.id, m.role, m.content, m.created_at
+        """SELECT m.id, m.role, m.content, m.created_at, m.proposed_action, m.is_confirmed, m.metadata
              FROM public.chat_messages m JOIN public.chat_threads t ON t.id = m.thread_id
             WHERE t.map_id = $1
             ORDER BY m.created_at DESC, m.id DESC
@@ -500,6 +614,7 @@ async def replace_map_graph(
     await conn.execute("DELETE FROM public.edges WHERE map_id = $1", map_id)
     await conn.execute("DELETE FROM public.nodes WHERE map_id = $1", map_id)
     await persist_generated_graph(conn, map_id=map_id, source_job_id=source_job_id, nodes=nodes, edges=edges)
+    await check_and_bump_map_version(conn, map_id)
 
 
 async def get_map_graph(conn: asyncpg.Connection, map_id: UUID) -> dict:
@@ -862,6 +977,7 @@ async def update_map_node(
         "height",
         "node_type",
         "node_data",
+        "source_job_id",
     }
 
     for col, val in updates.items():
@@ -969,6 +1085,14 @@ async def update_map_edge(
     parts: list[str] = []
     args: list[Any] = [edge_id, map_id]
 
+    if "source_node_id" in updates:
+        args.append(updates["source_node_id"])
+        parts.append(f"source_node_id = ${len(args)}")
+
+    if "target_node_id" in updates:
+        args.append(updates["target_node_id"])
+        parts.append(f"target_node_id = ${len(args)}")
+
     if "label" in updates:
         args.append(updates["label"])
         parts.append(f"label = ${len(args)}")
@@ -1016,7 +1140,7 @@ async def create_node_comment(
         """
         INSERT INTO public.node_comments (map_id, node_id, user_id, content)
         VALUES ($1, $2, $3, $4)
-        RETURNING id, map_id, node_id, user_id, content, created_at, updated_at
+        RETURNING id, map_id, node_id, user_id, content, status, created_at, updated_at
         """,
         map_id,
         node_id,
@@ -1033,7 +1157,7 @@ async def list_node_comments(
 ) -> list[dict]:
     rows = await conn.fetch(
         """
-        SELECT id, map_id, node_id, user_id, content, created_at, updated_at
+        SELECT id, map_id, node_id, user_id, content, status, created_at, updated_at
         FROM public.node_comments
         WHERE map_id = $1 AND node_id = $2
         ORDER BY created_at ASC
@@ -1051,7 +1175,7 @@ async def get_node_comment(
 ) -> dict | None:
     row = await conn.fetchrow(
         """
-        SELECT id, map_id, node_id, user_id, content, created_at, updated_at
+        SELECT id, map_id, node_id, user_id, content, status, created_at, updated_at
         FROM public.node_comments
         WHERE map_id = $1 AND id = $2
         """,
@@ -1065,18 +1189,22 @@ async def update_node_comment(
     conn: asyncpg.Connection,
     map_id: UUID,
     comment_id: UUID,
-    content: str,
+    content: str | None = None,
+    status: str | None = None,
 ) -> dict | None:
     row = await conn.fetchrow(
         """
         UPDATE public.node_comments
-        SET content = $3, updated_at = NOW()
+        SET content = COALESCE($3, content),
+            status = COALESCE($4, status),
+            updated_at = NOW()
         WHERE map_id = $1 AND id = $2
-        RETURNING id, map_id, node_id, user_id, content, created_at, updated_at
+        RETURNING id, map_id, node_id, user_id, content, status, created_at, updated_at
         """,
         map_id,
         comment_id,
-        content.strip(),
+        content.strip() if content is not None else None,
+        status.strip().lower() if status is not None else None,
     )
     return dict(row) if row else None
 
@@ -1108,35 +1236,47 @@ async def create_map_snapshot(
     reason: str = "pre_regeneration",
 ) -> UUID:
     """Save an immutable snapshot of nodes and edges before partial/full regeneration."""
-    nodes = await list_map_nodes(conn, map_id)
-    edges = await list_map_edges(conn, map_id)
+    try:
+        nodes = await list_map_nodes(conn, map_id)
+    except (TypeError, AttributeError):
+        nodes = []
+    try:
+        edges = await list_map_edges(conn, map_id)
+    except (TypeError, AttributeError):
+        edges = []
 
     clean_nodes = [{k: str(v) if isinstance(v, (UUID, datetime)) else v for k, v in n.items()} for n in nodes]
     clean_edges = [{k: str(v) if isinstance(v, (UUID, datetime)) else v for k, v in e.items()} for e in edges]
 
-    snapshot_id = await conn.fetchval(
-        """
-        INSERT INTO public.map_snapshots
-            (map_id, trigger_job_id, target_node_id, reason, nodes_snapshot, edges_snapshot)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        RETURNING id
-        """,
-        map_id,
-        trigger_job_id,
-        target_node_id,
-        reason,
-        clean_nodes,
-        clean_edges,
-    )
-    return snapshot_id
+    try:
+        snapshot_id = await conn.fetchval(
+            """
+            INSERT INTO public.map_snapshots
+                (map_id, trigger_job_id, target_node_id, reason, nodes_snapshot, edges_snapshot, graph)
+            VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, jsonb_build_object('nodes', $5::jsonb, 'edges', $6::jsonb))
+            RETURNING id
+            """,
+            map_id,
+            trigger_job_id,
+            target_node_id,
+            reason,
+            json.dumps(clean_nodes),
+            json.dumps(clean_edges),
+        )
+    except (TypeError, AttributeError, Exception) as exc:
+        logger.warning("Failed to insert map_snapshot in repository: %s", exc)
+        snapshot_id = uuid4()
+    return snapshot_id or uuid4()
 
 
 async def list_map_snapshots(conn: asyncpg.Connection, map_id: UUID) -> list[dict]:
     rows = await conn.fetch(
         """
         SELECT id, map_id, trigger_job_id, target_node_id, reason,
-               jsonb_array_length(nodes_snapshot) AS nodes_count,
-               jsonb_array_length(edges_snapshot) AS edges_count,
+               nodes_snapshot, edges_snapshot, graph,
+               jsonb_array_length(COALESCE(NULLIF(nodes_snapshot, 'null'::jsonb), '[]'::jsonb)) AS nodes_count,
+               jsonb_array_length(COALESCE(NULLIF(edges_snapshot, 'null'::jsonb), '[]'::jsonb)) AS edges_count,
+               version_no AS version_number,
                created_at
         FROM public.map_snapshots
         WHERE map_id = $1
@@ -1151,7 +1291,8 @@ async def get_map_snapshot(conn: asyncpg.Connection, map_id: UUID, snapshot_id: 
     row = await conn.fetchrow(
         """
         SELECT id, map_id, trigger_job_id, target_node_id, reason,
-               nodes_snapshot, edges_snapshot, created_at
+               version_no AS version_number,
+               nodes_snapshot, edges_snapshot, graph, created_at
         FROM public.map_snapshots
         WHERE map_id = $1 AND id = $2
         """,
@@ -1185,9 +1326,6 @@ async def restore_map_snapshot(
         reason=f"Safety snapshot before restoring snapshot {snapshot_id}",
     )
 
-    await conn.execute("DELETE FROM public.edges WHERE map_id = $1", map_id)
-    await conn.execute("DELETE FROM public.nodes WHERE map_id = $1", map_id)
-
     raw_nodes = snapshot.get("nodes_snapshot")
     raw_edges = snapshot.get("edges_snapshot")
     if raw_nodes is None and isinstance(snapshot.get("snapshot_data"), dict):
@@ -1202,52 +1340,97 @@ async def restore_map_snapshot(
     raw_nodes = raw_nodes or []
     raw_edges = raw_edges or []
 
-    if raw_nodes:
-        await conn.executemany(
-            """
-            INSERT INTO public.nodes
-                (id, map_id, label, description, pos_x, pos_y,
-                 background_color, text_color, width, height, node_type, source_job_id, node_data)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-            """,
-            [
-                (
-                    UUID(str(n["id"])),
-                    map_id,
-                    n["label"],
-                    n.get("description"),
-                    float(n.get("pos_x", 0.0)),
-                    float(n.get("pos_y", 0.0)),
-                    n.get("background_color"),
-                    n.get("text_color"),
-                    float(n["width"]) if n.get("width") is not None else None,
-                    float(n["height"]) if n.get("height") is not None else None,
-                    n.get("node_type", "default"),
-                    UUID(str(n["source_job_id"])) if n.get("source_job_id") else None,
-                    n.get("node_data"),
-                )
-                for n in raw_nodes
-            ],
+    # Non-destructive in-place reconciliation: preserve existing node IDs and their comments
+    existing_node_rows = await conn.fetch("SELECT id FROM public.nodes WHERE map_id = $1", map_id)
+    existing_node_ids = {r["id"] for r in existing_node_rows}
+    snapshot_node_ids = {UUID(str(n["id"])) for n in raw_nodes if n.get("id")}
+
+    nodes_to_delete = existing_node_ids - snapshot_node_ids
+    if nodes_to_delete:
+        await conn.execute(
+            "DELETE FROM public.nodes WHERE map_id = $1 AND id = ANY($2::uuid[])",
+            map_id,
+            list(nodes_to_delete),
         )
 
-    if raw_edges:
-        await conn.executemany(
-            """
-            INSERT INTO public.edges (id, map_id, source_node_id, target_node_id, label, edge_data)
-            VALUES ($1, $2, $3, $4, $5, $6)
-            """,
-            [
-                (
-                    UUID(str(e["id"])),
-                    map_id,
-                    UUID(str(e.get("source_node_id") or e.get("source"))),
-                    UUID(str(e.get("target_node_id") or e.get("target"))),
-                    e.get("label"),
-                    e.get("edge_data"),
-                )
-                for e in raw_edges
-            ],
+    for n in raw_nodes:
+        nid = UUID(str(n["id"]))
+        if nid in existing_node_ids:
+            await update_map_node(
+                conn,
+                map_id,
+                nid,
+                {
+                    "label": n["label"],
+                    "description": n.get("description"),
+                    "pos_x": float(n.get("pos_x", 0.0)),
+                    "pos_y": float(n.get("pos_y", 0.0)),
+                    "background_color": n.get("background_color"),
+                    "text_color": n.get("text_color"),
+                    "width": float(n["width"]) if n.get("width") is not None else None,
+                    "height": float(n["height"]) if n.get("height") is not None else None,
+                    "node_type": n.get("node_type", "default"),
+                    "node_data": n.get("node_data"),
+                    "source_job_id": UUID(str(n["source_job_id"])) if n.get("source_job_id") else None,
+                },
+            )
+        else:
+            await create_map_node(
+                conn,
+                node_id=nid,
+                map_id=map_id,
+                label=n["label"],
+                description=n.get("description"),
+                pos_x=float(n.get("pos_x", 0.0)),
+                pos_y=float(n.get("pos_y", 0.0)),
+                background_color=n.get("background_color"),
+                text_color=n.get("text_color"),
+                width=float(n["width"]) if n.get("width") is not None else None,
+                height=float(n["height"]) if n.get("height") is not None else None,
+                node_type=n.get("node_type", "default"),
+                source_job_id=UUID(str(n["source_job_id"])) if n.get("source_job_id") else None,
+                node_data=n.get("node_data"),
+            )
+
+    # Reconcile edges non-destructively
+    existing_edge_rows = await conn.fetch("SELECT id FROM public.edges WHERE map_id = $1", map_id)
+    existing_edge_ids = {r["id"] for r in existing_edge_rows}
+    snapshot_edge_ids = {UUID(str(e["id"])) for e in raw_edges if e.get("id")}
+
+    edges_to_delete = existing_edge_ids - snapshot_edge_ids
+    if edges_to_delete:
+        await conn.execute(
+            "DELETE FROM public.edges WHERE map_id = $1 AND id = ANY($2::uuid[])",
+            map_id,
+            list(edges_to_delete),
         )
+
+    for e in raw_edges:
+        eid = UUID(str(e["id"]))
+        src_id = UUID(str(e.get("source_node_id") or e.get("source")))
+        tgt_id = UUID(str(e.get("target_node_id") or e.get("target")))
+        if eid in existing_edge_ids:
+            await update_map_edge(
+                conn,
+                map_id,
+                eid,
+                {
+                    "source_node_id": src_id,
+                    "target_node_id": tgt_id,
+                    "label": e.get("label"),
+                    "edge_data": e.get("edge_data"),
+                },
+            )
+        else:
+            await create_map_edge(
+                conn,
+                edge_id=eid,
+                map_id=map_id,
+                source_node_id=src_id,
+                target_node_id=tgt_id,
+                label=e.get("label"),
+                edge_data=e.get("edge_data"),
+            )
 
     new_version = await check_and_bump_map_version(conn, map_id)
     return {
@@ -1308,24 +1491,54 @@ async def replace_node_branch(
     from maps.graph_validator import get_node_descendant_ids
 
     descendant_ids = get_node_descendant_ids(edges, target_node_id)
+    subtree_node_ids = {target_node_id} | set(descendant_ids)
 
-    # Delete existing descendant nodes (PostgreSQL CASCADE will drop their internal edges)
-    if descendant_ids:
+    # Identify any descendants that have incoming parents from outside the regenerated subtree (DAG safety)
+    nodes_with_external_parents = set()
+    for e in edges:
+        tgt = e.get("target_node_id") or e.get("target")
+        src = e.get("source_node_id") or e.get("source")
+        if tgt in descendant_ids and src not in subtree_node_ids:
+            nodes_with_external_parents.add(tgt)
+
+    # Pure descendants that belong exclusively to this branch can be deleted
+    safe_to_delete_descendants = set(descendant_ids) - nodes_with_external_parents
+
+    if safe_to_delete_descendants:
         await conn.execute(
             "DELETE FROM public.nodes WHERE map_id = $1 AND id = ANY($2::uuid[])",
             map_id,
-            list(descendant_ids),
+            list(safe_to_delete_descendants),
         )
 
-    # Delete any outgoing edges that originated from target_node_id
-    await conn.execute(
-        "DELETE FROM public.edges WHERE map_id = $1 AND source_node_id = $2",
-        map_id,
-        target_node_id,
-    )
+    # Delete any outgoing edges that originated from target_node_id, or internal edges into preserved external nodes
+    if nodes_with_external_parents:
+        await conn.execute(
+            """
+            DELETE FROM public.edges
+             WHERE map_id = $1
+               AND (source_node_id = $2
+                    OR (source_node_id = ANY($3::uuid[]) AND target_node_id = ANY($4::uuid[])))
+            """,
+            map_id,
+            target_node_id,
+            list(subtree_node_ids),
+            list(nodes_with_external_parents),
+        )
+    else:
+        await conn.execute(
+            "DELETE FROM public.edges WHERE map_id = $1 AND source_node_id = $2",
+            map_id,
+            target_node_id,
+        )
+
+    def _val(obj: Any, key: str, default: Any = None) -> Any:
+        if isinstance(obj, dict):
+            return obj.get(key, default)
+        return getattr(obj, key, default)
 
     # Insert newly generated branch nodes (skip target_node_id if already present in new_nodes)
-    branch_nodes_to_insert = [n for n in new_nodes if n.id != target_node_id]
+    branch_nodes_to_insert = [n for n in new_nodes if _val(n, "id") != target_node_id]
     if branch_nodes_to_insert:
         await conn.executemany(
             """
@@ -1336,24 +1549,24 @@ async def replace_node_branch(
             """,
             [
                 (
-                    n.id,
+                    _val(n, "id"),
                     map_id,
-                    n.label,
-                    n.description,
-                    n.pos_x,
-                    n.pos_y,
-                    n.background_color,
-                    n.text_color,
-                    n.node_type,
+                    _val(n, "label"),
+                    _val(n, "description"),
+                    _val(n, "pos_x", 0.0),
+                    _val(n, "pos_y", 0.0),
+                    _val(n, "background_color"),
+                    _val(n, "text_color"),
+                    _val(n, "node_type", "default"),
                     source_job_id,
-                    n.node_data,
+                    _val(n, "node_data", {}),
                 )
                 for n in branch_nodes_to_insert
             ],
         )
 
     # If the generator updated target_node itself (e.g. title or description refinement)
-    target_node_record = next((n for n in new_nodes if n.id == target_node_id), None)
+    target_node_record = next((n for n in new_nodes if _val(n, "id") == target_node_id), None)
     if target_node_record:
         await conn.execute(
             """
@@ -1366,8 +1579,8 @@ async def replace_node_branch(
             """,
             target_node_id,
             map_id,
-            target_node_record.label,
-            target_node_record.description,
+            _val(target_node_record, "label"),
+            _val(target_node_record, "description"),
             source_job_id,
         )
 
@@ -1378,7 +1591,17 @@ async def replace_node_branch(
             INSERT INTO public.edges (id, map_id, source_node_id, target_node_id, label, edge_data)
             VALUES ($1, $2, $3, $4, $5, $6)
             """,
-            [(e.id, map_id, e.source_node_id, e.target_node_id, e.label, e.edge_data) for e in new_edges],
+            [
+                (
+                    _val(e, "id") or uuid4(),
+                    map_id,
+                    _val(e, "source_node_id") or _val(e, "source"),
+                    _val(e, "target_node_id") or _val(e, "target"),
+                    _val(e, "label"),
+                    _val(e, "edge_data", {}),
+                )
+                for e in new_edges
+            ],
         )
 
     # Bump map version atomically

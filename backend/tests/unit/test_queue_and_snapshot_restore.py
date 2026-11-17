@@ -157,6 +157,7 @@ def test_snapshot_service_restore_snapshot_data_to_map():
         mock_conn = MagicMock()
         mock_conn.execute = AsyncMock()
         mock_conn.executemany = AsyncMock()
+        mock_conn.fetch = AsyncMock(return_value=[])
         mock_conn.fetchrow = AsyncMock(
             return_value={
                 "id": uuid.uuid4(),
@@ -174,11 +175,15 @@ def test_snapshot_service_restore_snapshot_data_to_map():
             ],
         }
 
-        # Test restore_snapshot_data_to_map with dict
-        res = await restore_snapshot_data_to_map(mock_conn, map_id, snap_data)
-        assert res == snap_data
-        assert mock_conn.execute.call_count == 2
-        assert mock_conn.executemany.call_count == 2
+        # Test restore_snapshot_data_to_map non-destructively
+        with (
+            patch("snapshots.service.create_map_node", AsyncMock()) as mock_crt_node,
+            patch("snapshots.service.create_map_edge", AsyncMock()) as mock_crt_edge,
+        ):
+            res = await restore_snapshot_data_to_map(mock_conn, map_id, snap_data)
+            assert res == snap_data
+            assert mock_crt_node.called
+            assert mock_crt_edge.called
 
         # Test get_snapshot_by_version
         snap_row = await get_snapshot_by_version(mock_conn, map_id, 1)
@@ -187,6 +192,7 @@ def test_snapshot_service_restore_snapshot_data_to_map():
 
         # Test restore_snapshot_by_version_or_id
         mock_pool = MagicMock()
+        mock_conn.fetchval = AsyncMock(return_value=2)
         mock_cm = AsyncMock()
         mock_cm.__aenter__.return_value = mock_conn
         mock_cm.__aexit__.return_value = None

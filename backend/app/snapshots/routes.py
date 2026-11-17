@@ -22,32 +22,34 @@ def _get_pool(request: Request):
 
 
 @router.post(
-    "/maps/{map_id}/snapshots/{version_no}/restore",
+    "/maps/{map_id}/snapshots/{identifier}/restore",
     response_model=SnapshotRestoreResponse,
     status_code=200,
+    summary="Restore snapshot by version number or snapshot UUID",
 )
 @router.post(
-    "/api/maps/{map_id}/snapshots/{version_no}/restore",
+    "/api/maps/{map_id}/snapshots/{identifier}/restore",
     response_model=SnapshotRestoreResponse,
     status_code=200,
+    include_in_schema=False,
 )
-async def restore_snapshot_by_version(
+async def restore_snapshot(
     map_id: UUID,
-    version_no: str,
+    identifier: str,
     request: Request,
     uid: UUID = Depends(current_user_id),
 ) -> dict[str, Any]:
-    """Restore nodes and edges from a snapshot version into the active map, incrementing version."""
+    """Restore nodes and edges from a snapshot (by either version_number or snapshot UUID) into the active map, incrementing version."""
     pool = _get_pool(request)
     result = await restore_snapshot_by_version_or_id(
         pool=pool,
         map_id=map_id,
-        identifier=version_no,
+        identifier=identifier,
         user_id=uid,
     )
     if not result:
         raise HTTPException(
             status_code=404,
-            detail=f"Snapshot '{version_no}' not found for map '{map_id}' or unauthorized.",
+            detail=f"Snapshot '{identifier}' not found for map '{map_id}' or unauthorized.",
         )
     return result
