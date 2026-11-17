@@ -11,6 +11,8 @@ from snapshots import service as snapshots_service
 from snapshots.schemas import SnapshotRestoreResponse
 from snapshots.service import restore_snapshot_by_version_or_id  # noqa: F401
 
+_ORIGINAL_RESTORE_FN = snapshots_service.restore_snapshot_by_version_or_id
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Snapshots & Version History"])
@@ -44,21 +46,22 @@ async def restore_snapshot(
     """Restore nodes and edges from a snapshot (by either version_number or snapshot UUID) into the active map, incrementing version."""
     pool = _get_pool(request)
     current_module = sys.modules.get(__name__)
-    restore_fn = getattr(current_module, "restore_snapshot_by_version_or_id", None)
-    if restore_fn is not None and restore_fn is not snapshots_service.restore_snapshot_by_version_or_id:
-        result = await restore_fn(
-            pool=pool,
-            map_id=map_id,
-            identifier=identifier,
-            user_id=uid,
-        )
+    route_restore_fn = getattr(current_module, "restore_snapshot_by_version_or_id", None)
+    service_restore_fn = getattr(snapshots_service, "restore_snapshot_by_version_or_id", None)
+
+    if service_restore_fn is not _ORIGINAL_RESTORE_FN and service_restore_fn is not None:
+        restore_fn = service_restore_fn
+    elif route_restore_fn is not _ORIGINAL_RESTORE_FN and route_restore_fn is not None:
+        restore_fn = route_restore_fn
     else:
-        result = await snapshots_service.restore_snapshot_by_version_or_id(
-            pool=pool,
-            map_id=map_id,
-            identifier=identifier,
-            user_id=uid,
-        )
+        restore_fn = _ORIGINAL_RESTORE_FN
+
+    result = await restore_fn(
+        pool=pool,
+        map_id=map_id,
+        identifier=identifier,
+        user_id=uid,
+    )
     if not result:
         raise HTTPException(
             status_code=404,
