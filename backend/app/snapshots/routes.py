@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 from typing import Any
 from uuid import UUID
 
@@ -8,6 +9,7 @@ from core.supabase import current_user_id
 from fastapi import APIRouter, Depends, HTTPException, Request
 from snapshots import service as snapshots_service
 from snapshots.schemas import SnapshotRestoreResponse
+from snapshots.service import restore_snapshot_by_version_or_id  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
@@ -41,12 +43,22 @@ async def restore_snapshot(
 ) -> dict[str, Any]:
     """Restore nodes and edges from a snapshot (by either version_number or snapshot UUID) into the active map, incrementing version."""
     pool = _get_pool(request)
-    result = await snapshots_service.restore_snapshot_by_version_or_id(
-        pool=pool,
-        map_id=map_id,
-        identifier=identifier,
-        user_id=uid,
-    )
+    current_module = sys.modules.get(__name__)
+    restore_fn = getattr(current_module, "restore_snapshot_by_version_or_id", None)
+    if restore_fn is not None and restore_fn is not snapshots_service.restore_snapshot_by_version_or_id:
+        result = await restore_fn(
+            pool=pool,
+            map_id=map_id,
+            identifier=identifier,
+            user_id=uid,
+        )
+    else:
+        result = await snapshots_service.restore_snapshot_by_version_or_id(
+            pool=pool,
+            map_id=map_id,
+            identifier=identifier,
+            user_id=uid,
+        )
     if not result:
         raise HTTPException(
             status_code=404,
