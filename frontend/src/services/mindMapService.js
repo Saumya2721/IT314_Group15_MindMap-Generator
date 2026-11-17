@@ -189,11 +189,12 @@ export const mindMapService = {
    * Persist updated graph (nodes & edges) to backend
    * Endpoint: PATCH /api/maps/{map_id}/graph
    */
-  async updateMapGraph(mapId, { nodes, edges }) {
-    const res = await apiClient.patch(`/api/maps/${mapId}/graph`, {
-      nodes,
-      edges,
-    })
+  async updateMapGraph(mapId, { nodes, edges, expected_version }) {
+    const payload = { nodes, edges }
+    if (expected_version !== undefined && expected_version !== null) {
+      payload.expected_version = expected_version
+    }
+    const res = await apiClient.patch(`/api/maps/${mapId}/graph`, payload)
     if (!res.ok) {
       throw new Error(res.error || 'Failed to update mind map graph')
     }
@@ -211,6 +212,78 @@ export const mindMapService = {
     })
     if (!res.ok) {
       throw new Error(res.error || 'Failed to initiate map regeneration')
+    }
+    return res.data
+  },
+
+  /**
+   * Partial branch regeneration rooted at nodeId (S2-FE3 / S2-BE2)
+   * Endpoint: POST /api/maps/{map_id}/nodes/{node_id}/regenerate
+   */
+  async regenerateBranch(mapId, nodeId, { instruction, detail_level } = {}) {
+    const res = await apiClient.post(`/api/maps/${mapId}/nodes/${nodeId}/regenerate`, {
+      instruction: instruction ? instruction.trim() : undefined,
+      detail_level: detail_level || undefined,
+    })
+    if (!res.ok) {
+      throw new Error(res.error || 'Failed to initiate branch regeneration')
+    }
+    return res.data
+  },
+
+  /**
+   * Fetch comments on a node (S2-FE3 / S2-BE2)
+   * Endpoint: GET /api/maps/{map_id}/nodes/{node_id}/comments
+   */
+  async getNodeComments(mapId, nodeId) {
+    const res = await apiClient.get(`/api/maps/${mapId}/nodes/${nodeId}/comments`)
+    if (!res.ok) {
+      throw new Error(res.error || 'Failed to fetch node comments')
+    }
+    return res.data
+  },
+
+  /**
+   * Create a new comment on a node (S2-FE3 / S2-BE2)
+   * Endpoint: POST /api/maps/{map_id}/nodes/{node_id}/comments
+   */
+  async createNodeComment(mapId, nodeId, content) {
+    const res = await apiClient.post(`/api/maps/${mapId}/nodes/${nodeId}/comments`, {
+      content: content.trim(),
+    })
+    if (!res.ok) {
+      throw new Error(res.error || 'Failed to create comment')
+    }
+    return res.data
+  },
+
+  /**
+   * Update an existing comment (e.g. resolve toggle or edit text)
+   * Endpoint: PATCH /api/maps/{map_id}/nodes/{node_id}/comments/{comment_id}
+   */
+  async updateNodeComment(mapId, nodeId, commentId, { content, resolved, status }) {
+    const payload = {}
+    if (content !== undefined) payload.content = content.trim()
+    if (status !== undefined) payload.status = status
+    else if (resolved !== undefined) payload.status = resolved ? 'resolved' : 'open'
+    const res = await apiClient.patch(
+      `/api/maps/${mapId}/nodes/${nodeId}/comments/${commentId}`,
+      payload,
+    )
+    if (!res.ok) {
+      throw new Error(res.error || 'Failed to update comment')
+    }
+    return res.data
+  },
+
+  /**
+   * Delete a comment on a node (S2-FE3 / S2-BE2)
+   * Endpoint: DELETE /api/maps/{map_id}/nodes/{node_id}/comments/{comment_id}
+   */
+  async deleteNodeComment(mapId, nodeId, commentId) {
+    const res = await apiClient.delete(`/api/maps/${mapId}/nodes/${nodeId}/comments/${commentId}`)
+    if (!res.ok) {
+      throw new Error(res.error || 'Failed to delete comment')
     }
     return res.data
   },
@@ -249,6 +322,8 @@ export const mindMapService = {
       trigger_source: s.trigger_source,
       trigger_job_id: s.trigger_job_id || null,
       label: s.label || `Version ${s.version_number}`,
+      nodes_count: s.nodes_count ?? s.snapshot_data?.nodes?.length ?? 0,
+      edges_count: s.edges_count ?? s.snapshot_data?.edges?.length ?? 0,
       snapshot_data: s.snapshot_data || { nodes: [], edges: [] },
       created_by: s.created_by || null,
       created_at: s.created_at || null,
@@ -300,12 +375,16 @@ export const mindMapService = {
    * Send a chat message (US-14 / S2-FE4)
    * Endpoint: POST /api/chat/messages
    */
-  async sendChatMessage(mapId, content, proposedAction = null) {
-    const res = await apiClient.post('/api/chat/messages', {
+  async sendChatMessage(mapId, content, proposedAction = null, targetNodeId = null) {
+    const payload = {
       map_id: mapId,
       content,
       proposed_action: proposedAction,
-    })
+    }
+    if (targetNodeId) {
+      payload.target_node_id = targetNodeId
+    }
+    const res = await apiClient.post('/api/chat/messages', payload)
     if (!res.ok) {
       throw new Error(res.error || 'Failed to send message')
     }
@@ -322,6 +401,68 @@ export const mindMapService = {
     })
     if (!res.ok) {
       throw new Error(res.error || 'Failed to confirm action')
+    }
+    return res.data
+  },
+
+  /**
+   * Create a node manually
+   * Endpoint: POST /api/maps/{map_id}/nodes
+   */
+  async createNode(mapId, { label, node_type = 'concept', description = '', pos_x = 0, pos_y = 0, background_color, text_color, parent_node_id, edge_label }) {
+    const res = await apiClient.post(`/api/maps/${mapId}/nodes`, {
+      label,
+      node_type,
+      description,
+      pos_x,
+      pos_y,
+      background_color,
+      text_color,
+      parent_node_id,
+      edge_label,
+    })
+    if (!res.ok) {
+      throw new Error(res.error || 'Failed to create node')
+    }
+    return res.data
+  },
+
+  /**
+   * Create an edge manually
+   * Endpoint: POST /api/maps/{map_id}/edges
+   */
+  async createEdge(mapId, { source_node_id, target_node_id, label = '' }) {
+    const res = await apiClient.post(`/api/maps/${mapId}/edges`, {
+      source_node_id,
+      target_node_id,
+      label,
+    })
+    if (!res.ok) {
+      throw new Error(res.error || 'Failed to create edge')
+    }
+    return res.data
+  },
+
+  /**
+   * Update an edge label or properties
+   * Endpoint: PATCH /api/maps/{map_id}/edges/{edge_id}
+   */
+  async updateEdge(mapId, edgeId, updates) {
+    const res = await apiClient.patch(`/api/maps/${mapId}/edges/${edgeId}`, updates)
+    if (!res.ok) {
+      throw new Error(res.error || 'Failed to update edge')
+    }
+    return res.data
+  },
+
+  /**
+   * Delete an edge
+   * Endpoint: DELETE /api/maps/{map_id}/edges/{edge_id}
+   */
+  async deleteEdge(mapId, edgeId) {
+    const res = await apiClient.delete(`/api/maps/${mapId}/edges/${edgeId}`)
+    if (!res.ok) {
+      throw new Error(res.error || 'Failed to delete edge')
     }
     return res.data
   },

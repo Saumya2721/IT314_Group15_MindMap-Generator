@@ -19,6 +19,7 @@ export default function EditorPage() {
   const [graphNodes, setGraphNodes] = useState([])
   const [rawEdges, setRawEdges] = useState([])
   const [initialViewport, setInitialViewport] = useState(null)
+  const [mapVersion, setMapVersion] = useState(null)
   const [isLoading, setIsLoading] = useState(true)
 
   // Regeneration & Job Polling State
@@ -65,6 +66,11 @@ export default function EditorPage() {
         const graphData = await mindMapService.getMapGraph(mapId)
         setGraphNodes(graphData?.nodes || [])
         setRawEdges(graphData?.edges || [])
+        if (graphData?.version != null) {
+          setMapVersion(graphData.version)
+        } else if (mapData?.version != null) {
+          setMapVersion(mapData.version)
+        }
       } catch (err) {
         console.error('Failed to load mind map workspace:', err)
         showToast(err.message || 'Failed to load mind map.')
@@ -75,6 +81,30 @@ export default function EditorPage() {
 
     fetchMapAndGraph()
   }, [mapId, showToast])
+
+  // Window focus revalidation: check if map version changed remotely (e.g. from background task or another tab)
+  useEffect(() => {
+    if (!mapId) return
+    const handleFocus = async () => {
+      if (isRegenerating || isLoading) return
+      try {
+        const latestMeta = await mindMapService.getMapById(mapId)
+        if (latestMeta?.version && mapVersion && latestMeta.version > mapVersion) {
+          const graphData = await mindMapService.getMapGraph(mapId)
+          if (graphData?.nodes) {
+            setGraphNodes(graphData.nodes)
+            setRawEdges(graphData.edges || [])
+            setMapVersion(graphData.version ?? latestMeta.version)
+            showToast('Mind map updated with latest changes.')
+          }
+        }
+      } catch (err) {
+        // Silent catch for background focus check
+      }
+    }
+    window.addEventListener('focus', handleFocus)
+    return () => window.removeEventListener('focus', handleFocus)
+  }, [mapId, isRegenerating, isLoading, mapVersion, showToast])
 
   // Trigger regeneration from within the editor
   const handleRegenerate = useCallback(
@@ -185,6 +215,7 @@ export default function EditorPage() {
       initialNodes={graphNodes}
       initialEdges={rawEdges}
       initialViewport={initialViewport}
+      initialVersion={mapVersion}
       onTitleChange={setMapTitle}
       onBack={() => navigate('/dashboard')}
       onRegenerate={handleRegenerate}

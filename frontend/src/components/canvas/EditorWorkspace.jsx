@@ -2,13 +2,16 @@ import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { CanvasTopBar } from './CanvasTopBar'
 import { MindMapCanvas } from './MindMapCanvas'
 import { NodeInspector } from './NodeInspector'
+import AddNodeDialog from './AddNodeDialog'
+import EdgeInspector from './EdgeInspector'
+import OutlineView from './OutlineView'
 import { VersionHistoryPanel } from '../history/VersionHistoryPanel'
 import { ChatPanel } from './ChatPanel'
 import { ExportModal } from './ExportModal'
 import { exportMindMap } from '../../services/exportService'
 import { mindMapService } from '../../services/mindMapService'
 import { getDescendantNodeIds, validateConnection } from '../../utils/connectionGuards'
-import { useCanvasState } from './useCanvasState'
+import { useCanvasState, generateUUID } from './useCanvasState'
 import { useCommentsChat } from './useCommentsChat'
 import { useExportHistory } from './useExportHistory'
 import { useMindMap } from '../../context/MindMapContext'
@@ -89,6 +92,7 @@ export function EditorWorkspace({
   initialNodes = [],
   initialEdges = [],
   initialViewport = null,
+  initialVersion = null,
   onTitleChange = null,
   onTitleBlur = null,
   onBack = null,
@@ -123,7 +127,11 @@ export function EditorWorkspace({
   // Branch Deletion Confirmation State
   const [deleteConfirmNode, setDeleteConfirmNode] = useState(null)
   const hasUserEditedRef = useRef(false)
-  const saveTimerRef = useRef(null)
+
+  const displayToast = useCallback((msg) => {
+    setLocalToast(msg)
+    setTimeout(() => setLocalToast(''), 3500)
+  }, [])
 
   // FE-1: Canvas & Undo/Redo State
   const defaultCanvas = useCanvasState({
@@ -133,23 +141,88 @@ export function EditorWorkspace({
   const canvas = customCanvasState || defaultCanvas
   const { setGraphData } = canvas
 
-  // S2-FE5 / US-08: autosave persistence callback (latest title/viewport)
+  // S2-FE5 / US-08: unified autosave persistence callback (title and graph mutations with OCC)
+  const mapVersionRef = useRef(initialVersion ?? null)
+  const versionPromiseRef = useRef(null)
+
+  useEffect(() => {
+    if (initialVersion !== null && initialVersion !== undefined) {
+      mapVersionRef.current = initialVersion
+    }
+  }, [initialVersion])
+
+  useEffect(() => {
+    if (!mapId) return
+    if (initialVersion !== null && initialVersion !== undefined) {
+      mapVersionRef.current = initialVersion
+      return
+    }
+    versionPromiseRef.current = mindMapService
+      .getMapGraph(mapId)
+      .then((data) => {
+        if (data?.version !== undefined) {
+          mapVersionRef.current = data.version
+        }
+        return data?.version
+      })
+      .catch((err) => {
+        console.error('Failed to load initial graph version:', err)
+        return null
+      })
+  }, [mapId, initialVersion])
+
   const persistCurrentState = useCallback(async () => {
     if (!mapId) return
-    try {
-      await updateMap(mapId, { title: mapTitle.trim() })
-    } catch (err) {
-      console.warn('Failed to autosave title:', err)
-      throw err
+    const promises = []
+    if (mapTitle && mapTitle.trim()) {
+      promises.push(updateMap(mapId, { title: mapTitle.trim() }))
     }
-  }, [mapId, mapTitle, updateMap])
+    if (hasUserEditedRef.current && canvas.nodes.length > 0) {
+      if (mapVersionRef.current === null && versionPromiseRef.current) {
+        await versionPromiseRef.current
+      }
+      if (mapVersionRef.current === null) {
+        setLocalToast(
+          'Unable to determine graph version. Save paused to prevent overwriting changes.',
+        )
+        throw new Error('Graph version unavailable for optimistic lock')
+      }
+      promises.push(
+        mindMapService
+          .updateMapGraph(mapId, {
+            nodes: canvas.nodes,
+            edges: canvas.edges,
+            expected_version: mapVersionRef.current,
+          })
+          .then((res) => {
+            if (res?.version !== undefined) {
+              mapVersionRef.current = res.version
+            }
+          })
+          .catch((err) => {
+            const isConflict =
+              err?.status === 409 ||
+              err?.statusCode === 409 ||
+              err?.message?.includes('409') ||
+              err?.message?.includes('Conflict') ||
+              err?.detail?.error === 'OptimisticLockConflict' ||
+              err?.error === 'OptimisticLockConflict'
+            if (isConflict) {
+              setLocalToast('Conflict: Mind map was modified concurrently. Please reload to sync.')
+            }
+            throw err
+          }),
+      )
+    }
+    await Promise.all(promises)
+  }, [mapId, mapTitle, updateMap, canvas.nodes, canvas.edges])
 
   // S2-FE5 / US-08: autosave status machine for the editor header
-  const autosave = useSaveStatus(persistCurrentState, { debounceMs: 300 })
+  const autosave = useSaveStatus(persistCurrentState, { debounceMs: 400 })
   const { scheduleSave } = autosave
   const saveStatus = autosave.status
 
-  // S2-FE5 / US-08: autosave title changes (debounced 300ms)
+  // S2-FE5 / US-08: autosave title changes (debounced 400ms)
   useEffect(() => {
     if (!mapId || !mapTitle.trim()) return
     scheduleSave()
@@ -157,9 +230,9 @@ export function EditorWorkspace({
 
   // S2-FE5 / US-08: autosave node positions/viewport on graph change
   useEffect(() => {
-    if (!mapId || canvas.nodes.length === 0) return
+    if (!mapId || canvas.nodes.length === 0 || !hasUserEditedRef.current) return
     scheduleSave()
-  }, [canvas.nodes, mapId, scheduleSave])
+  }, [canvas.nodes, canvas.edges, mapId, scheduleSave])
 
   // S2-FE5 / US-08: autosave viewport changes (debounced 500ms inside hook)
   const handleViewportChange = useCallback(
@@ -177,40 +250,6 @@ export function EditorWorkspace({
       hasUserEditedRef.current = false
     }
   }, [initialNodes, initialEdges, setGraphData])
-
-  // Clear debounce timer on unmount
-  useEffect(() => {
-    return () => {
-      if (saveTimerRef.current) {
-        clearTimeout(saveTimerRef.current)
-      }
-    }
-  }, [])
-
-  // Debounced persistence of graph mutations to backend
-  useEffect(() => {
-    if (!hasUserEditedRef.current || !mapId) return
-
-    if (saveTimerRef.current) {
-      clearTimeout(saveTimerRef.current)
-    }
-
-    setIsSaving(true)
-    saveTimerRef.current = setTimeout(async () => {
-      try {
-        await mindMapService.updateMapGraph(mapId, {
-          nodes: canvas.nodes,
-          edges: canvas.edges,
-        })
-      } catch (err) {
-        // Backend PATCH /maps/{id}/graph may not be implemented yet (404/501).
-        // Maintain local state so the user never loses their changes.
-        console.warn('Backend graph persistence unavailable or failed:', err?.message || err)
-      } finally {
-        setIsSaving(false)
-      }
-    }, 750)
-  }, [canvas.nodes, canvas.edges, mapId])
 
   // Sync initialTitle
   useEffect(() => {
@@ -235,23 +274,96 @@ export function EditorWorkspace({
   // S2-FE4: Handle chat action proposal confirmation
   const handleConfirmChatAction = useCallback(
     async (messageId, proposedAction) => {
-      const action = await commentsChat.confirmAction(messageId, proposedAction)
-      // If the confirmed action triggers a branch regeneration, apply it
-      if (action && action.type === 'regenerate_branch' && action.node_id) {
-        await handleRegenerateBranch(action.node_id, action.instruction || '')
+      const res = await commentsChat.confirmAction(messageId, proposedAction)
+      if (res && mapId) {
+        const jobId = res?.data?.job_id || res?.job_id
+        const progressMsgId = jobId ? `progress-${jobId}` : null
+        try {
+          if (jobId) {
+            displayToast('Action confirmed and queued. Updating graph...')
+            commentsChat.dispatch?.({
+              type: 'ADD_MESSAGE',
+              payload: {
+                id: progressMsgId,
+                role: 'assistant',
+                content: '⏳ Starting branch regeneration… (0%)',
+                is_confirmed: null,
+                metadata: { execution_status: 'in_progress', progress_percent: 0, stage: 'Starting' },
+                created_at: new Date().toISOString(),
+              },
+            })
+
+            let attempts = 0
+            while (attempts < 60) {
+              await new Promise((r) => setTimeout(r, 1000))
+              attempts++
+              const jobStatus = await mindMapService.pollJobStatus(mapId, jobId)
+              const pct = jobStatus?.percent_complete ?? Math.min(attempts * 4, 95)
+              const stage = jobStatus?.status || 'processing'
+
+              commentsChat.dispatch?.({
+                type: 'UPDATE_MESSAGE',
+                payload: {
+                  id: progressMsgId,
+                  content: `⏳ Regenerating branch… (${pct}%) [${stage}]`,
+                  metadata: { execution_status: 'in_progress', progress_percent: pct, stage },
+                },
+              })
+
+              if (jobStatus?.status === 'completed') {
+                break
+              }
+              if (jobStatus?.status === 'failed' || jobStatus?.status === 'rejected') {
+                throw new Error(jobStatus.error_message || 'Regeneration task failed.')
+              }
+            }
+
+            commentsChat.dispatch?.({
+              type: 'UPDATE_MESSAGE',
+              payload: {
+                id: progressMsgId,
+                content: '✅ Branch regeneration complete! Graph updated on canvas.',
+                metadata: { execution_status: 'applied', progress_percent: 100, stage: 'Completed' },
+              },
+            })
+          }
+          const updated = await mindMapService.getMapGraph(mapId)
+          if (updated && updated.nodes) {
+            if (updated.version !== undefined) {
+              mapVersionRef.current = updated.version
+            }
+            canvas.setGraphData({
+              nodes: updated.nodes,
+              edges: updated.edges || [],
+            })
+            displayToast('Proposed action successfully applied to graph.')
+          }
+        } catch (err) {
+          console.warn('Could not refresh graph after action confirmation:', err)
+          if (progressMsgId) {
+            commentsChat.dispatch?.({
+              type: 'UPDATE_MESSAGE',
+              payload: {
+                id: progressMsgId,
+                content: `❌ Regeneration failed: ${err.message}`,
+                metadata: { execution_status: 'failed' },
+              },
+            })
+          }
+          displayToast(err.message || 'Action confirmed, but graph refresh failed.', 'error')
+        }
       }
     },
-    // handleRegenerateBranch is defined later in this scope; use ref to avoid stale closure issues
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [commentsChat],
+    [commentsChat, mapId, canvas, displayToast],
   )
 
   // S2-FE4: Handle chat action proposal dismissal
   const handleDismissChatAction = useCallback(
     (messageId) => {
       commentsChat.dismissAction(messageId)
+      displayToast('Proposal dismissed.')
     },
-    [commentsChat],
+    [commentsChat, displayToast],
   )
 
   // FE-3: Export & History State
@@ -263,6 +375,18 @@ export function EditorWorkspace({
         nodes: restoredData.nodes || [],
         edges: restoredData.edges || [],
       })
+      if (restoredData.version !== undefined) {
+        mapVersionRef.current = restoredData.version
+      } else if (restoredData.new_version !== undefined) {
+        mapVersionRef.current = restoredData.new_version
+      }
+      if (mapId) {
+        mindMapService.getMapById(mapId).then((meta) => {
+          if (meta?.version != null) {
+            mapVersionRef.current = meta.version
+          }
+        }).catch(() => {})
+      }
       displayToast('Map restored from snapshot.')
     },
   })
@@ -285,86 +409,71 @@ export function EditorWorkspace({
 
     setIsBranchRegenerating(true)
     setBranchRegenProgress(15)
-    setBranchRegenStatus('Analyzing branch context & comments...')
+    setBranchRegenStatus('Initiating branch regeneration...')
 
     try {
-      await new Promise((r) => setTimeout(r, 450))
-      setBranchRegenProgress(45)
-      setBranchRegenStatus('Retrieving domain context...')
+      if (mapId) {
+        // Real backend branch regeneration
+        const jobRes = await mindMapService.regenerateBranch(mapId, nodeId, { instruction })
+        const jobId = jobRes?.job_id
 
-      await new Promise((r) => setTimeout(r, 550))
-      setBranchRegenProgress(80)
-      setBranchRegenStatus('Synthesizing updated branch structure...')
+        if (jobId) {
+          let attempts = 0
+          const maxAttempts = 60
+          let completed = false
 
-      await new Promise((r) => setTimeout(r, 400))
-      setBranchRegenProgress(100)
-      setBranchRegenStatus('Updating canvas nodes...')
+          while (attempts < maxAttempts && !completed) {
+            await new Promise((r) => setTimeout(r, 1000))
+            attempts++
+            const jobStatus = await mindMapService.pollJobStatus(mapId, jobId)
 
-      const descendantIds = getDescendantNodeIds(canvas.nodes, canvas.edges, nodeId)
-      const timestamp = Date.now()
-      const promptSnippet = instruction ? instruction.trim().slice(0, 20) : 'Refined'
-      const targetLabel = targetNode.label || targetNode.title || 'Concept'
+            if (jobStatus) {
+              setBranchRegenProgress(Math.min(95, 20 + attempts * 5))
+              if (jobStatus.status === 'completed') {
+                completed = true
+                setBranchRegenProgress(100)
+                setBranchRegenStatus('Updating canvas nodes...')
+                const updated = await mindMapService.getMapGraph(mapId)
+                if (updated && updated.nodes) {
+                  if (updated.version !== undefined) {
+                    mapVersionRef.current = updated.version
+                  }
+                  canvas.setGraphData({
+                    nodes: updated.nodes,
+                    edges: updated.edges || [],
+                  })
+                }
+                const targetLabel = targetNode.label || targetNode.title || 'Concept'
+                displayToast(`Branch "${targetLabel}" successfully regenerated.`)
+                return
+              } else if (jobStatus.status === 'failed' || jobStatus.status === 'rejected') {
+                throw new Error(jobStatus.error_message || 'Branch regeneration failed.')
+              } else {
+                setBranchRegenStatus(
+                  `Generating branch concepts (${jobStatus.progress_percent || attempts * 5}%)...`,
+                )
+              }
+            }
+          }
 
-      const newChild1 = {
-        id: `node_regen_${timestamp}_1`,
-        label: instruction ? `${promptSnippet}... Synthesis` : `${targetLabel} Frontiers`,
-        description: instruction
-          ? `Regenerated from steering: "${instruction.slice(0, 45)}"`
-          : 'Refined conceptual depth and updated state-of-the-art methodology.',
-        category: 'Enhanced Scope',
-        nodeType: 'conceptNode',
-        pos_x: (targetNode.pos_x || targetNode.position?.x || 100) + 320,
-        pos_y: (targetNode.pos_y || targetNode.position?.y || 100) - 40,
-        backgroundColor: targetNode.backgroundColor || '#155E63',
+          if (!completed) {
+            throw new Error('Branch regeneration timed out. Please try again.')
+          }
+        } else {
+          throw new Error('Regeneration job could not be created.')
+        }
+      } else {
+        throw new Error('Map identifier missing for branch regeneration.')
       }
-
-      const newChild2 = {
-        id: `node_regen_${timestamp}_2`,
-        label: 'Emerging Frameworks',
-        description: 'Synthesized domain patterns and structured empirical findings.',
-        category: 'Key Trajectory',
-        nodeType: 'conceptNode',
-        pos_x: (targetNode.pos_x || targetNode.position?.x || 100) + 320,
-        pos_y: (targetNode.pos_y || targetNode.position?.y || 100) + 60,
-        backgroundColor: targetNode.backgroundColor || '#155E63',
-      }
-
-      const newEdge1 = {
-        id: `edge_${nodeId}_${newChild1.id}`,
-        source: nodeId,
-        target: newChild1.id,
-      }
-      const newEdge2 = {
-        id: `edge_${nodeId}_${newChild2.id}`,
-        source: nodeId,
-        target: newChild2.id,
-      }
-
-      const remainingNodes = canvas.nodes.filter((n) => !descendantIds.includes(n.id))
-      const remainingEdges = canvas.edges.filter(
-        (e) => !descendantIds.includes(e.source) && !descendantIds.includes(e.target),
-      )
-
-      canvas.setGraphData({
-        nodes: [...remainingNodes, newChild1, newChild2],
-        edges: [...remainingEdges, newEdge1, newEdge2],
-      })
-
-      displayToast(`Branch "${targetLabel}" successfully regenerated.`)
     } catch (err) {
       // Leave canvas state completely intact on failure
       canvas.setGraphData({ nodes: snapshotNodes, edges: snapshotEdges })
-      displayToast('Branch regeneration failed. Canvas state preserved.')
+      displayToast(`Branch regeneration failed: ${err.message || err}. Canvas state preserved.`)
     } finally {
       setIsBranchRegenerating(false)
       setBranchRegenProgress(0)
       setBranchRegenStatus('')
     }
-  }
-
-  const displayToast = (msg) => {
-    setLocalToast(msg)
-    setTimeout(() => setLocalToast(''), 3500)
   }
 
   // Title change handlers
@@ -587,6 +696,201 @@ export function EditorWorkspace({
     deleteConfirmNode,
   ])
 
+  // S2-FE3 / US-Shortcomings: Dialogs & Edge inspection state
+  const [showAddNodeDialog, setShowAddNodeDialog] = useState(false)
+  const [addNodeInitialParentId, setAddNodeInitialParentId] = useState(null)
+  const [selectedEdge, setSelectedEdge] = useState(null)
+  const [connectSourceNodeId, setConnectSourceNodeId] = useState(null)
+
+  const handleOpenAddNode = useCallback(
+    (parentId = null) => {
+      setAddNodeInitialParentId(parentId || canvas.selectedNode?.id || null)
+      setShowAddNodeDialog(true)
+    },
+    [canvas.selectedNode],
+  )
+
+  const handleAddNodeConfirm = useCallback(
+    ({ label, nodeType, description, connectToNodeId, edgeLabel }) => {
+      setShowAddNodeDialog(false)
+      if (nodeType === 'root' && canvas.nodes.some((n) => n.node_type === 'root')) {
+        displayToast('A mind map can only have one central root concept.', 'error')
+        return
+      }
+      hasUserEditedRef.current = true
+      const newNodeId = generateUUID()
+      const isRoot = nodeType === 'root'
+      const tint = isRoot ? '#2D5A47' : nodeType === 'branch' ? '#C96B4B' : '#899B72'
+      const category = isRoot ? 'Root' : nodeType === 'branch' ? 'Branch' : 'Topic'
+
+      let posX = 100
+      let posY = 100
+      if (connectToNodeId) {
+        const parentNode = canvas.nodes.find((n) => n.id === connectToNodeId)
+        if (parentNode) {
+          posX = (parentNode.pos_x ?? parentNode.x ?? 100) + 180
+          posY = (parentNode.pos_y ?? parentNode.y ?? 100) + 60
+        }
+      } else if (canvas.nodes.length > 0) {
+        const last = canvas.nodes[canvas.nodes.length - 1]
+        posX = (last.pos_x ?? last.x ?? 100) + 50
+        posY = (last.pos_y ?? last.y ?? 100) + 80
+      }
+
+      const newNode = {
+        id: newNodeId,
+        label,
+        description: description || '',
+        node_type: nodeType,
+        background_color: tint,
+        category,
+        pos_x: posX,
+        pos_y: posY,
+      }
+
+      canvas.addNode(newNode)
+
+      if (mapId) {
+        mindMapService
+          .createNode(mapId, {
+            label,
+            node_type: nodeType,
+            description,
+            pos_x: posX,
+            pos_y: posY,
+            background_color: tint,
+            parent_node_id: connectToNodeId || undefined,
+            edge_label: edgeLabel || undefined,
+          })
+          .catch((err) => {
+            console.warn('Failed to immediately persist created node via API:', err)
+          })
+      }
+
+      if (connectToNodeId) {
+        const edgeId = generateUUID()
+        canvas.addEdge({
+          id: edgeId,
+          source_node_id: connectToNodeId,
+          target_node_id: newNodeId,
+          label: edgeLabel || '',
+        })
+        if (mapId) {
+          mindMapService
+            .createEdge(mapId, {
+              source_node_id: connectToNodeId,
+              target_node_id: newNodeId,
+              label: edgeLabel || '',
+            })
+            .catch((err) => {
+              console.warn('Failed to persist created edge, rolling back canvas:', err)
+              canvas.deleteEdge?.(edgeId)
+              displayToast(`Failed to connect edge: ${err.message}`, 'error')
+            })
+        }
+      }
+
+      displayToast(`Added ${nodeType} node: "${label}"`)
+    },
+    [canvas, mapId, displayToast],
+  )
+
+  const handleEdgeClick = useCallback(
+    (event, edge) => {
+      canvas.clearSelectedNode()
+      const fullEdge = canvas.edges.find((e) => String(e.id) === String(edge?.id)) || edge
+      setSelectedEdge(fullEdge)
+    },
+    [canvas],
+  )
+
+  const handleSaveEdge = useCallback(
+    async (edgeId, updates) => {
+      hasUserEditedRef.current = true
+      canvas.updateEdge?.(edgeId, updates)
+      setSelectedEdge((prev) => (prev ? { ...prev, ...updates } : null))
+      if (mapId) {
+        try {
+          await mindMapService.updateEdge(mapId, edgeId, updates)
+          displayToast('Edge updated successfully.')
+        } catch (err) {
+          console.warn('Failed to save edge:', err)
+          displayToast(`Failed to update edge: ${err.message}`, 'error')
+        }
+      }
+    },
+    [canvas, mapId, displayToast],
+  )
+
+  const handleDeleteEdge = useCallback(
+    async (edgeId) => {
+      hasUserEditedRef.current = true
+      canvas.deleteEdge?.(edgeId)
+      setSelectedEdge(null)
+      if (mapId) {
+        try {
+          await mindMapService.deleteEdge(mapId, edgeId)
+          displayToast('Edge deleted.')
+        } catch (err) {
+          console.warn('Failed to delete edge:', err)
+          displayToast(`Failed to delete edge: ${err.message}`, 'error')
+        }
+      }
+    },
+    [canvas, mapId, displayToast],
+  )
+
+  const handleStartAddEdge = useCallback(
+    (sourceNodeId) => {
+      setConnectSourceNodeId(sourceNodeId)
+      const sourceNode = canvas.nodes.find((n) => n.id === sourceNodeId)
+      displayToast(`Click target concept to connect from "${sourceNode?.label || 'Node'}"…`)
+    },
+    [canvas.nodes, displayToast],
+  )
+
+  const handleNodeSelect = useCallback(
+    (nodeOrId) => {
+      setSelectedEdge(null)
+      const targetId = typeof nodeOrId === 'string' ? nodeOrId : nodeOrId?.id
+      if (connectSourceNodeId && targetId && connectSourceNodeId !== targetId) {
+        hasUserEditedRef.current = true
+        const edgeId = generateUUID()
+        canvas.addEdge({
+          id: edgeId,
+          source_node_id: connectSourceNodeId,
+          target_node_id: targetId,
+          label: '',
+        })
+        if (mapId) {
+          mindMapService
+            .createEdge(mapId, {
+              source_node_id: connectSourceNodeId,
+              target_node_id: targetId,
+              label: '',
+            })
+            .catch((err) => {
+              console.warn('Failed to persist created edge, rolling back canvas:', err)
+              canvas.deleteEdge?.(edgeId)
+              displayToast(`Failed to connect edge: ${err.message}`, 'error')
+            })
+        }
+        displayToast('Edge connected successfully.')
+        setConnectSourceNodeId(null)
+        return
+      }
+      setConnectSourceNodeId(null)
+      canvas.selectNode(nodeOrId)
+    },
+    [connectSourceNodeId, canvas, mapId, displayToast],
+  )
+
+  const handlePaneClick = useCallback(() => {
+    setSelectedEdge(null)
+    setConnectSourceNodeId(null)
+    canvas.clearSelectedNode()
+  }, [canvas])
+
   const activeToast = toastMessage || localToast
 
   return (
@@ -606,18 +910,7 @@ export function EditorWorkspace({
         canRedo={canvas.canRedo}
         onUndo={handleUndo}
         onRedo={handleRedo}
-        onAddNode={() => {
-          hasUserEditedRef.current = true
-          const newNode = {
-            id: `node-${Date.now()}`,
-            label: 'New Concept',
-            description: '',
-            node_type: 'concept',
-            pos_x: 100,
-            pos_y: 100,
-          }
-          canvas.addNode(newNode)
-        }}
+        onAddNode={() => handleOpenAddNode()}
         viewMode={canvas.viewMode}
         onViewModeChange={canvas.setViewMode}
         saveStatus={saveStatus}
@@ -628,57 +921,26 @@ export function EditorWorkspace({
 
       {/* Visual Canvas or Outline Mode */}
       {canvas.viewMode === 'outline' ? (
-        <div className="outline-view-container">
-          <div className="outline-card">
-            <h2 className="outline-title font-headline">{mapTitle}</h2>
-            {canvas.nodes.length > 0 ? (
-              <ul className="outline-list">
-                {canvas.nodes
-                  .filter((n) => n.node_type === 'root')
-                  .map((core) => (
-                    <li key={core.id}>
-                      <strong>{core.label}</strong>
-                      {core.description && (
-                        <p style={{ margin: '4px 0 10px', color: 'var(--ink-secondary)' }}>
-                          {core.description}
-                        </p>
-                      )}
-                      <ul>
-                        {canvas.nodes
-                          .filter((n) => n.node_type === 'branch' || n.node_type === 'default')
-                          .map((branch) => (
-                            <li key={branch.id}>
-                              <strong>{branch.label}</strong>
-                              {branch.description && (
-                                <span
-                                  style={{
-                                    color: 'var(--ink-secondary)',
-                                    display: 'block',
-                                    fontSize: '12px',
-                                  }}
-                                >
-                                  {branch.description}
-                                </span>
-                              )}
-                            </li>
-                          ))}
-                      </ul>
-                    </li>
-                  ))}
-              </ul>
-            ) : (
-              <p style={{ color: 'var(--outline)' }}>No nodes available in outline view.</p>
-            )}
-            <button
-              type="button"
-              className="btn btn-primary"
-              style={{ marginTop: '20px' }}
-              onClick={() => canvas.setViewMode('canvas')}
-            >
-              Switch to Canvas View
-            </button>
-          </div>
-        </div>
+        <OutlineView
+          nodes={canvas.nodes}
+          edges={canvas.edges}
+          mapTitle={mapTitle}
+          onSwitchToCanvas={() => canvas.setViewMode('canvas')}
+          onSelectNode={(node) => {
+            canvas.selectNode?.(node)
+            canvas.setViewMode('canvas')
+            if (
+              flowApiRef.current?.setCenter &&
+              (node.pos_x !== undefined || node.x !== undefined)
+            ) {
+              const nx = Number(node.pos_x ?? node.x ?? 0)
+              const ny = Number(node.pos_y ?? node.y ?? 0)
+              if (nx !== 0 || ny !== 0) {
+                flowApiRef.current.setCenter(nx, ny, { duration: 500 })
+              }
+            }
+          }}
+        />
       ) : (
         <MindMapCanvas
           rawNodes={canvas.nodes}
@@ -691,8 +953,8 @@ export function EditorWorkspace({
           onViewportChange={handleViewportChange}
           selectedNode={canvas.selectedNode}
           editingNodeId={canvas.editingNodeId}
-          onNodeSelect={canvas.selectNode}
-          onPaneClick={canvas.clearSelectedNode}
+          onNodeSelect={handleNodeSelect}
+          onPaneClick={handlePaneClick}
           onNodePositionChange={handleNodePositionChange}
           onConnect={handleConnect}
           onReconnect={handleReconnect}
@@ -702,6 +964,7 @@ export function EditorWorkspace({
           onDeleteNode={handleDeleteNode}
           onAddChild={handleAddChild}
           onAddSibling={handleAddSibling}
+          onEdgeClick={handleEdgeClick}
         />
       )}
 
@@ -715,6 +978,7 @@ export function EditorWorkspace({
           onAddChild={handleAddChild}
           onAddSibling={handleAddSibling}
           onDeleteNode={handleDeleteNode}
+          onStartAddEdge={handleStartAddEdge}
           comments={commentsChat.commentsByNodeId[canvas.selectedNode?.id] || []}
           onAddComment={commentsChat.addComment}
           onResolveComment={commentsChat.resolveComment}
@@ -724,6 +988,31 @@ export function EditorWorkspace({
           regenerationStatus={branchRegenStatus}
         />
       )}
+
+      {/* Edge Inspector Flyout */}
+      {selectedEdge && (
+        <EdgeInspector
+          edge={selectedEdge}
+          sourceNode={canvas.nodes.find(
+            (n) => String(n.id) === String(selectedEdge.source_node_id || selectedEdge.source),
+          )}
+          targetNode={canvas.nodes.find(
+            (n) => String(n.id) === String(selectedEdge.target_node_id || selectedEdge.target),
+          )}
+          onSave={handleSaveEdge}
+          onDelete={handleDeleteEdge}
+          onClose={() => setSelectedEdge(null)}
+        />
+      )}
+
+      {/* Add Node Hierarchy Dialog */}
+      <AddNodeDialog
+        isOpen={showAddNodeDialog}
+        availableNodes={canvas.nodes}
+        initialParentId={addNodeInitialParentId}
+        onConfirm={handleAddNodeConfirm}
+        onCancel={() => setShowAddNodeDialog(false)}
+      />
 
       {/* Version History Panel (FE-3) */}
       {exportHistory.isHistoryOpen && (
@@ -805,7 +1094,7 @@ export function EditorWorkspace({
                 >
                   <option value="overview">Overview</option>
                   <option value="balanced">Balanced</option>
-                  <option value="in_depth">In-depth</option>
+                  <option value="detailed">Detailed</option>
                 </select>
               </div>
               <textarea
@@ -952,6 +1241,21 @@ export function EditorWorkspace({
         onConfirmAction={handleConfirmChatAction}
         onDismissAction={handleDismissChatAction}
         selectedNode={canvas.selectedNode}
+        nodes={canvas.nodes}
+        onSelectNode={(nodeOrId) => {
+          const nodeObj =
+            typeof nodeOrId === 'string' ? canvas.nodes?.find((n) => n.id === nodeOrId) : nodeOrId
+          if (nodeObj) {
+            canvas.selectNode?.(nodeObj)
+            if (flowApiRef.current?.setCenter && (nodeObj.pos_x !== undefined || nodeObj.x !== undefined)) {
+              const nx = Number(nodeObj.pos_x ?? nodeObj.x ?? 0)
+              const ny = Number(nodeObj.pos_y ?? nodeObj.y ?? 0)
+              if (nx !== 0 || ny !== 0) {
+                flowApiRef.current.setCenter(nx, ny, { duration: 500 })
+              }
+            }
+          }
+        }}
       />
     </div>
   )
