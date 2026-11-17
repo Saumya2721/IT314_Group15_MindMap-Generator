@@ -167,59 +167,105 @@ class StructureAwareChunker:
         current_page: int | None = None
         has_structure = False
 
+        in_code_block = False
+
+        emitted_paths: set[str] = set()
+
         def flush_current_section() -> None:
             nonlocal current_lines
             if current_lines:
                 content = "\n".join(current_lines).strip()
                 if content:
+                    b_path = self.get_breadcrumb_path() or eff_fallback_root
+                    b_stack = self.get_breadcrumb_stack() or ([eff_fallback_root] if eff_fallback_root else [])
                     sections.append(
                         (
-                            self.get_breadcrumb_path(),
-                            self.get_breadcrumb_stack(),
+                            b_path,
+                            b_stack,
                             current_heading_level,
                             current_page,
                             content,
                         )
                     )
+                    if b_path:
+                        emitted_paths.add(b_path)
                 current_lines = []
+
+        def push_heading(level: int, title: str) -> None:
+            nonlocal current_heading_level
+            flush_current_section()
+            current_heading_level = level
+            min_pop_level = 1 if self.root_title else 0
+            while (
+                self.breadcrumb_stack
+                and self.breadcrumb_stack[-1][0] >= level
+                and self.breadcrumb_stack[-1][0] >= min_pop_level
+            ):
+                top_lvl, top_title = self.breadcrumb_stack[-1]
+                top_path = self.get_breadcrumb_path() or eff_fallback_root
+                if top_lvl >= 1 and top_path and top_path not in emitted_paths:
+                    top_stack = self.get_breadcrumb_stack() or ([eff_fallback_root] if eff_fallback_root else [])
+                    sections.append((top_path, top_stack, top_lvl, current_page, top_title))
+                    emitted_paths.add(top_path)
+                self.breadcrumb_stack.pop()
+
+            self.breadcrumb_stack.append((level, title.strip()))
 
         for line in lines:
             stripped = line.strip()
 
-            # Check for page boundary marker
+            # Track code fences so # comments inside code blocks are not treated as headings
+            if stripped.startswith("```"):
+                in_code_block = not in_code_block
+                current_lines.append(line)
+                continue
+
+            if in_code_block:
+                current_lines.append(line)
+                continue
+
+            # Check for page boundary marker (strip from chunk content to prevent marker leaks)
             page_match = self.PAGE_PATTERN.match(stripped)
             if page_match:
                 p1, p2 = page_match.groups()
                 current_page = int(p1 or p2)
-                current_lines.append(line)
                 continue
 
             # 1. Check for Markdown Headings (# to ######)
             heading_match = self.HEADING_PATTERN.match(stripped)
             if heading_match:
                 has_structure = True
-                flush_current_section()
                 hashes, title = heading_match.groups()
-                level = len(hashes)
+                level = min(len(hashes), self.max_heading_level)
                 self._current_md_level = level
-                current_heading_level = level
-                self._push_breadcrumb(level, title)
+                push_heading(level, title)
                 continue
 
             # 2. Check for Numbered Section Headers (e.g. 1. Introduction, 1.1 Background)
             numbered_match = self.NUMBERED_HEADER_PATTERN.match(stripped)
             if numbered_match:
-                has_structure = True
                 num_str, title = numbered_match.groups()
-                num_clean = num_str.rstrip(".")
-                depth = len(num_clean.split("."))
-                level = self._current_md_level + depth
-                current_heading_level = level
+                # Exclude false-positive decimal quantities (e.g. "2.5 percent", "3.14 is pi")
+                is_decimal_number = bool(
+                    re.match(r"^\d+\.\d+$", num_str)
+                    and (
+                        title[0].islower()
+                        or re.match(
+                            r"^(?:percent|%|million|billion|trillion|meters|kg|seconds|hours|times|fold|degrees)\b",
+                            title,
+                            re.IGNORECASE,
+                        )
+                    )
+                )
+                if not is_decimal_number and (title[0].isupper() or len(num_str.split(".")) > 2):
+                    has_structure = True
+                    num_clean = num_str.rstrip(".")
+                    depth = len(num_clean.split("."))
+                    level = min(self._current_md_level + depth, self.max_heading_level)
 
-                flush_current_section()
-                display_title = f"{num_str} {title}" if self.preserve_numbered_prefix else title
-                self._push_breadcrumb(level, display_title)
-                continue
+                    display_title = f"{num_str} {title}" if self.preserve_numbered_prefix else title
+                    push_heading(level, display_title)
+                    continue
 
             # 3. Check for Bullet Lists
             bullet_match = self.BULLET_PATTERN.match(line)
@@ -230,8 +276,7 @@ class StructureAwareChunker:
                 level = self._current_md_level + 10 + indent_level
                 current_heading_level = level
 
-                flush_current_section()
-                self._push_breadcrumb(level, item_text)
+                push_heading(level, item_text)
                 current_lines.append(line)
                 continue
 
@@ -241,19 +286,25 @@ class StructureAwareChunker:
         # Flush any remaining lines
         flush_current_section()
 
-        # Handle edge case: Document had headings but no trailing body text
+        # Handle standalone trailing items or document with headings but no trailing body text
         if not sections and self.breadcrumb_stack:
-            last_title = self.breadcrumb_stack[-1][1]
-            last_level = self.breadcrumb_stack[-1][0] if self.breadcrumb_stack[-1][0] > 0 else None
-            return [
-                TextChunk(
-                    last_title,
-                    breadcrumb=self.get_breadcrumb_path(),
-                    breadcrumbs=self.get_breadcrumb_stack(),
-                    heading_level=last_level,
-                    page_number=current_page,
-                )
-            ]
+            min_pop = 1 if self.root_title else 0
+            if self.breadcrumb_stack[-1][0] >= min_pop:
+                top_lvl, top_title = self.breadcrumb_stack[-1]
+                top_path = self.get_breadcrumb_path() or eff_fallback_root
+                top_stack = self.get_breadcrumb_stack() or ([eff_fallback_root] if eff_fallback_root else [])
+                sections.append((top_path, top_stack, top_lvl, current_page, top_title))
+                if top_path:
+                    emitted_paths.add(top_path)
+        elif self.breadcrumb_stack:
+            min_pop = 1 if self.root_title else 0
+            top_lvl, top_title = self.breadcrumb_stack[-1]
+            top_path = self.get_breadcrumb_path() or eff_fallback_root
+            if top_lvl >= 1 and top_path and top_path not in emitted_paths:
+                top_stack = self.get_breadcrumb_stack() or ([eff_fallback_root] if eff_fallback_root else [])
+                sections.append((top_path, top_stack, top_lvl, current_page, top_title))
+                if top_path:
+                    emitted_paths.add(top_path)
 
         # Plain/unstructured text fallback:
         # If no document structure was detected and no explicit root_title was set,
