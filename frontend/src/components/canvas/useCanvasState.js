@@ -221,7 +221,8 @@ export function canvasReducer(state, action) {
       const childTint =
         action.payload.background_color ||
         (childType === 'branch' ? '#C96B4B' : childType === 'root' ? '#2D5A47' : '#899B72')
-      const childCategory = childType === 'branch' ? 'Branch' : childType === 'root' ? 'Root' : 'Topic'
+      const childCategory =
+        childType === 'branch' ? 'Branch' : childType === 'root' ? 'Root' : 'Topic'
       const pos = calculateChildPosition(parentNode, state.nodes, state.edges)
 
       const childId = generateUUID()
@@ -272,8 +273,7 @@ export function canvasReducer(state, action) {
         label: action.payload.label || 'New Concept',
         description: action.payload.description || '',
         node_type: action.payload.node_type || refNode.node_type || 'concept',
-        background_color:
-          action.payload.background_color || refNode.background_color || '#899B72',
+        background_color: action.payload.background_color || refNode.background_color || '#899B72',
         category: refNode.category || 'Topic',
         pos_x: pos.x,
         pos_y: pos.y,
@@ -368,7 +368,9 @@ export function canvasReducer(state, action) {
             ? {
                 ...e,
                 ...(effectiveLabel !== undefined ? { label: effectiveLabel } : {}),
-                ...(effectiveRelLabel !== undefined ? { relationship_label: effectiveRelLabel } : {}),
+                ...(effectiveRelLabel !== undefined
+                  ? { relationship_label: effectiveRelLabel }
+                  : {}),
                 ...(edge_data !== undefined
                   ? { edge_data: { ...(e.edge_data || {}), ...edge_data } }
                   : {}),
@@ -376,7 +378,9 @@ export function canvasReducer(state, action) {
                   ...(e.data || {}),
                   ...(edge_data || {}),
                   ...(effectiveLabel !== undefined ? { label: effectiveLabel } : {}),
-                  ...(effectiveRelLabel !== undefined ? { relationship_label: effectiveRelLabel } : {}),
+                  ...(effectiveRelLabel !== undefined
+                    ? { relationship_label: effectiveRelLabel }
+                    : {}),
                 },
               }
             : e,
@@ -524,7 +528,8 @@ export function useCanvasState({
   }, [])
 
   const addChildNode = useCallback((parentId, options = {}) => {
-    const payload = typeof options === 'string' ? { parentId, label: options } : { parentId, ...options }
+    const payload =
+      typeof options === 'string' ? { parentId, label: options } : { parentId, ...options }
     dispatch({ type: 'ADD_CHILD_NODE', payload })
   }, [])
 

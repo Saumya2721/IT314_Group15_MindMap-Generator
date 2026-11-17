@@ -25,8 +25,11 @@ class SnapshotResponse(BaseModel):
 
 class SnapshotRestoreResponse(BaseModel):
     status: str = "restored"
-    map_id: str
+    map_id: UUID | str
     restored_version: int
     new_version: int
-    snapshot_id: str
+    version: int | None = None
+    nodes_restored: int | None = None
+    edges_restored: int | None = None
+    snapshot_id: UUID | str
     snapshot_data: dict[str, Any] = Field(default_factory=dict)

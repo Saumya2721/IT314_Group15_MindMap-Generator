@@ -580,79 +580,83 @@ export function ChatPanel({
               )}
 
               {/* Action Proposal Card */}
-              {msg.proposed_action && (() => {
-                let pa = msg.proposed_action
-                if (typeof pa === 'string') {
-                  try {
-                    pa = JSON.parse(pa)
-                    if (typeof pa === 'string') pa = JSON.parse(pa)
-                  } catch {
-                    // keep as is
+              {msg.proposed_action &&
+                (() => {
+                  let pa = msg.proposed_action
+                  if (typeof pa === 'string') {
+                    try {
+                      pa = JSON.parse(pa)
+                      if (typeof pa === 'string') pa = JSON.parse(pa)
+                    } catch {
+                      // keep as is
+                    }
                   }
-                }
-                let meta = msg.metadata || {}
-                if (typeof meta === 'string') {
-                  try {
-                    meta = JSON.parse(meta)
-                  } catch {
-                    meta = {}
+                  let meta = msg.metadata || {}
+                  if (typeof meta === 'string') {
+                    try {
+                      meta = JSON.parse(meta)
+                    } catch {
+                      meta = {}
+                    }
                   }
-                }
-                const isConfirmed = msg.is_confirmed === true
-                const isDismissed =
-                  msg.is_confirmed === false ||
-                  meta.execution_status === 'dismissed' ||
-                  meta.execution_status === 'rejected'
-                const desc =
-                  pa && typeof pa === 'object'
-                    ? pa.explanation || pa.description || pa.instruction || 'Apply recommended synthesis update.'
-                    : 'Apply recommended synthesis update.'
+                  const isConfirmed = msg.is_confirmed === true
+                  const isDismissed =
+                    msg.is_confirmed === false ||
+                    meta.execution_status === 'dismissed' ||
+                    meta.execution_status === 'rejected'
+                  const desc =
+                    pa && typeof pa === 'object'
+                      ? pa.explanation ||
+                        pa.description ||
+                        pa.instruction ||
+                        'Apply recommended synthesis update.'
+                      : 'Apply recommended synthesis update.'
 
-                return (
-                  <div className="action-proposal-card">
-                    <div className="action-card-header">
-                      <span className="material-symbols-outlined action-badge-icon">
-                        auto_fix_high
-                      </span>
-                      <span className="action-badge-text">Proposed Graph Action</span>
-                    </div>
-                    <p className="action-card-desc">{desc}</p>
+                  return (
+                    <div className="action-proposal-card">
+                      <div className="action-card-header">
+                        <span className="material-symbols-outlined action-badge-icon">
+                          auto_fix_high
+                        </span>
+                        <span className="action-badge-text">Proposed Graph Action</span>
+                      </div>
+                      <p className="action-card-desc">{desc}</p>
 
-                    <div className="action-card-actions">
-                      {isConfirmed ? (
-                        <span className="action-status-pill confirmed">
-                          <span className="material-symbols-outlined">check_circle</span>
-                          <span>Action Confirmed &amp; Applied</span>
-                        </span>
-                      ) : isDismissed ? (
-                        <span className="action-status-pill dismissed">
-                          <span className="material-symbols-outlined">cancel</span>
-                          <span>Proposal Dismissed</span>
-                        </span>
-                      ) : (
-                        <>
-                          <button
-                            type="button"
-                            className="btn-action-confirm"
-                            onClick={() => onConfirmAction?.(msg.id, pa || msg.proposed_action)}
-                          >
-                            <span className="material-symbols-outlined">check</span>
-                            <span>Confirm</span>
-                          </button>
-                          <button
-                            type="button"
-                            className="btn-action-dismiss"
-                            onClick={() => onDismissAction?.(msg.id)}
-                          >
-                            <span className="material-symbols-outlined">close</span>
-                            <span>Dismiss</span>
-                          </button>
-                        </>
-                      )}
+                      <div className="action-card-actions">
+                        {isConfirmed ? (
+                          <span className="action-status-pill confirmed">
+                            <span className="material-symbols-outlined">check_circle</span>
+                            <span>Action Confirmed &amp; Applied</span>
+                          </span>
+                        ) : isDismissed ? (
+                          <span className="action-status-pill dismissed">
+                            <span className="material-symbols-outlined">cancel</span>
+                            <span>Proposal Dismissed</span>
+                          </span>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              className="btn-action-confirm"
+                              onClick={() => onConfirmAction?.(msg.id, pa || msg.proposed_action)}
+                            >
+                              <span className="material-symbols-outlined">check</span>
+                              <span>Confirm</span>
+                            </button>
+                            <button
+                              type="button"
+                              className="btn-action-dismiss"
+                              onClick={() => onDismissAction?.(msg.id)}
+                            >
+                              <span className="material-symbols-outlined">close</span>
+                              <span>Dismiss</span>
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                )
-              })()}
+                  )
+                })()}
             </div>
           ))
         )}

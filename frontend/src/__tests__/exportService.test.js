@@ -126,9 +126,8 @@ describe('useExportHistory reducer and exports', () => {
   })
 
   it('exportHistoryReducer handles modal open/close actions correctly', async () => {
-    const { exportHistoryReducer, INITIAL_EXPORT_HISTORY_STATE } = await import(
-      '../components/canvas/useExportHistory'
-    )
+    const { exportHistoryReducer, INITIAL_EXPORT_HISTORY_STATE } =
+      await import('../components/canvas/useExportHistory')
     const openState = exportHistoryReducer(INITIAL_EXPORT_HISTORY_STATE, { type: 'OPEN_EXPORT' })
     expect(openState.isExportModalOpen).toBe(true)
 

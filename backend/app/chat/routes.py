@@ -507,12 +507,12 @@ async def confirm_action(
 
                 existing_edge_rows = await pool.fetch("SELECT id FROM public.edges WHERE map_id = $1", map_id)
                 existing_edge_ids = {str(r["id"]) for r in existing_edge_rows}
-                for e in raw_edges:
-                    eid = str(e.get("id")) if isinstance(e, dict) else str(getattr(e, "id", ""))
+                for edge_item in raw_edges:
+                    eid = str(edge_item.get("id")) if isinstance(edge_item, dict) else str(getattr(edge_item, "id", ""))
                     if eid and eid in existing_edge_ids:
-                        update_edges.append(e)
+                        update_edges.append(edge_item)
                     else:
-                        create_edges.append(e)
+                        create_edges.append(edge_item)
 
                 # Take safety snapshot before applying delta edit
                 from snapshots.service import create_map_snapshot
@@ -530,7 +530,9 @@ async def confirm_action(
                 if create_nodes:
                     delta_payload["create_nodes"] = create_nodes
                 if delete_nodes:
-                    root_rows = await pool.fetch("SELECT id FROM public.nodes WHERE map_id = $1 AND node_type = 'root'", map_id)
+                    root_rows = await pool.fetch(
+                        "SELECT id FROM public.nodes WHERE map_id = $1 AND node_type = 'root'", map_id
+                    )
                     root_ids = {str(r["id"]) for r in root_rows}
                     for item in delete_nodes:
                         nid = str(item.get("id") if isinstance(item, dict) else item)

@@ -12,23 +12,10 @@ function getEdgeLabel(edge) {
 }
 
 function getNodeLabel(node, fallback) {
-  return (
-    node?.label ||
-    node?.title ||
-    node?.data?.label ||
-    node?.data?.title ||
-    fallback
-  )
+  return node?.label || node?.title || node?.data?.label || node?.data?.title || fallback
 }
 
-export default function EdgeInspector({
-  edge,
-  sourceNode,
-  targetNode,
-  onSave,
-  onDelete,
-  onClose,
-}) {
+export default function EdgeInspector({ edge, sourceNode, targetNode, onSave, onDelete, onClose }) {
   const [label, setLabel] = useState(getEdgeLabel(edge))
   const [isSaving, setIsSaving] = useState(false)
 
@@ -120,11 +107,7 @@ export default function EdgeInspector({
             </span>
             <span>Delete</span>
           </button>
-          <button
-            type="submit"
-            className="edge-inspector-btn-save"
-            disabled={isSaving}
-          >
+          <button type="submit" className="edge-inspector-btn-save" disabled={isSaving}>
             <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>
               check
             </span>

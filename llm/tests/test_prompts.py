@@ -225,21 +225,28 @@ def test_format_seed_content_short_text_unchanged():
 
 def test_format_seed_content_large_document_decoupled():
     # Construct a large document > 5000 characters
-    large_doc = """
+    large_doc = (
+        """
 # Attention Is All You Need
 Abstract: We present the Transformer, a new network architecture based solely on attention mechanisms.
 
 ## Introduction
 Recurrent models typically factor computation along the symbol positions.
-""" + ("Detailed explanation of recurrence and memory overhead. " * 150) + """
+"""
+        + ("Detailed explanation of recurrence and memory overhead. " * 150)
+        + """
 
 ## Background
 The goal of reducing sequential computation also forms the foundation of Neural GPU.
-""" + ("More background text and prior work discussions. " * 150) + """
+"""
+        + ("More background text and prior work discussions. " * 150)
+        + """
 
 ## Model Architecture
 The Transformer follows this overall architecture using stacked self-attention.
-""" + ("Mathematical equations and component details. " * 150)
+"""
+        + ("Mathematical equations and component details. " * 150)
+    )
 
     formatted = format_seed_content(large_doc)
     # The formatted result should be significantly smaller than the raw document
@@ -258,14 +265,19 @@ The Transformer follows this overall architecture using stacked self-attention.
 
 
 def test_format_seed_content_numbered_headings():
-    numbered_doc = """
+    numbered_doc = (
+        """
 1 Introduction
 Here is the introduction to neural networks.
-""" + ("Some long body text explaining neurons and synapses. " * 120) + """
+"""
+        + ("Some long body text explaining neurons and synapses. " * 120)
+        + """
 
 2 Architecture
 Here is the detailed layer structure.
-""" + ("Some long body text explaining feedforward layers. " * 120)
+"""
+        + ("Some long body text explaining feedforward layers. " * 120)
+    )
 
     headings = extract_headings_from_text(numbered_doc)
     assert any("1 Introduction" in h for h in headings)

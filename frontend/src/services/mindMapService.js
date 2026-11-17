@@ -409,7 +409,20 @@ export const mindMapService = {
    * Create a node manually
    * Endpoint: POST /api/maps/{map_id}/nodes
    */
-  async createNode(mapId, { label, node_type = 'concept', description = '', pos_x = 0, pos_y = 0, background_color, text_color, parent_node_id, edge_label }) {
+  async createNode(
+    mapId,
+    {
+      label,
+      node_type = 'concept',
+      description = '',
+      pos_x = 0,
+      pos_y = 0,
+      background_color,
+      text_color,
+      parent_node_id,
+      edge_label,
+    },
+  ) {
     const res = await apiClient.post(`/api/maps/${mapId}/nodes`, {
       label,
       node_type,

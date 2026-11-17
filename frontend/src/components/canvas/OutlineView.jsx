@@ -91,13 +91,7 @@ export function buildTree(rawNodes = [], rawEdges = []) {
 /**
  * Individual recursive outline node item.
  */
-function OutlineNodeItem({
-  item,
-  depth = 0,
-  collapsedSet,
-  onToggleCollapse,
-  onSelectNode,
-}) {
+function OutlineNodeItem({ item, depth = 0, collapsedSet, onToggleCollapse, onSelectNode }) {
   const { node, incomingEdgeLabel, children } = item
   const nid = String(node.id)
   const hasChildren = children && children.length > 0
@@ -113,11 +107,7 @@ function OutlineNodeItem({
   }
 
   const typeClass =
-    node.node_type === 'root'
-      ? 'root'
-      : node.node_type === 'branch'
-        ? 'branch'
-        : 'concept'
+    node.node_type === 'root' ? 'root' : node.node_type === 'branch' ? 'branch' : 'concept'
 
   const isFormulaOrCode =
     node.description &&
@@ -138,10 +128,7 @@ function OutlineNodeItem({
             title={isCollapsed ? 'Expand sub-topics' : 'Collapse sub-topics'}
             aria-label={isCollapsed ? 'Expand' : 'Collapse'}
           >
-            <span
-              className="material-symbols-outlined"
-              style={{ fontSize: '15px' }}
-            >
+            <span className="material-symbols-outlined" style={{ fontSize: '15px' }}>
               {isCollapsed ? 'chevron_right' : 'expand_more'}
             </span>
           </button>
@@ -167,10 +154,7 @@ function OutlineNodeItem({
             {/* Edge relationship badge */}
             {incomingEdgeLabel && (
               <span className="outline-edge-badge">
-                <span
-                  className="material-symbols-outlined"
-                  style={{ fontSize: '12px' }}
-                >
+                <span className="material-symbols-outlined" style={{ fontSize: '12px' }}>
                   arrow_forward
                 </span>
                 <span>{incomingEdgeLabel}</span>
@@ -184,15 +168,12 @@ function OutlineNodeItem({
           </div>
 
           {/* Description / Mathematical Formula */}
-          {node.description && (
-            isFormulaOrCode ? (
-              <div className="outline-formula-block">
-                {node.description}
-              </div>
+          {node.description &&
+            (isFormulaOrCode ? (
+              <div className="outline-formula-block">{node.description}</div>
             ) : (
               <p className="outline-node-desc">{node.description}</p>
-            )
-          )}
+            ))}
         </div>
       </div>
 
@@ -227,7 +208,11 @@ export default function OutlineView({
 }) {
   const [collapsedSet, setCollapsedSet] = useState(new Set())
 
-  const { rootTree, secondaryRoots = [], floatingNodes = [] } = useMemo(() => {
+  const {
+    rootTree,
+    secondaryRoots = [],
+    floatingNodes = [],
+  } = useMemo(() => {
     return buildTree(nodes, edges)
   }, [nodes, edges])
 
@@ -287,7 +272,8 @@ export default function OutlineView({
           <div className="outline-header-left">
             <h1 className="outline-title">{mapTitle}</h1>
             <p className="outline-subtitle">
-              Hierarchical mind map outline &bull; {nodes.length} concepts &bull; {edges.length} connections
+              Hierarchical mind map outline &bull; {nodes.length} concepts &bull; {edges.length}{' '}
+              connections
             </p>
           </div>
 
@@ -377,11 +363,7 @@ export default function OutlineView({
           <span style={{ fontSize: '12px', color: 'var(--ink-secondary)' }}>
             Switch back to visual canvas to freely position, drag, or connect concepts.
           </span>
-          <button
-            type="button"
-            className="btn btn-primary"
-            onClick={onSwitchToCanvas}
-          >
+          <button type="button" className="btn btn-primary" onClick={onSwitchToCanvas}>
             Switch to Visual Canvas
           </button>
         </div>

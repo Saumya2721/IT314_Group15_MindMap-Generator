@@ -137,14 +137,14 @@
 }
 
 .outline-item-depth-0 .outline-bullet {
-  color: #2D5A47;
+  color: #2d5a47;
   font-size: 14px;
 }
 
 .outline-item-depth-0 .outline-node-label {
   font-size: 18px;
   font-weight: 700;
-  color: #2D5A47;
+  color: #2d5a47;
   font-family: var(--font-headline, 'Newsreader', Georgia, serif);
 }
 
@@ -156,7 +156,7 @@
 
 .outline-item-depth-1 .outline-bullet {
   font-size: 13px;
-  color: #C96B4B;
+  color: #c96b4b;
 }
 
 .outline-item-depth-1 .outline-node-label {
@@ -172,7 +172,7 @@
 
 .outline-item-depth-2 .outline-bullet {
   font-size: 12px;
-  color: #899B72;
+  color: #899b72;
 }
 
 .outline-item-depth-2 .outline-node-label {
@@ -268,12 +268,12 @@
 
 .outline-type-badge.root {
   background-color: #e6efe9;
-  color: #2D5A47;
+  color: #2d5a47;
 }
 
 .outline-type-badge.branch {
   background-color: #fcefe9;
-  color: #C96B4B;
+  color: #c96b4b;
 }
 
 .outline-type-badge.concept {
@@ -294,7 +294,7 @@
   margin: 4px 0;
   padding: 6px 10px;
   background-color: #f2f5f4;
-  border-left: 3px solid #899B72;
+  border-left: 3px solid #899b72;
   border-radius: 4px;
   font-family: 'JetBrains Mono', monospace, Consolas, sans-serif;
   font-size: 12px;

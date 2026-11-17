@@ -438,4 +438,6 @@ async def _send_terminal(callback: JobCallbackClient, result: GenerationResult) 
                 )
                 await callback.fail(fail_result)
             except Exception as inner_exc:
-                logger.critical("job %s: both complete and fail callbacks failed to reach backend: %s", result.job_id, inner_exc)
+                logger.critical(
+                    "job %s: both complete and fail callbacks failed to reach backend: %s", result.job_id, inner_exc
+                )

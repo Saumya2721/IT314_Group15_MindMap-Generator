@@ -1400,22 +1400,34 @@ async def update_edge_route(
     if not updates:
         return dict(existing)
 
-    new_src = UUID(str(updates["source_node_id"])) if "source_node_id" in updates and updates["source_node_id"] is not None else UUID(str(existing["source_node_id"]))
-    new_tgt = UUID(str(updates["target_node_id"])) if "target_node_id" in updates and updates["target_node_id"] is not None else UUID(str(existing["target_node_id"]))
+    is_endpoint_update = ("source_node_id" in updates and updates["source_node_id"] is not None) or (
+        "target_node_id" in updates and updates["target_node_id"] is not None
+    )
 
-    if new_src == new_tgt:
-        raise HTTPException(400, "Self-loops are not allowed (source and target nodes must differ)")
+    if is_endpoint_update:
+        new_src = (
+            UUID(str(updates["source_node_id"]))
+            if "source_node_id" in updates and updates["source_node_id"] is not None
+            else UUID(str(existing.get("source_node_id")))
+        )
+        new_tgt = (
+            UUID(str(updates["target_node_id"]))
+            if "target_node_id" in updates and updates["target_node_id"] is not None
+            else UUID(str(existing.get("target_node_id")))
+        )
 
-    if "source_node_id" in updates and updates["source_node_id"] is not None:
-        src = await get_node_by_id(pool, map_id, new_src)
-        if not src:
-            raise HTTPException(422, "Source node does not belong to this map")
-    if "target_node_id" in updates and updates["target_node_id"] is not None:
-        tgt = await get_node_by_id(pool, map_id, new_tgt)
-        if not tgt:
-            raise HTTPException(422, "Target node does not belong to this map")
+        if new_src == new_tgt:
+            raise HTTPException(400, "Self-loops are not allowed (source and target nodes must differ)")
 
-    if ("source_node_id" in updates and updates["source_node_id"] is not None) or ("target_node_id" in updates and updates["target_node_id"] is not None):
+        if "source_node_id" in updates and updates["source_node_id"] is not None:
+            src = await get_node_by_id(pool, map_id, new_src)
+            if not src:
+                raise HTTPException(422, "Source node does not belong to this map")
+        if "target_node_id" in updates and updates["target_node_id"] is not None:
+            tgt = await get_node_by_id(pool, map_id, new_tgt)
+            if not tgt:
+                raise HTTPException(422, "Target node does not belong to this map")
+
         all_edges_rows = await list_map_edges(pool, map_id)
         other_edges = [dict(e) for e in all_edges_rows if str(e["id"]) != str(edge_id)]
         if check_edge_creates_cycle(other_edges, new_src, new_tgt):
@@ -2030,8 +2042,10 @@ async def list_snapshots_endpoint(
             "nodes": raw_nodes,
             "edges": raw_edges,
         }
-        d["nodes_count"] = d.get("nodes_count") if (d.get("nodes_count") is not None and d.get("nodes_count") > 0) else len(raw_nodes)
-        d["edges_count"] = d.get("edges_count") if (d.get("edges_count") is not None and d.get("edges_count") > 0) else len(raw_edges)
+        nc = d.get("nodes_count")
+        d["nodes_count"] = nc if (nc is not None and isinstance(nc, int) and nc > 0) else len(raw_nodes)
+        ec = d.get("edges_count")
+        d["edges_count"] = ec if (ec is not None and isinstance(ec, int) and ec > 0) else len(raw_edges)
         d["version_number"] = d.get("version_number") or d.get("version_no") or 1
         d["trigger_source"] = d.get("trigger_source") or d.get("reason") or "manual"
         d["reason"] = d.get("reason") or d.get("trigger_source") or "Manual snapshot"
