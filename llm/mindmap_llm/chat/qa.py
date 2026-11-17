@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 _QA_TOP_K_RETRIEVE = 10
 _QA_TOP_K_RERANK = 5
-_QA_MAX_TOKENS = 1024
+_QA_MAX_TOKENS = 800
 
 # Pattern to extract [node:<uuid>] citations from LLM output.
 _NODE_CITE_RE = re.compile(r"\[node:([0-9a-fA-F-]{36})\]")

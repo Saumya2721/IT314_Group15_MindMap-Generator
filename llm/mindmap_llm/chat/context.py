@@ -51,8 +51,17 @@ def assemble_chat_context(
     """
     active_budget = budget or TokenBudget()
 
+    # C5: Deduplicate if the current message was already appended to history
+    clean_history = list(history)
+    if (
+        clean_history
+        and clean_history[-1].role.lower() == "user"
+        and clean_history[-1].content.strip() == current_message.strip()
+    ):
+        clean_history.pop()
+
     kept_messages, effective_summary = trim_history_to_budget(
-        history,
+        clean_history,
         budget=active_budget,
         current_message=current_message,
         summary=summary,

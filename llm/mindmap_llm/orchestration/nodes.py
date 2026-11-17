@@ -34,6 +34,7 @@ from orchestration.prompts import (
     build_generation_user_prompt,
     estimate_tokens,
     extract_json_object,
+    format_seed_content,
     size_targets,
 )
 from orchestration.state import GenerationState
@@ -44,6 +45,7 @@ from seed.normalizer import NoUsableSeedContent
 from tools.base import ToolError
 from tools.research_planner import execute_research_queries, plan_research_queries
 from validation.schema import (
+    DraftMindMap,
     ValidationFailure,
     resolve_branch_to_records,
     resolve_to_records,
@@ -63,40 +65,57 @@ class NoPriorSeedError(NoUsableSeedContent):
     pass
 
 
+def _extract_shingles(words: list[str], n: int) -> list[str]:
+    """Extract consecutive n-gram word shingles."""
+    if len(words) < n:
+        return words
+    return [" ".join(words[i : i + n]) for i in range(len(words) - n + 1)]
+
+
 def _deduplicate_against_seed(
     chunks: list[RetrievedChunk],
     *,
     seed_text: str,
-    threshold: float = 0.6,
+    threshold: float = 0.7,
+    shingle_size: int = 1,
 ) -> list[RetrievedChunk]:
     """Remove retrieved chunks whose substantive content is already substantially
     present in the seed text, preventing redundant context from consuming the token budget.
+    Supports unigram word overlap (shingle_size=1) and n-gram shingle containment (shingle_size >= 2).
     """
     clean_seed = seed_text.lower().strip()
     if not clean_seed:
         return chunks
 
     # Content tokens of length >= 3 to avoid stop-word skew
-    seed_words = set(re.findall(r"\b[a-z0-9]{3,}\b", clean_seed))
-    if not seed_words:
+    raw_seed_words = re.findall(r"\b[a-z0-9]{3,}\b", clean_seed)
+    if not raw_seed_words:
         return chunks
+
+    seed_items = set(_extract_shingles(raw_seed_words, shingle_size)) if shingle_size > 1 else set(raw_seed_words)
 
     surviving: list[RetrievedChunk] = []
     for chunk in chunks:
-        chunk_words = re.findall(r"\b[a-z0-9]{3,}\b", chunk.record.chunk_text.lower())
-        if not chunk_words:
+        raw_chunk_words = re.findall(r"\b[a-z0-9]{3,}\b", chunk.record.chunk_text.lower())
+        if not raw_chunk_words:
             surviving.append(chunk)
             continue
 
-        overlap_count = sum(1 for w in chunk_words if w in seed_words)
-        overlap_ratio = overlap_count / len(chunk_words)
+        chunk_items = _extract_shingles(raw_chunk_words, shingle_size) if shingle_size > 1 else raw_chunk_words
+        if not chunk_items:
+            surviving.append(chunk)
+            continue
+
+        overlap_count = sum(1 for item in chunk_items if item in seed_items)
+        overlap_ratio = overlap_count / len(chunk_items)
 
         if overlap_ratio >= threshold:
             logger.info(
-                "Deduplicating chunk %s (overlap=%.2f >= threshold=%.2f with seed)",
+                "Deduplicating chunk %s (overlap=%.2f >= threshold=%.2f with seed, shingle_size=%d)",
                 chunk.record.id,
                 overlap_ratio,
                 threshold,
+                shingle_size,
             )
             continue
         surviving.append(chunk)
@@ -326,11 +345,12 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
             keep_top_k=keep_top_k,
         )
 
-        # Deduplication against seed
+        # Deduplication against seed (deduplicates against what is actually placed into the prompt)
         if enable_dynamic:
+            prompt_seed = format_seed_content(state["seed_text"], mode=state.get("mode", "document"))
             surviving_chunks = _deduplicate_against_seed(
                 reranked,
-                seed_text=state["seed_text"],
+                seed_text=prompt_seed,
                 threshold=deps.settings.generation.seed_dedup_overlap_threshold,
             )
         else:
@@ -355,12 +375,23 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
             est_tokens,
         )
 
+        web_search_failed = any(
+            call.get("tool") == "web_search" and (call.get("status") == "failed" or call.get("result_count", 0) == 0)
+            for call in tool_call_log
+        )
+        retrieval_warnings = []
+        if web_search_failed:
+            retrieval_warnings.append(
+                "Live web search was active but produced no results; map generated from seed and internal model knowledge."
+            )
+
         await deps.callback.progress(40)
         return {
             "retrieved_chunks": surviving_chunks,
             "tool_call_log": tool_call_log,
             "prompt_items_log": prompt_items_log,
             "seed_length": seed_len,
+            "quality_warnings": retrieval_warnings,
         }
 
     async def generate_node(state: GenerationState) -> dict:
@@ -512,35 +543,57 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
             supporting_context=supporting_chunks,
         )
 
+        from validation.schema import score_draft
+
+        target_node_range = state.get("target_node_range", (10, 25))
+        target_max_depth = state.get("target_max_depth", 3)
+        curr_score = score_draft(draft, target_node_range=target_node_range, target_max_depth=target_max_depth)
+        prev_best = state.get("best_valid_draft")
+        prev_score = (
+            score_draft(prev_best, target_node_range=target_node_range, target_max_depth=target_max_depth)
+            if prev_best
+            else -999.0
+        )
+        best_draft = draft if curr_score >= prev_score else prev_best
+
+        # F6: Accumulate retrieval warnings and draft quality gate warnings
+        existing_warnings = list(state.get("quality_warnings") or [])
+        gate_warnings = list(report.warnings or [])
+        combined_warnings = list(dict.fromkeys(existing_warnings + gate_warnings))
+
         # If quality failed and retries remain: retry with feedback
         if not report.passed and retry_count < max_retries:
             logger.info(
-                "Quality gate failed (retry %d/%d): %s",
+                "Quality gate failed (retry %d/%d, score=%.1f): %s",
                 retry_count + 1,
                 max_retries,
+                curr_score,
                 report.warnings,
             )
             return {
-                "best_valid_draft": draft,
-                "quality_warnings": report.warnings,
-                "validation_errors": report.warnings,
+                "best_valid_draft": best_draft,
+                "quality_warnings": combined_warnings,
+                "validation_errors": gate_warnings,
                 "retry_count": retry_count + 1,
             }
 
-        # Soft gate: accept draft (either it passed or retries were exhausted)
+        # Soft gate: accept highest scoring draft (either it passed or retries were exhausted)
+        chosen_draft = draft if report.passed else (best_draft or draft)
+        assert isinstance(chosen_draft, DraftMindMap)
         if not report.passed:
             logger.warning(
-                "Accepting draft despite quality gate warnings after %d retries: %s",
+                "Accepting best scoring draft (score=%.1f) despite quality gate warnings after %d retries: %s",
+                max(curr_score, prev_score),
                 retry_count,
                 report.warnings,
             )
 
-        nodes, edges = resolve_to_records(draft, supporting_context=supporting_chunks)
+        nodes, edges = resolve_to_records(chosen_draft, supporting_context=supporting_chunks)
         await deps.callback.progress(85)
         return {
             "nodes": nodes,
             "edges": edges,
-            "quality_warnings": report.warnings,
+            "quality_warnings": combined_warnings,
             "validation_errors": [],
         }
 
@@ -593,6 +646,7 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
             ancestor_labels=ancestor_labels,
             breadcrumb_path=breadcrumb,
             comment=comment,
+            parent_edges=state.get("parent_edges"),
             branch_context_nodes=branch_nodes,
             allowed_node_ids=allowed_ids,
             existing_chunks=retrieved_chunks,
@@ -721,6 +775,9 @@ async def reconstruct_seed_from_namespace(deps: GenerationDeps, *, namespace: st
                 else:
                     reconstructed.append(remainder)
         else:
-            reconstructed.append("\n\n" + current)
+            if chunk.section_path and chunk.section_path != "Root" and not current.startswith("#"):
+                reconstructed.append(f"\n\n## {chunk.section_path}\n\n" + current)
+            else:
+                reconstructed.append("\n\n" + current)
         previous_chunk = chunk
     return "".join(reconstructed)

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import traceback
+from typing import Any
 from uuid import uuid4
 
 from callback.client import CallbackAlreadySent, JobCallbackClient
@@ -137,9 +138,21 @@ async def _run_regenerate_node(
     if not selected_node:
         raise ValueError("regenerate_node request must include selected_node")
 
-    ancestor_labels = request.ancestor_labels or []
+    ancestor_labels = request.effective_ancestor_labels
     breadcrumb = " > ".join([*ancestor_labels, selected_node.label])
     allowed_ids = {str(selected_node.id), *(str(n.id) for n in branch_nodes)}
+
+    parent_edges: list[Any] = []
+    if isinstance(request.branch_context, dict):
+        parent_edges = request.branch_context.get("parent_edges") or []
+        if not parent_edges and request.branch_context.get("parent_edge"):
+            parent_edges = [request.branch_context["parent_edge"]]
+    elif (
+        request.branch_context is not None
+        and hasattr(request.branch_context, "parent_edges")
+        and request.branch_context.parent_edges
+    ):
+        parent_edges = list(request.branch_context.parent_edges)
 
     final_state = await run_regenerate_node(
         deps,
@@ -151,6 +164,7 @@ async def _run_regenerate_node(
             "target_node_id": request.target_node_id or selected_node.id,
             "comment": comment,
             "ancestor_labels": ancestor_labels,
+            "parent_edges": parent_edges,
             "branch_nodes": branch_nodes,
             "branch_edges": branch_edges,
             "allowed_node_ids": allowed_ids,
@@ -266,10 +280,41 @@ async def chat_turn_task(ctx: dict, request_payload: dict) -> dict:
         else:
             assistant_message = "Processed your request."
 
+        action_proposal_dict = response.action_proposal.model_dump(mode="json") if response.action_proposal else None
+
+        # U2/R4: Check if conversation warrants updating the rolling summary.
+        # Include both current turn's user message and the generated assistant response
+        # so that advancing the summary cursor to the assistant message never drops exchanges.
+        effective_summary = request.summary
+        try:
+            from chat.memory import summarize_conversation
+            from contracts.models import ChatMessage
+
+            history_msgs = [
+                m if isinstance(m, ChatMessage) else ChatMessage.model_validate(m) for m in (request.history or [])
+            ]
+            all_turn_msgs = list(history_msgs) + [
+                ChatMessage(role="user", content=request.message),
+                ChatMessage(role="assistant", content=assistant_message),
+            ]
+            if len(all_turn_msgs) >= 6:
+                new_summary = await summarize_conversation(
+                    llm=deps.llm,
+                    messages=all_turn_msgs,
+                    previous_summary=request.summary,
+                )
+                if new_summary and new_summary.strip() and new_summary.strip() != (request.summary or "").strip():
+                    effective_summary = new_summary.strip()
+        except Exception as summ_err:
+            logger.warning("Conversation summarization during chat turn failed: %s", summ_err)
+
         await callback.complete_chat(
             map_id=request.map_id,
             assistant_message=assistant_message,
-            summary=request.summary,
+            summary=effective_summary,
+            action_proposal=action_proposal_dict,
+            cited_node_ids=response.cited_node_ids,
+            source_refs=response.source_refs,
         )
         return response.model_dump(mode="json")
     except Exception as exc:  # noqa: BLE001 - catch-all for terminal failure reporting
@@ -376,3 +421,21 @@ async def _send_terminal(callback: JobCallbackClient, result: GenerationResult) 
         # generate_mindmap() calls _send_terminal exactly once per branch,
         # so this should be unreachable in practice.
         logger.error("job %s: attempted a second terminal callback", result.job_id)
+    except Exception as exc:
+        logger.error("job %s: failed to deliver terminal callback: %s", result.job_id, exc)
+        if result.status == "completed":
+            try:
+                fail_result = GenerationResult(
+                    job_id=result.job_id,
+                    map_id=result.map_id,
+                    status="failed",
+                    error=GenerationError(
+                        stage="callback",
+                        error_type="CallbackDeliveryError",
+                        message=f"Generation finished but delivery failed: {exc}",
+                        retryable=True,
+                    ),
+                )
+                await callback.fail(fail_result)
+            except Exception as inner_exc:
+                logger.critical("job %s: both complete and fail callbacks failed to reach backend: %s", result.job_id, inner_exc)

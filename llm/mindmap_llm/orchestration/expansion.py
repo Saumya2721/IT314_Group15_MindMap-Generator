@@ -18,7 +18,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from dataclasses import dataclass, field
+from typing import Any
 from uuid import uuid4
 
 from contracts.models import EdgeDraft, NodeDraft
@@ -75,6 +77,7 @@ async def expand_branch(
     ancestor_labels: list[str],
     breadcrumb_path: str | None = None,
     comment: str | None = None,
+    parent_edges: list[dict[str, Any]] | None = None,
     branch_context_nodes: list[NodeDraft] | None = None,
     allowed_node_ids: set[str] | None = None,
     max_retries: int = 2,
@@ -121,6 +124,7 @@ async def expand_branch(
             comment=comment,
             ancestor_labels=ancestor_labels,
             breadcrumb_path=breadcrumb,
+            parent_edges=parent_edges,
             branch_context_nodes=branch_context_nodes,
             supporting_context=chunks,
             previous_validation_errors=validation_errors or None,
@@ -384,7 +388,20 @@ def merge_expanded_branches(
         if draft is None:
             continue
 
+        chunk_offset = len(all_supporting_chunks)
         all_supporting_chunks.extend(result.retrieved_chunks)
+
+        # L12: Remap branch-local ctx:n citations to global context index to prevent mis-attribution
+        def _remap_sources(raw_sources: list[str], offset: int) -> list[str]:
+            remapped: list[str] = []
+            for s in raw_sources:
+                m = re.match(r"^ctx:(\d+)$", s.strip())
+                if m:
+                    local_idx = int(m.group(1))
+                    remapped.append(f"ctx:{local_idx + offset}")
+                else:
+                    remapped.append(s)
+            return remapped
 
         # Find branch root (in-degree == 0 in branch draft)
         incoming: dict[str, int] = {n.id: 0 for n in draft.nodes}
@@ -413,16 +430,17 @@ def merge_expanded_branches(
                     background_color=n.background_color,
                     text_color=n.text_color,
                     node_type=n.node_type,
-                    sources=n.sources,
+                    sources=_remap_sources(n.sources, chunk_offset),
                 )
             )
 
-        # Connect global root to this branch root
+        # Connect global root to this branch root with meaningful relationship label
+        branch_lbl = result.selected_node.label
         all_draft_edges.append(
             _DraftEdge(
                 source=root_provisional_id,
                 target=id_remapping[original_branch_root_id],
-                label=result.selected_node.label,
+                label=f"Explores {branch_lbl}" if branch_lbl else "Branches into",
             )
         )
 

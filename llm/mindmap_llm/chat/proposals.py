@@ -113,7 +113,7 @@ async def build_action_proposal(
             invalid_ids.append(raw_id_str)
 
     if invalid_ids:
-        node_list = ", ".join(f"{n.label} ({n.id})" for n in request.map_snapshot.nodes[:10])
+        node_list = ", ".join(f"**{n.label}** [node:{n.id}]" for n in request.map_snapshot.nodes[:10])
         q = (
             f"I couldn't find the following node(s): {', '.join(invalid_ids)}. "
             f"The available nodes are: {node_list}. Which one did you mean?"

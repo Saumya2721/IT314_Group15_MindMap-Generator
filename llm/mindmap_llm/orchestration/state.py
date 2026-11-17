@@ -29,6 +29,7 @@ class GenerationState(TypedDict, total=False):
     target_node_id: UUID | None
     comment: str | None
     ancestor_labels: list[str]
+    parent_edges: list[dict[str, Any]]
     branch_nodes: list[NodeDraft]
     branch_edges: list[EdgeDraft]
     allowed_node_ids: set[str]

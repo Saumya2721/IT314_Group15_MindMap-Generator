@@ -62,10 +62,34 @@ async def on_shutdown(ctx: dict) -> None:
     pass  # httpx clients inside providers are per-call; nothing persistent to close here today
 
 
+def build_worker_redis_settings() -> RedisSettings:
+    """Build resilient RedisSettings accommodating cloud TLS endpoints (e.g. Upstash)."""
+    cfg = get_settings().arq
+    rs = RedisSettings.from_dsn(cfg.redis_url)
+    return RedisSettings(
+        host=rs.host,
+        port=rs.port,
+        database=rs.database,
+        username=rs.username,
+        password=rs.password,
+        ssl=rs.ssl,
+        ssl_keyfile=rs.ssl_keyfile,
+        ssl_certfile=rs.ssl_certfile,
+        ssl_cert_reqs=rs.ssl_cert_reqs,
+        ssl_ca_certs=rs.ssl_ca_certs,
+        ssl_ca_data=rs.ssl_ca_data,
+        ssl_check_hostname=rs.ssl_check_hostname,
+        conn_timeout=getattr(cfg, "conn_timeout", 15),
+        conn_retries=getattr(cfg, "conn_retries", 10),
+        conn_retry_delay=2,
+        retry_on_timeout=True,
+    )
+
+
 class WorkerSettings:
     functions = [generate_mindmap, regenerate_node_task, chat_turn_task]
     on_startup = on_startup
     on_shutdown = on_shutdown
-    redis_settings = RedisSettings.from_dsn(get_settings().arq.redis_url)
+    redis_settings = build_worker_redis_settings()
     max_jobs = get_settings().arq.max_jobs
     job_timeout = get_settings().arq.job_timeout_s

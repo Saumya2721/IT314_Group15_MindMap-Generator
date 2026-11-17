@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Any
 from uuid import UUID
 
 import httpx
@@ -124,6 +125,9 @@ class JobCallbackClient:
         map_id: UUID,
         assistant_message: str,
         summary: str | None = None,
+        action_proposal: dict[str, Any] | None = None,
+        cited_node_ids: list[UUID] | None = None,
+        source_refs: list[str] | None = None,
     ) -> dict:
         """Report successful chat turn completion to /internal/chat/{job_id}/complete."""
         if self._terminal_sent:
@@ -134,6 +138,9 @@ class JobCallbackClient:
             job_id=UUID(str(self._job_id)),
             assistant_message=assistant_message,
             summary=summary,
+            action_proposal=action_proposal,
+            cited_node_ids=cited_node_ids or [],
+            source_refs=source_refs or [],
             status="completed",
         )
         last_exc = None
@@ -220,7 +227,16 @@ class NullCallbackClient:
     async def fail(self, result) -> None:
         logger.info("job %s: failed — %s", self._job_id, result.error.message if result.error else "unknown")
 
-    async def complete_chat(self, *, map_id, assistant_message, summary=None) -> None:
+    async def complete_chat(
+        self,
+        *,
+        map_id,
+        assistant_message,
+        summary=None,
+        action_proposal=None,
+        cited_node_ids=None,
+        source_refs=None,
+    ) -> None:
         logger.info("job %s: chat completed for map %s: %s", self._job_id, map_id, assistant_message[:50])
 
     async def fail_chat(self, *, map_id, error) -> None:
