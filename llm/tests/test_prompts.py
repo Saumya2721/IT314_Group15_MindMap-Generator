@@ -7,7 +7,9 @@ from orchestration.prompts import (
     JSONExtractionError,
     build_generation_system_prompt,
     build_generation_user_prompt,
+    extract_headings_from_text,
     extract_json_object,
+    format_seed_content,
     size_targets,
 )
 from rag.pinecone_store import RetrievedChunkRecord
@@ -187,3 +189,107 @@ def test_policy_classification_and_plan():
     assert plan.mode == "topic"
     assert plan.web_search is True
     assert plan.arxiv_search is True
+
+
+def test_f5_proposal_system_prompt_schema_specification():
+    """F5: build_proposal_system_prompt specifies delta parameters schema and examples."""
+    import uuid
+
+    from chat.prompts import build_proposal_system_prompt
+    from contracts.models import MapSnapshot, NodeDraft
+
+    mock_map = MapSnapshot(
+        nodes=[
+            NodeDraft(id=uuid.uuid4(), label="Root Concept"),
+            NodeDraft(id=uuid.uuid4(), label="Subtopic Concept"),
+        ],
+        edges=[],
+    )
+    prompt = build_proposal_system_prompt(mock_map)
+    assert "update_nodes" in prompt
+    assert "create_nodes" in prompt
+    assert "delete_nodes" in prompt
+    assert "create_edges" in prompt
+    assert "delete_edges" in prompt
+    assert "edit_proposal" in prompt
+    assert "regen_node" in prompt
+    assert "regen_whole" in prompt
+    assert "Root Concept" in prompt
+
+
+def test_format_seed_content_short_text_unchanged():
+    short_text = "This is a concise topic about distributed consensus protocols."
+    formatted = format_seed_content(short_text)
+    assert formatted == short_text
+
+
+def test_format_seed_content_large_document_decoupled():
+    # Construct a large document > 5000 characters
+    large_doc = """
+# Attention Is All You Need
+Abstract: We present the Transformer, a new network architecture based solely on attention mechanisms.
+
+## Introduction
+Recurrent models typically factor computation along the symbol positions.
+""" + ("Detailed explanation of recurrence and memory overhead. " * 150) + """
+
+## Background
+The goal of reducing sequential computation also forms the foundation of Neural GPU.
+""" + ("More background text and prior work discussions. " * 150) + """
+
+## Model Architecture
+The Transformer follows this overall architecture using stacked self-attention.
+""" + ("Mathematical equations and component details. " * 150)
+
+    formatted = format_seed_content(large_doc)
+    # The formatted result should be significantly smaller than the raw document
+    assert len(formatted) < len(large_doc)
+    assert len(formatted) < 3500
+    # Outline should contain the section headings
+    assert "Document Structural Outline" in formatted
+    assert "# Attention Is All You Need" in formatted
+    assert "## Introduction" in formatted
+    assert "## Background" in formatted
+    assert "## Model Architecture" in formatted
+    # Opening excerpt should be present
+    assert "Abstract: We present the Transformer" in formatted
+    # Vector store guidance should be present
+    assert "The complete document is indexed into the vector store" in formatted
+
+
+def test_format_seed_content_numbered_headings():
+    numbered_doc = """
+1 Introduction
+Here is the introduction to neural networks.
+""" + ("Some long body text explaining neurons and synapses. " * 120) + """
+
+2 Architecture
+Here is the detailed layer structure.
+""" + ("Some long body text explaining feedforward layers. " * 120)
+
+    headings = extract_headings_from_text(numbered_doc)
+    assert any("1 Introduction" in h for h in headings)
+    assert any("2 Architecture" in h for h in headings)
+
+    formatted = format_seed_content(numbered_doc)
+    assert "1 Introduction" in formatted
+    assert "2 Architecture" in formatted
+    assert len(formatted) < len(numbered_doc)
+
+
+def test_build_generation_user_prompt_large_seed_decoupling():
+    massive_seed = "## Key Concept\n" + ("Important scientific domain knowledge. " * 300)
+    prompt = build_generation_user_prompt(
+        seed_text=massive_seed,
+        detail_level="balanced",
+        target_node_range=(15, 30),
+        target_max_depth=3,
+        supporting_context=[],
+        regeneration_instruction=None,
+        previous_validation_errors=None,
+    )
+    # Prompt must NOT dump the full 12,000+ characters
+    assert len(prompt) < len(massive_seed)
+    assert "Document Structural Outline" in prompt
+    assert "## Key Concept" in prompt
+    assert "Supporting context: none retrieved." in prompt

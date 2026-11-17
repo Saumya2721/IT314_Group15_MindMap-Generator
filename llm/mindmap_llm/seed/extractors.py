@@ -26,13 +26,18 @@ def checksum_sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def detect_structural_cues(text: str) -> str:
+def detect_structural_cues(
+    text: str,
+    running_headers: set[str] | None = None,
+    running_footers: set[str] | None = None,
+) -> str:
     """Detect structural cues in plain text or PDF page content.
 
     Converts:
-    - ALL-CAPS lines into markdown headings (## HEADING)
+    - ALL-CAPS lines into markdown headings (## HEADING), excluding recurring running headers
     - Numbered section lines (e.g. 1. Introduction, 1.1 Architecture) into markdown headings (##, ###, etc.)
     - Bullet sequence symbols (•, ●, ◦, ▪, etc.) into standard markdown list items (- Item)
+    - Strips recurring footers and page numbering artifacts
     """
     if not text or not text.strip():
         return text
@@ -56,6 +61,10 @@ def detect_structural_cues(text: str) -> str:
             processed_lines.append(line)
             continue
 
+        # Skip recurring running footers
+        if running_footers and stripped in running_footers:
+            continue
+
         # Bullet sequence normalization
         bullet_match = bullet_pattern.match(line)
         if bullet_match:
@@ -73,13 +82,14 @@ def detect_structural_cues(text: str) -> str:
             processed_lines.append(f"{heading_prefix} {stripped}")
             continue
 
-        # ALL-CAPS lines detection
+        # ALL-CAPS lines detection (skip recurring page running headers)
         alpha_chars = [c for c in stripped if c.isalpha()]
         if (
             len(stripped) <= 90
             and len(alpha_chars) >= 3
             and stripped.isupper()
             and not stripped.endswith((".", "?", "!", ";", ","))
+            and not (running_headers and stripped in running_headers)
         ):
             processed_lines.append(f"## {stripped}")
             continue
@@ -145,12 +155,58 @@ def extract_text_from_pdf(data: bytes) -> str:
             raise SeedExtractionError("This PDF is password-protected and can't be read.")
 
         toc = extract_pdf_outline(reader)
-        pages_text: list[str] = []
+        pages_raw: list[tuple[int, str]] = []
+        top_candidates: list[str] = []
+        bottom_candidates: list[str] = []
         for idx, page in enumerate(reader.pages, start=1):
             raw = page.extract_text() or ""
             if raw.strip():
-                structured = detect_structural_cues(raw.strip())
-                pages_text.append(f"--- Page {idx} ---\n{structured}")
+                pages_raw.append((idx, raw.strip()))
+                non_empty = [ln.strip() for ln in raw.strip().split("\n") if ln.strip()]
+                if non_empty:
+                    # Collect up to 2 candidates from top of each page
+                    for top_ln in non_empty[:2]:
+                        top_candidates.append(top_ln)
+                    # Collect up to 2 candidates from bottom of each page
+                    for btm_ln in non_empty[-2:]:
+                        bottom_candidates.append(btm_ln)
+
+        # Detect running headers and recurring footers (lines appearing across 2+ pages)
+        running_headers: set[str] = set()
+        running_footers: set[str] = set()
+        if len(pages_raw) >= 2:
+            from collections import Counter
+
+            top_counts = Counter(top_candidates)
+            running_headers = {line for line, cnt in top_counts.items() if cnt >= 2}
+
+            bottom_counts = Counter(bottom_candidates)
+            running_footers = {line for line, cnt in bottom_counts.items() if cnt >= 2}
+
+        # Common page numbering regex (e.g. "Page 1 of 5", "1 / 10", standalone digits)
+        page_num_regex = re.compile(
+            r"^(?:page\s+\d+(?:\s*(?:of|/)\s*\d+)?|\d+\s*(?:of|/)\s*\d+|\d+)$",
+            re.IGNORECASE,
+        )
+
+        pages_text: list[str] = []
+        for idx, raw_content in pages_raw:
+            raw_lines = raw_content.split("\n")
+            filtered_raw_lines: list[str] = []
+            for ln_idx, ln in enumerate(raw_lines):
+                st = ln.strip()
+                # If in the bottom lines and matches page number pattern, skip
+                if ln_idx >= len(raw_lines) - 2 and page_num_regex.match(st):
+                    continue
+                filtered_raw_lines.append(ln)
+            clean_raw = "\n".join(filtered_raw_lines)
+
+            structured = detect_structural_cues(
+                clean_raw,
+                running_headers=running_headers,
+                running_footers=running_footers,
+            )
+            pages_text.append(f"--- Page {idx} ---\n{structured}")
 
     except SeedExtractionError:
         raise

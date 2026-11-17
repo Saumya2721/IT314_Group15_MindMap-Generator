@@ -36,7 +36,7 @@ class ArxivTool(Tool):
             "max_results": self._max_results,
         }
         try:
-            async with httpx.AsyncClient(timeout=self._timeout_s) as client:
+            async with httpx.AsyncClient(timeout=self._timeout_s, follow_redirects=True) as client:
                 resp = await client.get(self._api_base, params=params)
                 resp.raise_for_status()
         except httpx.HTTPError as exc:

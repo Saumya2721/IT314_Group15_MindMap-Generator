@@ -23,7 +23,7 @@ Output Requirements:
 - Return ONLY a JSON list of strings (e.g. ["query 1", "query 2", "query 3"]).
 - No conversational prose, no explanations, no markdown fences.
 - Each query should be 2 to 8 words long.
-- Cover different angles: core concepts, mechanisms/components, applications, and current developments.
+- Adapt search angles dynamically to the topic's domain (e.g. foundational mechanisms, historical context, key debates, real-world applications).
 """
 
 

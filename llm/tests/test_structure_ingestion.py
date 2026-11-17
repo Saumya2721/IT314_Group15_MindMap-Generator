@@ -105,7 +105,7 @@ async def test_reconstruction_orders_and_removes_overlap():
 
     deps = SimpleNamespace(vector_store=Store(), embedding_provider=SimpleNamespace(dimension=2))
     result = await reconstruct_seed_from_namespace(deps, namespace="map")
-    assert result == "alpha beta gamma delta\n\nnew section"
+    assert result == "alpha beta gamma delta\n\n## Two\n\nnew section"
 
 
 @pytest.mark.asyncio

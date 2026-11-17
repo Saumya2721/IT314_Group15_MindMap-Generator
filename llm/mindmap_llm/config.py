@@ -52,6 +52,9 @@ class ArqConfig:
     # Must exceed the slowest realistic generation (detailed mode budget
     # is 180s) with real headroom for retries inside the graph.
     job_timeout_s: int = field(default_factory=lambda: _get_int("ARQ_JOB_TIMEOUT_S", 300))
+    # Connection timeout in seconds (must accommodate cloud / TLS latency like Upstash)
+    conn_timeout: int = field(default_factory=lambda: _get_int("ARQ_REDIS_CONN_TIMEOUT", 15))
+    conn_retries: int = field(default_factory=lambda: _get_int("ARQ_REDIS_CONN_RETRIES", 10))
 
 
 @dataclass(frozen=True)
@@ -81,7 +84,7 @@ class DecisionModelConfig:
     pipeline still works without it (NFR-07: graceful degradation).
     """
 
-    enabled: bool = field(default_factory=lambda: _get_bool("DECISION_MODEL_ENABLED", True))
+    enabled: bool = field(default_factory=lambda: _get_bool("DECISION_MODEL_ENABLED", False))
     provider: str = field(default_factory=lambda: os.environ.get("DECISION_MODEL_PROVIDER", "jev"))
     api_key: str = field(default_factory=lambda: os.environ.get("TYPESAFE_API_KEY", ""))
     api_base: str = field(default_factory=lambda: os.environ.get("TYPESAFE_API_BASE", "https://api.typesafe.ai/v1"))
@@ -125,7 +128,7 @@ class ToolConfig:
     web_search_provider: str = field(default_factory=lambda: os.environ.get("SEARCH_PROVIDER", "tavily"))
     web_search_api_key: str = field(default_factory=lambda: os.environ.get("SEARCH_API_KEY", ""))
     arxiv_api_base: str = field(
-        default_factory=lambda: os.environ.get("ARXIV_API_BASE", "http://export.arxiv.org/api/query")
+        default_factory=lambda: os.environ.get("ARXIV_API_BASE", "https://export.arxiv.org/api/query")
     )
     tool_timeout_s: float = field(default_factory=lambda: _get_float("TOOL_TIMEOUT_S", 15.0))
 
@@ -145,9 +148,9 @@ class GenerationConfig:
     detailed_latency_budget_s: float = field(default_factory=lambda: _get_float("DETAILED_LATENCY_BUDGET_S", 180.0))
     enable_dynamic_prompts: bool = field(default_factory=lambda: _get_bool("ENABLE_DYNAMIC_PROMPTS", True))
     thin_seed_word_threshold: int = field(default_factory=lambda: _get_int("THIN_SEED_WORD_THRESHOLD", 250))
-    research_queries_per_tool: int = field(default_factory=lambda: _get_int("RESEARCH_QUERIES_PER_TOOL", 4))
+    research_queries_per_tool: int = field(default_factory=lambda: _get_int("RESEARCH_QUERIES_PER_TOOL", 3))
     max_search_queries_per_tool: int = field(default_factory=lambda: _get_int("MAX_SEARCH_QUERIES_PER_TOOL", 3))
-    seed_dedup_overlap_threshold: float = field(default_factory=lambda: _get_float("SEED_DEDUP_OVERLAP_THRESHOLD", 0.6))
+    seed_dedup_overlap_threshold: float = field(default_factory=lambda: _get_float("SEED_DEDUP_OVERLAP_THRESHOLD", 0.7))
     enable_two_pass: bool = field(default_factory=lambda: _get_bool("ENABLE_TWO_PASS", False))
     branch_expansion_concurrency: int = field(default_factory=lambda: _get_int("BRANCH_EXPANSION_CONCURRENCY", 3))
     min_outline_branches: int = field(default_factory=lambda: _get_int("MIN_OUTLINE_BRANCHES", 4))

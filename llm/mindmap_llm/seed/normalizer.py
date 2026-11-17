@@ -37,6 +37,7 @@ class UploadedFile:
     storage_key: str | None = (
         None  # carried through to SeedAssetDraft so the backend can match it to its own upload record
     )
+    signed_url: str | None = None
 
 
 @dataclass

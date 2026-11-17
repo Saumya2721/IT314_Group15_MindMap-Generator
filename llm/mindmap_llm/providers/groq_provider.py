@@ -88,9 +88,15 @@ class GroqProvider(LLMProvider):
     ) -> LLMResponse:
         import json as _json
 
+        effective_max_tokens = max_tokens or 4096
+        # Safety clamp: Groq's qwen free tier enforces a strict 1,000 output token/min ceiling.
+        # Any request specifying max_tokens >= 1000 is rejected immediately with HTTP 429.
+        if "qwen" in self._model.lower() and effective_max_tokens >= 1000:
+            effective_max_tokens = 900
+
         kwargs: dict[str, Any] = {
             "model": self._model,
-            "max_tokens": max_tokens or 4096,
+            "max_tokens": effective_max_tokens,
             "temperature": temperature,
             "messages": self._to_groq_messages(messages, system=system),
         }
