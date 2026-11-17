@@ -2,11 +2,11 @@
 
 .node-inspector-flyout {
   position: absolute;
-  top: 24px;
+  top: 72px;
   right: 24px;
   z-index: 30;
   width: 310px;
-  max-height: calc(100vh - 80px);
+  max-height: calc(100vh - 96px);
   overflow-y: auto;
   overflow-x: hidden;
   background-color: rgba(251, 249, 244, 0.97);

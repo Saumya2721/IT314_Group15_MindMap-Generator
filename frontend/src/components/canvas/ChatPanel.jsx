@@ -1,11 +1,11 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import './ChatPanel.css'
 
 /**
- * Lightweight, secure Markdown renderer for chat responses.
- * Renders bold, italics, inline code, code blocks, lists, headings, and paragraphs.
+ * Lightweight, secure Markdown renderer for chat responses with interactive Node Reference Chips.
+ * Renders bold, italics, inline code, code blocks, lists, headings, paragraphs, and clickable node pills.
  */
-function renderMarkdown(text) {
+export function renderMarkdown(text, context = {}) {
   if (!text) return null
 
   const lines = text.split('\n')
@@ -20,7 +20,7 @@ function renderMarkdown(text) {
       elements.push(
         <ul key={`ul-${key}`} className="chat-markdown-list">
           {listItems.map((item, idx) => (
-            <li key={idx}>{renderInlineMarkdown(item)}</li>
+            <li key={idx}>{renderInlineMarkdown(item, context)}</li>
           ))}
         </ul>,
       )
@@ -33,11 +33,16 @@ function renderMarkdown(text) {
     if (line.trim().startsWith('```')) {
       if (inCodeBlock) {
         elements.push(
-          <pre key={`code-${index}`} className="chat-code-block">
+          <pre
+            key={`code-${index}`}
+            className="chat-code-block"
+            data-language={codeBlockLang || undefined}
+          >
             <code>{codeBlockLines.join('\n')}</code>
           </pre>,
         )
         codeBlockLines = []
+        codeBlockLang = ''
         inCodeBlock = false
       } else {
         flushList(index)
@@ -69,7 +74,7 @@ function renderMarkdown(text) {
     if (line.startsWith('### ')) {
       elements.push(
         <h4 key={`h4-${index}`} className="chat-h4">
-          {renderInlineMarkdown(line.slice(4))}
+          {renderInlineMarkdown(line.slice(4), context)}
         </h4>,
       )
       return
@@ -77,7 +82,7 @@ function renderMarkdown(text) {
     if (line.startsWith('## ')) {
       elements.push(
         <h3 key={`h3-${index}`} className="chat-h3">
-          {renderInlineMarkdown(line.slice(3))}
+          {renderInlineMarkdown(line.slice(3), context)}
         </h3>,
       )
       return
@@ -86,7 +91,7 @@ function renderMarkdown(text) {
     // Normal paragraph
     elements.push(
       <p key={`p-${index}`} className="chat-paragraph">
-        {renderInlineMarkdown(line)}
+        {renderInlineMarkdown(line, context)}
       </p>,
     )
   })
@@ -105,33 +110,115 @@ function renderMarkdown(text) {
 }
 
 /**
- * Parses inline markdown: bold, italics, inline code.
+ * Parses inline markdown: bold, italics, inline code, and clickable node reference chips.
  */
-function renderInlineMarkdown(str) {
+export function renderInlineMarkdown(str, context = {}) {
   if (!str) return ''
+  const { nodeMap, onSelectNode } = context
   const parts = []
-  // Regex splitting by bold (**), code (`), and italics (*)
-  const regex = /(\*\*[^*]+\*\*|`[^`]+`|\*[^*]+\*)/g
+
+  // Token regex matching:
+  // 1) Explicit node tag with optional preceding bold title: (**Label** )?[node:<uuid>]
+  // 2) Bare UUID: [a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}
+  // 3) Bold: **text**
+  // 4) Code: `code`
+  // 5) Italics: *text*
+  const tokenRegex =
+    /(?:(?:\*\*([^*]+)\*\*\s*)?\[node:([a-f0-9-]+)\])|(\b[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\b)|(\*\*[^*]+\*\*)|(`[^`]+`)|(\*[^*]+\*)/gi
+
   let lastIndex = 0
   let match
 
-  while ((match = regex.exec(str)) !== null) {
+  while ((match = tokenRegex.exec(str)) !== null) {
     if (match.index > lastIndex) {
       parts.push(str.slice(lastIndex, match.index))
     }
-    const token = match[0]
-    if (token.startsWith('**') && token.endsWith('**')) {
-      parts.push(<strong key={match.index}>{token.slice(2, -2)}</strong>)
-    } else if (token.startsWith('`') && token.endsWith('`')) {
+
+    const [fullMatch, boldLabel, taggedUuid, bareUuid, boldText, codeText, italicText] = match
+
+    // Case 1: Tagged [node:<uuid>] with optional preceding bold name
+    if (taggedUuid) {
+      const targetNode = nodeMap?.get(String(taggedUuid))
+      const displayLabel =
+        targetNode?.label ||
+        targetNode?.title ||
+        targetNode?.data?.label ||
+        targetNode?.data?.title ||
+        boldLabel ||
+        `Concept (${taggedUuid.slice(0, 8)})`
+      const dotColor =
+        targetNode?.background_color ||
+        (targetNode?.node_type === 'root'
+          ? '#2D5A47'
+          : targetNode?.node_type === 'branch'
+            ? '#C96B4B'
+            : '#899B72')
+
+      parts.push(
+        <button
+          key={`node-ref-${match.index}`}
+          type="button"
+          className="chat-node-pill"
+          onClick={() => onSelectNode?.(targetNode || taggedUuid)}
+          title={targetNode ? `Jump to "${displayLabel}" on canvas` : `Jump to node ${taggedUuid}`}
+        >
+          <span className="chat-node-pill-dot" style={{ backgroundColor: dotColor }} />
+          <span className="chat-node-pill-label">{displayLabel}</span>
+        </button>,
+      )
+    }
+    // Case 2: Bare UUID that matches a known node in this mind map
+    else if (bareUuid && nodeMap?.has(String(bareUuid))) {
+      const targetNode = nodeMap.get(String(bareUuid))
+      const displayLabel =
+        targetNode?.label ||
+        targetNode?.title ||
+        targetNode?.data?.label ||
+        targetNode?.data?.title ||
+        `Concept (${bareUuid.slice(0, 8)})`
+      const dotColor =
+        targetNode?.background_color ||
+        (targetNode?.node_type === 'root'
+          ? '#2D5A47'
+          : targetNode?.node_type === 'branch'
+            ? '#C96B4B'
+            : '#899B72')
+
+      parts.push(
+        <button
+          key={`bare-uuid-${match.index}`}
+          type="button"
+          className="chat-node-pill"
+          onClick={() => onSelectNode?.(targetNode || bareUuid)}
+          title={`Jump to "${targetNode?.label || bareUuid}" on canvas`}
+        >
+          <span className="chat-node-pill-dot" style={{ backgroundColor: dotColor }} />
+          <span className="chat-node-pill-label">{displayLabel}</span>
+        </button>,
+      )
+    }
+    // Case 3: Bold text
+    else if (boldText) {
+      parts.push(<strong key={match.index}>{boldText.slice(2, -2)}</strong>)
+    }
+    // Case 4: Inline code
+    else if (codeText) {
       parts.push(
         <code key={match.index} className="chat-inline-code">
-          {token.slice(1, -1)}
+          {codeText.slice(1, -1)}
         </code>,
       )
-    } else if (token.startsWith('*') && token.endsWith('*')) {
-      parts.push(<em key={match.index}>{token.slice(1, -1)}</em>)
     }
-    lastIndex = regex.lastIndex
+    // Case 5: Italics
+    else if (italicText) {
+      parts.push(<em key={match.index}>{italicText.slice(1, -1)}</em>)
+    }
+    // Fallback: output full match as raw text
+    else {
+      parts.push(fullMatch)
+    }
+
+    lastIndex = tokenRegex.lastIndex
   }
 
   if (lastIndex < str.length) {
@@ -159,11 +246,41 @@ export function ChatPanel({
   onConfirmAction,
   onDismissAction,
   selectedNode = null,
+  nodes = [],
+  onSelectNode = null,
 }) {
   const [inputText, setInputText] = useState('')
   const [includeNodeContext, setIncludeNodeContext] = useState(true)
   const messagesEndRef = useRef(null)
   const inputRef = useRef(null)
+
+  const nodeMap = useMemo(() => {
+    const map = new Map()
+    if (Array.isArray(nodes)) {
+      for (const n of nodes) {
+        if (n && n.id) map.set(String(n.id), n)
+      }
+    }
+    return map
+  }, [nodes])
+
+  const isValidUrl = useCallback((urlStr) => {
+    try {
+      const parsed = new URL(urlStr)
+      return parsed.protocol === 'http:' || parsed.protocol === 'https:'
+    } catch {
+      return false
+    }
+  }, [])
+
+  const getCleanDomain = useCallback((urlStr) => {
+    try {
+      const parsed = new URL(urlStr)
+      return parsed.hostname.replace(/^www\./, '')
+    } catch {
+      return urlStr
+    }
+  }, [])
 
   // Auto-scroll to bottom on new messages or loading state change
   useEffect(() => {
@@ -282,55 +399,260 @@ export function ChatPanel({
               </div>
 
               {/* Message Content */}
-              <div className="chat-message-content">{renderMarkdown(msg.content)}</div>
+              <div className="chat-message-content">
+                {renderMarkdown(msg.content, { nodeMap, onSelectNode })}
 
-              {/* Action Proposal Card */}
-              {msg.proposed_action && (
-                <div className="action-proposal-card">
-                  <div className="action-card-header">
-                    <span className="material-symbols-outlined action-badge-icon">
-                      auto_fix_high
-                    </span>
-                    <span className="action-badge-text">Proposed Graph Action</span>
-                  </div>
-                  <p className="action-card-desc">
-                    {msg.proposed_action.description || 'Apply recommended synthesis update.'}
-                  </p>
+                {/* S2-FE4: Visual Regeneration Progress Bar */}
+                {msg.metadata?.progress_percent !== undefined &&
+                  msg.metadata?.execution_status === 'in_progress' && (
+                    <div
+                      className="chat-regen-progress-bar-wrap"
+                      style={{
+                        marginTop: '8px',
+                        padding: '6px 8px',
+                        backgroundColor: 'rgba(21, 94, 99, 0.06)',
+                        borderRadius: '6px',
+                        border: '1px solid rgba(21, 94, 99, 0.15)',
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          fontSize: '11px',
+                          fontWeight: 600,
+                          color: '#155e63',
+                          marginBottom: '4px',
+                        }}
+                      >
+                        <span>{msg.metadata.stage || 'Synthesizing branch'}</span>
+                        <span>{msg.metadata.progress_percent}%</span>
+                      </div>
+                      <div
+                        style={{
+                          width: '100%',
+                          height: '5px',
+                          backgroundColor: 'rgba(21, 94, 99, 0.12)',
+                          borderRadius: '3px',
+                          overflow: 'hidden',
+                        }}
+                      >
+                        <div
+                          style={{
+                            width: `${Math.min(Math.max(Number(msg.metadata.progress_percent), 5), 100)}%`,
+                            height: '100%',
+                            backgroundColor: '#155e63',
+                            borderRadius: '3px',
+                            transition: 'width 0.3s ease',
+                          }}
+                        />
+                      </div>
+                    </div>
+                  )}
+              </div>
 
-                  <div className="action-card-actions">
-                    {msg.is_confirmed === true ? (
-                      <span className="action-status-pill confirmed">
-                        <span className="material-symbols-outlined">check_circle</span>
-                        <span>Action Confirmed &amp; Applied</span>
+              {/* S2-L8 / S2-FE4: Citations & Grounding Sources */}
+              {((msg.metadata?.cited_node_ids && msg.metadata.cited_node_ids.length > 0) ||
+                (msg.metadata?.source_refs && msg.metadata.source_refs.length > 0)) && (
+                <div
+                  className="chat-citations-section"
+                  style={{
+                    marginTop: '8px',
+                    paddingTop: '8px',
+                    borderTop: '1px solid rgba(0,0,0,0.08)',
+                  }}
+                >
+                  {msg.metadata.cited_node_ids && msg.metadata.cited_node_ids.length > 0 && (
+                    <div className="chat-cited-nodes" style={{ marginBottom: '6px' }}>
+                      <span
+                        className="chat-citation-label"
+                        style={{
+                          fontSize: '11px',
+                          fontWeight: 600,
+                          color: 'var(--text-muted, #666)',
+                        }}
+                      >
+                        Cited Concepts:
                       </span>
-                    ) : msg.is_confirmed === false ? (
-                      <span className="action-status-pill dismissed">
-                        <span className="material-symbols-outlined">cancel</span>
-                        <span>Proposal Dismissed</span>
+                      <div
+                        className="chat-citation-pills"
+                        style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '2px' }}
+                      >
+                        {msg.metadata.cited_node_ids.map((nid) => {
+                          const targetNode = nodeMap.get(String(nid))
+                          const displayLabel = targetNode?.label || `${String(nid).slice(0, 8)}...`
+                          return (
+                            <button
+                              key={nid}
+                              type="button"
+                              className="chat-node-pill"
+                              onClick={() => onSelectNode?.(targetNode || nid)}
+                              title={
+                                targetNode
+                                  ? `Jump to "${targetNode.label}" (${nid})`
+                                  : `Jump to node ${nid}`
+                              }
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '4px',
+                                padding: '2px 8px',
+                                fontSize: '11px',
+                                borderRadius: '12px',
+                                border: '1px solid #d0d7de',
+                                background: '#f6f8fa',
+                                cursor: 'pointer',
+                              }}
+                            >
+                              <span
+                                className="material-symbols-outlined"
+                                style={{ fontSize: '12px' }}
+                              >
+                                hub
+                              </span>
+                              <span>{displayLabel}</span>
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {msg.metadata.source_refs && msg.metadata.source_refs.length > 0 && (
+                    <div className="chat-source-refs">
+                      <span
+                        className="chat-citation-label"
+                        style={{
+                          fontSize: '11px',
+                          fontWeight: 600,
+                          color: 'var(--text-muted, #666)',
+                        }}
+                      >
+                        Grounding Sources:
                       </span>
-                    ) : (
-                      <>
-                        <button
-                          type="button"
-                          className="btn-action-confirm"
-                          onClick={() => onConfirmAction?.(msg.id, msg.proposed_action)}
-                        >
-                          <span className="material-symbols-outlined">check</span>
-                          <span>Confirm</span>
-                        </button>
-                        <button
-                          type="button"
-                          className="btn-action-dismiss"
-                          onClick={() => onDismissAction?.(msg.id)}
-                        >
-                          <span className="material-symbols-outlined">close</span>
-                          <span>Dismiss</span>
-                        </button>
-                      </>
-                    )}
-                  </div>
+                      <ul
+                        className="chat-sources-list"
+                        style={{ listStyle: 'none', paddingLeft: 0, margin: '2px 0 0 0' }}
+                      >
+                        {msg.metadata.source_refs.map((src, i) => {
+                          const isSafe = isValidUrl(src)
+                          const domain = getCleanDomain(src)
+                          return (
+                            <li key={i} style={{ margin: '2px 0' }}>
+                              {isSafe ? (
+                                <a
+                                  href={src}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="chat-source-link"
+                                  title={src}
+                                  style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '4px',
+                                    fontSize: '11px',
+                                    color: '#0969da',
+                                    textDecoration: 'none',
+                                  }}
+                                >
+                                  <span
+                                    className="material-symbols-outlined"
+                                    style={{ fontSize: '12px' }}
+                                  >
+                                    open_in_new
+                                  </span>
+                                  <span>{domain}</span>
+                                </a>
+                              ) : (
+                                <span
+                                  style={{ fontSize: '11px', color: 'var(--text-muted, #666)' }}
+                                >
+                                  {src}
+                                </span>
+                              )}
+                            </li>
+                          )
+                        })}
+                      </ul>
+                    </div>
+                  )}
                 </div>
               )}
+
+              {/* Action Proposal Card */}
+              {msg.proposed_action && (() => {
+                let pa = msg.proposed_action
+                if (typeof pa === 'string') {
+                  try {
+                    pa = JSON.parse(pa)
+                    if (typeof pa === 'string') pa = JSON.parse(pa)
+                  } catch {
+                    // keep as is
+                  }
+                }
+                let meta = msg.metadata || {}
+                if (typeof meta === 'string') {
+                  try {
+                    meta = JSON.parse(meta)
+                  } catch {
+                    meta = {}
+                  }
+                }
+                const isConfirmed = msg.is_confirmed === true
+                const isDismissed =
+                  msg.is_confirmed === false ||
+                  meta.execution_status === 'dismissed' ||
+                  meta.execution_status === 'rejected'
+                const desc =
+                  pa && typeof pa === 'object'
+                    ? pa.explanation || pa.description || pa.instruction || 'Apply recommended synthesis update.'
+                    : 'Apply recommended synthesis update.'
+
+                return (
+                  <div className="action-proposal-card">
+                    <div className="action-card-header">
+                      <span className="material-symbols-outlined action-badge-icon">
+                        auto_fix_high
+                      </span>
+                      <span className="action-badge-text">Proposed Graph Action</span>
+                    </div>
+                    <p className="action-card-desc">{desc}</p>
+
+                    <div className="action-card-actions">
+                      {isConfirmed ? (
+                        <span className="action-status-pill confirmed">
+                          <span className="material-symbols-outlined">check_circle</span>
+                          <span>Action Confirmed &amp; Applied</span>
+                        </span>
+                      ) : isDismissed ? (
+                        <span className="action-status-pill dismissed">
+                          <span className="material-symbols-outlined">cancel</span>
+                          <span>Proposal Dismissed</span>
+                        </span>
+                      ) : (
+                        <>
+                          <button
+                            type="button"
+                            className="btn-action-confirm"
+                            onClick={() => onConfirmAction?.(msg.id, pa || msg.proposed_action)}
+                          >
+                            <span className="material-symbols-outlined">check</span>
+                            <span>Confirm</span>
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-action-dismiss"
+                            onClick={() => onDismissAction?.(msg.id)}
+                          >
+                            <span className="material-symbols-outlined">close</span>
+                            <span>Dismiss</span>
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                )
+              })()}
             </div>
           ))
         )}
