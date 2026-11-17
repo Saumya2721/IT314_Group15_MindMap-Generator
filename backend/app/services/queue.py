@@ -18,6 +18,29 @@ from core.config import settings
 logger = logging.getLogger(__name__)
 
 
+def _build_robust_redis_settings(redis_url: str) -> RedisSettings:
+    """Build resilient RedisSettings with adequate timeout for cloud TLS endpoints (e.g. Upstash)."""
+    rs = RedisSettings.from_dsn(redis_url)
+    return RedisSettings(
+        host=rs.host,
+        port=rs.port,
+        database=rs.database,
+        username=rs.username,
+        password=rs.password,
+        ssl=rs.ssl,
+        ssl_keyfile=rs.ssl_keyfile,
+        ssl_certfile=rs.ssl_certfile,
+        ssl_cert_reqs=rs.ssl_cert_reqs,
+        ssl_ca_certs=rs.ssl_ca_certs,
+        ssl_ca_data=rs.ssl_ca_data,
+        ssl_check_hostname=rs.ssl_check_hostname,
+        conn_timeout=15,
+        conn_retries=10,
+        conn_retry_delay=2,
+        retry_on_timeout=True,
+    )
+
+
 async def create_redis_pool(redis_url: str | None = None) -> ArqRedis | None:
     """Create and return an ArqRedis client pool.
 
@@ -29,7 +52,7 @@ async def create_redis_pool(redis_url: str | None = None) -> ArqRedis | None:
         logger.warning("arq library not installed; Redis queue disabled.")
         return None
     try:
-        pool = await create_pool(RedisSettings.from_dsn(url))
+        pool = await create_pool(_build_robust_redis_settings(url))
         logger.info("Successfully connected to Redis at %s", url)
         return pool
     except Exception as exc:
@@ -88,7 +111,7 @@ async def enqueue_node_regeneration_job(pool: ArqRedis, request_payload: dict) -
     if job_id_str:
         kwargs["_job_id"] = job_id_str
 
-    job = await pool.enqueue_job("generate_mindmap", request_payload, **kwargs)  # type: ignore[arg-type]
+    job = await pool.enqueue_job("regenerate_node_task", request_payload, **kwargs)  # type: ignore[arg-type]
     if job:
         logger.info("Enqueued regenerate_node task: arq_job_id=%s", job.job_id)
         return job.job_id
@@ -103,7 +126,7 @@ async def enqueue_chat_turn_job(pool: ArqRedis, request_payload: dict) -> str | 
     if job_id_str:
         kwargs["_job_id"] = job_id_str
 
-    job = await pool.enqueue_job("generate_mindmap", request_payload, **kwargs)  # type: ignore[arg-type]
+    job = await pool.enqueue_job("chat_turn_task", request_payload, **kwargs)  # type: ignore[arg-type]
     if job:
         logger.info("Enqueued chat_turn task: arq_job_id=%s", job.job_id)
         return job.job_id

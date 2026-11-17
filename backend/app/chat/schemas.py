@@ -7,6 +7,7 @@ from pydantic import BaseModel
 class MessageCreate(BaseModel):
     map_id: str
     content: str
+    target_node_id: str | None = None
     proposed_action: dict[str, Any] | None = None
 
 
@@ -17,7 +18,8 @@ class MessageResponse(BaseModel):
     role: str
     content: str
     proposed_action: dict[str, Any] | None = None
-    is_confirmed: bool | None = False
+    is_confirmed: bool | None = None
+    metadata: dict[str, Any] | None = None
     created_at: datetime
 
 
@@ -28,5 +30,6 @@ class ActionConfirm(BaseModel):
 class ActionConfirmResponse(BaseModel):
     message: str
     is_confirmed: bool
+    status: str | None = None
     data: dict[str, Any] | None = None
     updated_message: MessageResponse | None = None
