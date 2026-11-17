@@ -1488,6 +1488,7 @@ def test_f5_typed_graph_edit_parameters_schema():
 def test_chat_confirm_and_dismiss_with_string_user_id(auth_client):
     """Verify confirm and dismiss succeed when current_user.id is a string (Supabase auth standard)."""
     from unittest.mock import create_autospec
+
     from services.mindmap_service import MindMapBackendService
 
     client, uid = auth_client
@@ -1562,5 +1563,3 @@ def test_chat_confirm_and_dismiss_with_string_user_id(auth_client):
     finally:
         app.dependency_overrides.pop(get_current_user, None)
         app.dependency_overrides.pop(get_mindmap_service, None)
-
-

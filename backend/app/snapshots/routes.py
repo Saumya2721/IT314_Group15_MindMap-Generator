@@ -6,8 +6,8 @@ from uuid import UUID
 
 from core.supabase import current_user_id
 from fastapi import APIRouter, Depends, HTTPException, Request
+from snapshots import service as snapshots_service
 from snapshots.schemas import SnapshotRestoreResponse
-from snapshots.service import restore_snapshot_by_version_or_id
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,7 @@ async def restore_snapshot(
 ) -> dict[str, Any]:
     """Restore nodes and edges from a snapshot (by either version_number or snapshot UUID) into the active map, incrementing version."""
     pool = _get_pool(request)
-    result = await restore_snapshot_by_version_or_id(
+    result = await snapshots_service.restore_snapshot_by_version_or_id(
         pool=pool,
         map_id=map_id,
         identifier=identifier,

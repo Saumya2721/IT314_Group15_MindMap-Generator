@@ -115,10 +115,7 @@ export default function AddNodeDialog({
                     className={`add-node-type-card ${isSelected ? 'selected' : ''}`}
                     onClick={() => setNodeType(t.value)}
                   >
-                    <span
-                      className="add-node-type-dot"
-                      style={{ backgroundColor: t.color }}
-                    />
+                    <span className="add-node-type-dot" style={{ backgroundColor: t.color }} />
                     <div className="add-node-type-info">
                       <span className="add-node-type-name">{t.badge}</span>
                       <span className="add-node-type-desc">{t.label}</span>
@@ -156,7 +153,8 @@ export default function AddNodeDialog({
               <option value="">(None - Free Floating Node)</option>
               {availableNodes.map((n) => (
                 <option key={n.id} value={n.id}>
-                  {n.label || n.title || n.data?.label || n.data?.title || 'Untitled Node'} ({n.node_type || n.category || 'concept'})
+                  {n.label || n.title || n.data?.label || n.data?.title || 'Untitled Node'} (
+                  {n.node_type || n.category || 'concept'})
                 </option>
               ))}
             </select>

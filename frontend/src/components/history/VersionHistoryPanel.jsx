@@ -63,14 +63,10 @@ function SnapshotFlowPreview({ snapshotData }) {
 function RestoreConfirm({ snapshot, onConfirm, onCancel }) {
   const nodeCount =
     snapshot?.nodes_count ||
-    (Array.isArray(snapshot?.snapshot_data?.nodes)
-      ? snapshot.snapshot_data.nodes.length
-      : 0)
+    (Array.isArray(snapshot?.snapshot_data?.nodes) ? snapshot.snapshot_data.nodes.length : 0)
   const edgeCount =
     snapshot?.edges_count ||
-    (Array.isArray(snapshot?.snapshot_data?.edges)
-      ? snapshot.snapshot_data.edges.length
-      : 0)
+    (Array.isArray(snapshot?.snapshot_data?.edges) ? snapshot.snapshot_data.edges.length : 0)
 
   return (
     <div className="vhp-modal-backdrop" onClick={onCancel}>
@@ -339,14 +335,10 @@ export function VersionHistoryPanel({
         {sorted.map((s) => {
           const nodeCount =
             s?.nodes_count ||
-            (Array.isArray(s?.snapshot_data?.nodes)
-              ? s.snapshot_data.nodes.length
-              : 0)
+            (Array.isArray(s?.snapshot_data?.nodes) ? s.snapshot_data.nodes.length : 0)
           const edgeCount =
             s?.edges_count ||
-            (Array.isArray(s?.snapshot_data?.edges)
-              ? s.snapshot_data.edges.length
-              : 0)
+            (Array.isArray(s?.snapshot_data?.edges) ? s.snapshot_data.edges.length : 0)
           const isPreviewing = previewId === s?.id
 
           return (

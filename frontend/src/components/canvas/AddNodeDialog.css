@@ -119,7 +119,9 @@
   background: #ffffff;
   color: var(--text-primary, #1c1d1a);
   outline: none;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
   box-sizing: border-box;
 }
 

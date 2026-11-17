@@ -288,7 +288,11 @@ export function EditorWorkspace({
                 role: 'assistant',
                 content: '⏳ Starting branch regeneration… (0%)',
                 is_confirmed: null,
-                metadata: { execution_status: 'in_progress', progress_percent: 0, stage: 'Starting' },
+                metadata: {
+                  execution_status: 'in_progress',
+                  progress_percent: 0,
+                  stage: 'Starting',
+                },
                 created_at: new Date().toISOString(),
               },
             })
@@ -323,7 +327,11 @@ export function EditorWorkspace({
               payload: {
                 id: progressMsgId,
                 content: '✅ Branch regeneration complete! Graph updated on canvas.',
-                metadata: { execution_status: 'applied', progress_percent: 100, stage: 'Completed' },
+                metadata: {
+                  execution_status: 'applied',
+                  progress_percent: 100,
+                  stage: 'Completed',
+                },
               },
             })
           }
@@ -381,11 +389,14 @@ export function EditorWorkspace({
         mapVersionRef.current = restoredData.new_version
       }
       if (mapId) {
-        mindMapService.getMapById(mapId).then((meta) => {
-          if (meta?.version != null) {
-            mapVersionRef.current = meta.version
-          }
-        }).catch(() => {})
+        mindMapService
+          .getMapById(mapId)
+          .then((meta) => {
+            if (meta?.version != null) {
+              mapVersionRef.current = meta.version
+            }
+          })
+          .catch(() => {})
       }
       displayToast('Map restored from snapshot.')
     },
@@ -1247,7 +1258,10 @@ export function EditorWorkspace({
             typeof nodeOrId === 'string' ? canvas.nodes?.find((n) => n.id === nodeOrId) : nodeOrId
           if (nodeObj) {
             canvas.selectNode?.(nodeObj)
-            if (flowApiRef.current?.setCenter && (nodeObj.pos_x !== undefined || nodeObj.x !== undefined)) {
+            if (
+              flowApiRef.current?.setCenter &&
+              (nodeObj.pos_x !== undefined || nodeObj.x !== undefined)
+            ) {
               const nx = Number(nodeObj.pos_x ?? nodeObj.x ?? 0)
               const ny = Number(nodeObj.pos_y ?? nodeObj.y ?? 0)
               if (nx !== 0 || ny !== 0) {
