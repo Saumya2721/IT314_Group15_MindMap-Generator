@@ -34,7 +34,19 @@ This guide outlines rules, architectural constraints, and verification protocols
 
 ### D. Terminal Callback Guarantee
 - A job must **never** terminate without delivering a terminal status callback to the backend.
-- `worker/tasks.py` contains a top-level exception catch-all (`except Exception as exc:`) that guarantees an HTTP `fail(result)` callback is dispatched with an error message and retryable flag.
+- `worker/tasks.py` contains a top-level exception catch-all (`except Exception as exc:`) that guarantees an HTTP `fail(result)` callback is dispatched with an error message and retryable flag. If callback delivery itself raises an error, it is caught to avoid leaving jobs stuck in PostgreSQL `running` state.
+
+### E. Abstract-Aware Token Budgeting (Preventing HTTP 413)
+- Long document uploads (PDFs, raw notes) must never be injected raw into generation prompts.
+- All prompt seed injection must use `format_seed_content(seed_data)`, which detects document titles, extracts abstracts, extracts markdown/numbered headings, and extracts representative paragraphs under a strict ~3.5k token budget.
+
+### F. Rate-Limit Clamping (Preventing HTTP 429)
+- On-demand models such as Groq `qwen/qwen3.8-27b` enforce an output token limit of 1,000 tokens per minute (OTPM).
+- Provider wrappers (`groq_provider.py`) must clamp `max_tokens` to 900 to ensure requests never fail rate limits. Chat QA generation (`chat/qa.py`) must limit expected output to 800 tokens.
+
+### G. Edge Relationship Guarantee
+- All synthesized or extracted edges must possess a descriptive relationship label.
+- In `validation.schema.resolve_to_records`, any edge with an empty or null label must default to `"relates to"` to preserve semantic readability.
 
 ---
 
@@ -46,6 +58,7 @@ This guide outlines rules, architectural constraints, and verification protocols
   ```
 - **Type Checking**: Mypy is configured with `mypy_path = "mindmap_llm"`.
 - **Ruff Configuration**: `line-length = 120`. `B904` and `B905` are ignored to allow standard exception handling and untagged zip iterators.
+- **Windows Pytest Async Execution**: When running pytest on Windows in the sandbox, invoke unit tests with `-p no:asyncio` (e.g. `python -m pytest -p no:asyncio tests/test_prompts.py tests/test_validation.py`) to prevent teardown hangs.
 
 ---
 

@@ -35,6 +35,19 @@ This guide outlines rules, architectural constraints, and verification protocols
 - All user-facing routes must enforce ownership check via `assert_map_owner(pool, map_id, uid)`.
 - Users must never be able to inspect, mutate, or delete another user's mind maps or jobs.
 
+### E. Snapshot Schema Alignment & OCC Locks
+- Database table `map_snapshots` stores graphs in `graph`, `nodes_snapshot`, and `edges_snapshot` JSONB columns with `version_no`. Endpoints must compute and return `nodes_count` and `edges_count`.
+- Graph updates via `PATCH /api/maps/{id}/graph` require `expected_version`. If the client's version does not match the database version, return `409 Conflict`.
+- Restoring a snapshot bumps `map_version` and returns `new_version` so clients can synchronize their OCC refs.
+
+### F. Topological Edge Integrity & Cycle Prevention
+- `PATCH /api/maps/{id}/edges/{edge_id}` must reject self-loops (`source_node_id == target_node_id`) with HTTP 400.
+- When updating edge connections, run `check_edge_creates_cycle(other_edges, new_src, new_tgt)` and reject cycles with HTTP 400.
+
+### G. Chat Action Proposals & Root Node Protection
+- Action proposals confirming edits must take an automated safety snapshot (`create_map_snapshot`) before applying modifications.
+- Proposals attempting to delete a root node (`node_type == 'root'`) must be rejected with HTTP 400.
+
 ---
 
 ## 3. Environment & Execution Specifics

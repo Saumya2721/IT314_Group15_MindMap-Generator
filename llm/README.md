@@ -1,6 +1,6 @@
 # Mind Map Generator — LLM Worker
 
-Decoupled asynchronous worker implementing **US-02** (seed normalization), **US-03** (generate mind map from seed), and **US-04** (regenerate whole map) using **LangGraph**, **ARQ / Redis**, **Pinecone**, and a pluggable LLM/Decision Model architecture.
+Decoupled asynchronous worker implementing **US-02** (seed normalization), **US-03** (generate mind map from seed), **US-04** (regenerate whole map), **US-06** (partial branch regeneration), and **US-07** (conversational chat assistant & action proposals) using **LangGraph**, **ARQ / Redis**, **Pinecone**, and a pluggable LLM/Decision Model architecture.
 
 ---
 
@@ -10,21 +10,40 @@ The worker is completely decoupled from PostgreSQL and Supabase. The backend own
 
 ```
 [Frontend Client]
-       │ Realtime polling / subscriptions on generation_jobs
+       │ Realtime polling on generation_jobs and chat messages
        ▼
 [FastAPI Backend] ── owns Postgres, enforces JWT/RLS ─────────────────────────┐
-       │ Enqueues GenerationRequest to Redis                                   │
+       │ Enqueues GenerationRequest / ChatTurn to Redis                        │
        ▼                                                                       │
 [ARQ Worker] (this codebase)                              [HTTP POST Callback] │
        │                                                  (Progress/Complete)  │
        ├─► 1. Pulls job from Redis Queue                                       │
        ├─► 2. Fetches file assets from signed Storage URLs                     │
-       ├─► 3. Extracts text & chunks seed data                                 │
+       ├─► 3. Extracts text & token-budgets seed data (abstract-aware)         │
        ├─► 4. Embeds & upserts to Pinecone (per-map namespace)                 │
-       ├─► 5. Executes LangGraph pipeline                                      │
-       │      (Ingest -> Routing -> Retrieval -> Generation -> Validation)     │
-       └─► 6. Sends validated NodeDraft/EdgeDraft result ──────────────────────┘
+       ├─► 5. Executes LangGraph pipeline or Chat Turn state machine           │
+       │      (Single-pass synthesis or two-pass branch expansion)             │
+       └─► 6. Sends validated NodeDraft/EdgeDraft or Chat Answer ──────────────┘
 ```
+
+---
+
+## Sprint 2 Core Capabilities
+
+### 1. Partial Node & Branch Regeneration (`JobType.REGENERATE_NODE`)
+Allows users to select an existing concept on the canvas and regenerate only that subtree. The pipeline retrieves neighborhood context and branch-specific Pinecone embeddings, synthesizing fresh subtopics while preserving the parent connections.
+
+### 2. Conversational Assistant & Action Proposals (`mindmap_llm.chat`)
+- **Intent Classification**: Evaluates user chat queries to differentiate general inquiries/QA from graph modification instructions.
+- **Topological QA (`chat/qa.py`)**: Answers questions with grounding citations and cited node IDs that highlight on the interactive canvas.
+- **Action Proposals (`chat/agent.py`)**: Formulates structured delta proposals (`create_nodes`, `update_nodes`, `delete_nodes`, `create_edges`, `delete_edges`) returned to the frontend as actionable diff cards.
+
+### 3. Dynamic Token Budgeting & LLM Hardening
+- **Abstract-Aware Compaction (`format_seed_content`)**: Identifies titles, abstracts, and key section headings in long academic PDFs, compressing raw 12k+ token prompts into ~3.2k tokens to prevent HTTP 413 Payload Too Large errors.
+- **Groq OTPM Clamping (`groq_provider.py`)**: Clamps requested output tokens to 900 for Qwen 27B on-demand models to respect Groq's 1,000 OTPM limit and prevent HTTP 429 Rate Limit Exceeded errors.
+- **Edge Label Guarantee**: Automatically infers or defaults edge relationship labels to `"relates to"` if omitted, ensuring all edges render meaningful taxonomy badges.
+- **Terminal Delivery Safety**: `tasks._send_terminal` wraps completion callbacks with error recovery so callback network blips never leave jobs stuck in `running` status in PostgreSQL.
+- **Configurable Two-Pass Generation**: Full two-pass generation pipeline (Outline Generation → Parallel Branch Expansion → Graph Synthesis) available via `ENABLE_TWO_PASS=True`.
 
 ---
 

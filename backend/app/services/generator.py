@@ -21,7 +21,7 @@ for d in (
     Path(__file__).resolve().parent.parent.parent / "llm",
 ):
     if d.exists() and str(d) not in sys.path:
-        sys.path.insert(0, str(d))
+        sys.path.append(str(d))
 
 try:
     from orchestration.prompts import (

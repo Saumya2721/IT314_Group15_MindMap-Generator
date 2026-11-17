@@ -7,8 +7,10 @@ FastAPI service powering the Mind Map Generator. Handles user authentication, da
 ## Architecture & Responsibilities
 
 The backend acts as the central orchestrator and security boundary for the system:
-- **Authentication**: Dual-Defense architecture combining secure `HttpOnly` session cookies with in-memory Bearer token fallback. Integrated with Supabase GoTrue.
-- **Data Persistence**: Direct asynchronous PostgreSQL access using `asyncpg` connection pools. Manages mind maps, nodes, edges, chat threads, and job tracking.
+- **Authentication**: Dual-Defense architecture combining secure `HttpOnly` session cookies with in-memory Bearer token fallback. Integrated with Supabase GoTrue Auth and PKCE Google OAuth with secure verifier persistence.
+- **Data Persistence**: Direct asynchronous PostgreSQL access using `asyncpg` connection pools. Manages mind maps, nodes, edges, chat threads, version snapshots, and background jobs.
+- **Optimistic Concurrency Control (OCC)**: Map graph updates and restores validate `expected_version`, guaranteeing consistency across concurrent editors without silent overwrites.
+- **Topological Integrity**: Enforces single-root DAG invariants, blocks self-loops, checks for cycles during edge modifications, and prevents central root node deletion.
 - **Storage Management**: Handles binary uploads (PDF, images, text) into the private Supabase Storage bucket `seed-assets` under `<user_id>/<map_id>/...` and cleans them up transactionally on map deletion.
 - **Queue Dispatcher**: Publishes `GenerationRequest` jobs to Upstash Redis for asynchronous execution by the detached ARQ worker service (`llm/`).
 - **Internal Callbacks**: Exposes token-protected `/internal/jobs/{job_id}/...` endpoints for progress updates, node/edge draft persistence, and job completion from the worker.
@@ -22,19 +24,50 @@ backend/
 ├── app/
 │   ├── main.py               # Application entrypoint & middleware configuration
 │   ├── auth/                 # Authentication services, schemas, and password hashing
+│   ├── chat/                 # Conversational assistant router & action proposal execution
 │   ├── core/                 # Config (settings), Supabase admin client, security helpers
 │   ├── db/                   # Connection pool management and SQL repository queries
 │   ├── contracts/            # Wire contracts (GenerationRequest, FileRef, JobType)
-│   ├── maps/                 # Map CRUD and generation trigger endpoints (/api/maps)
+│   ├── maps/                 # Map CRUD, graph mutation, nodes/edges, OCC graph validator
 │   ├── routes/               # API routers (auth, users, internal worker callbacks)
 │   ├── services/             # ARQ queue dispatcher, worker runner, mindmap service
+│   ├── snapshots/            # Map snapshot versioning, history, and restore handlers
 │   └── uploads/              # Multipart file ingestion and Supabase Storage cleanup
 ├── db/
-│   └── schema.sql            # Master PostgreSQL schema definition (tables, RLS, indexes)
+│   ├── schema.sql            # Master PostgreSQL schema definition (tables, RLS, indexes)
+│   └── repository.py         # Asyncpg query repository for maps, nodes, edges, snapshots
 ├── tests/
 │   └── unit/                 # Pytest unit tests (auth, contracts, storage cleanup)
 └── pyproject.toml            # Dependencies, Ruff, Mypy, and Pytest configuration
 ```
+
+---
+
+## Key Endpoints (Sprint 2)
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/auth/signup`, `/auth/login`, `/auth/logout` | Session management with HttpOnly cookies & Bearer tokens. |
+| `GET` | `/auth/google`, `/auth/google/callback` | Google OAuth with PKCE verifier cookie persistence. |
+| `GET` | `/me` | Hydrate profile for authenticated user session. |
+| `GET` | `/api/maps` | List user-owned mind maps with search and sorting. |
+| `POST` | `/api/maps` | Create draft or manual mind map. |
+| `POST` | `/api/maps/{id}/generate` | Dispatch full-map generation job to worker. |
+| `PATCH`| `/api/maps/{id}/graph` | Persist node positions & graph with `expected_version` OCC lock. |
+| `POST` | `/api/maps/{id}/nodes` | Add concept node to map. |
+| `PATCH`| `/api/maps/{id}/nodes/{node_id}` | Update node label/description. |
+| `DELETE`| `/api/maps/{id}/nodes/{node_id}` | Delete node and clean up incident edges. |
+| `POST` | `/api/maps/{id}/nodes/{node_id}/regenerate` | Dispatch partial branch regeneration. |
+| `POST` | `/api/maps/{id}/edges` | Create edge connecting source and target nodes. |
+| `PATCH`| `/api/maps/{id}/edges/{edge_id}` | Update edge label or route with cycle detection. |
+| `DELETE`| `/api/maps/{id}/edges/{edge_id}` | Remove relationship edge. |
+| `GET` | `/api/maps/{id}/snapshots` | List version snapshots with node/edge counts. |
+| `POST` | `/api/maps/{id}/snapshots` | Create manual map snapshot. |
+| `POST` | `/api/maps/{id}/snapshots/{snapshot_id}/restore` | Rollback map graph to previous version snapshot. |
+| `GET` | `/api/maps/{id}/chat` | Fetch conversation history for map assistant. |
+| `POST` | `/api/maps/{id}/chat` | Send query or refinement instruction to assistant. |
+| `POST` | `/api/maps/{id}/chat/{message_id}/confirm` | Execute proposed graph delta modifications. |
+| `POST` | `/api/maps/{id}/chat/{message_id}/dismiss` | Reject and dismiss proposed graph action. |
 
 ---
 

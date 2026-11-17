@@ -37,15 +37,47 @@ def login(user: UserCredentials, response: Response):
 
 @router.get("/google", status_code=200)
 def google_login(
+    response: Response,
     redirect_to: str | None = Query(None, description="Custom redirect URL after Google sign-in"),
 ):
-    auth_url = AuthService.get_google_auth_url(redirect_to=redirect_to)
-    return {"google_auth_url": auth_url}
+    auth_data = AuthService.get_google_auth_url(redirect_to=redirect_to)
+    if auth_data.get("code_verifier"):
+        response.set_cookie(
+            key="oauth_code_verifier",
+            value=auth_data["code_verifier"],
+            httponly=True,
+            samesite="lax",
+            max_age=600,
+        )
+    return auth_data
+
+
+@router.get("/callback", status_code=307)
+def google_callback_get(
+    code: str | None = Query(None),
+    error: str | None = Query(None),
+    error_description: str | None = Query(None),
+):
+    """Fallback redirect to frontend callback page if Google OAuth lands on backend directly."""
+    from core.config import settings
+    from fastapi.responses import RedirectResponse
+
+    params: list[str] = []
+    if code:
+        params.append(f"code={code}")
+    if error:
+        params.append(f"error={error}")
+    if error_description:
+        params.append(f"error_description={error_description}")
+    query = f"?{'&'.join(params)}" if params else ""
+    return RedirectResponse(url=f"{settings.FRONTEND_URL}/auth/callback{query}")
 
 
 @router.post("/google/callback", status_code=200)
-def google_callback(body: GoogleCallbackRequest, response: Response):
-    session_data = AuthService.exchange_code_for_session(code=body.code)
+def google_callback(body: GoogleCallbackRequest, request: Request, response: Response):
+    code_verifier = body.code_verifier or request.cookies.get("oauth_code_verifier")
+    session_data = AuthService.exchange_code_for_session(code=body.code, code_verifier=code_verifier)
+    response.delete_cookie(key="oauth_code_verifier")
     # Set standard HttpOnly cookies upon successful Google OAuth callback
     set_auth_cookies(
         response=response,
