@@ -115,3 +115,24 @@ describe('resolveScaleMultiplier', () => {
     expect(resolveScaleMultiplier('bogus')).toBe(1)
   })
 })
+
+describe('useExportHistory reducer and exports', () => {
+  it('exports valid hook and initial state', async () => {
+    const mod = await import('../components/canvas/useExportHistory')
+    expect(typeof mod.useExportHistory).toBe('function')
+    expect(typeof mod.exportHistoryReducer).toBe('function')
+    expect(mod.INITIAL_EXPORT_HISTORY_STATE).toBeDefined()
+    expect(mod.INITIAL_EXPORT_HISTORY_STATE.isRestoring).toBeUndefined()
+  })
+
+  it('exportHistoryReducer handles modal open/close actions correctly', async () => {
+    const { exportHistoryReducer, INITIAL_EXPORT_HISTORY_STATE } = await import(
+      '../components/canvas/useExportHistory'
+    )
+    const openState = exportHistoryReducer(INITIAL_EXPORT_HISTORY_STATE, { type: 'OPEN_EXPORT' })
+    expect(openState.isExportModalOpen).toBe(true)
+
+    const closeState = exportHistoryReducer(openState, { type: 'CLOSE_EXPORT' })
+    expect(closeState.isExportModalOpen).toBe(false)
+  })
+})

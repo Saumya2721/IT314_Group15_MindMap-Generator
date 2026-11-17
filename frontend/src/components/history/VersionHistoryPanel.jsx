@@ -1,9 +1,10 @@
-import React, { useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { ReactFlow, Background, Controls, MiniMap, ReactFlowProvider } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 
 import { adaptBackendGraphToFlow } from '../../utils/graphAdapter'
 import { formatRelativeTime } from '../../utils/formatters'
+import { mindMapService } from '../../services/mindMapService'
 import { Button } from '../common/Button'
 import './VersionHistoryPanel.css'
 
@@ -60,12 +61,16 @@ function SnapshotFlowPreview({ snapshotData }) {
 }
 
 function RestoreConfirm({ snapshot, onConfirm, onCancel }) {
-  const nodeCount = Array.isArray(snapshot?.snapshot_data?.nodes)
-    ? snapshot.snapshot_data.nodes.length
-    : 0
-  const edgeCount = Array.isArray(snapshot?.snapshot_data?.edges)
-    ? snapshot.snapshot_data.edges.length
-    : 0
+  const nodeCount =
+    snapshot?.nodes_count ||
+    (Array.isArray(snapshot?.snapshot_data?.nodes)
+      ? snapshot.snapshot_data.nodes.length
+      : 0)
+  const edgeCount =
+    snapshot?.edges_count ||
+    (Array.isArray(snapshot?.snapshot_data?.edges)
+      ? snapshot.snapshot_data.edges.length
+      : 0)
 
   return (
     <div className="vhp-modal-backdrop" onClick={onCancel}>
@@ -144,6 +149,8 @@ export function VersionHistoryPanel({
   onCreateSnapshot,
 }) {
   const [previewId, setPreviewId] = useState(null)
+  const [detailSnapshotData, setDetailSnapshotData] = useState(null)
+  const [detailLoading, setDetailLoading] = useState(false)
   const [confirmRestoreId, setConfirmRestoreId] = useState(null)
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)
   const [restoringId, setRestoringId] = useState(null)
@@ -158,6 +165,37 @@ export function VersionHistoryPanel({
     () => sorted.find((s) => s && s.id === previewId) || null,
     [sorted, previewId],
   )
+
+  useEffect(() => {
+    if (!previewId || !mapId) {
+      setDetailSnapshotData(null)
+      return
+    }
+    const current = sorted.find((s) => s && s.id === previewId)
+    if (current?.snapshot_data?.nodes && current.snapshot_data.nodes.length > 0) {
+      setDetailSnapshotData(current.snapshot_data)
+      setDetailLoading(false)
+      return
+    }
+    let active = true
+    setDetailLoading(true)
+    mindMapService
+      .getSnapshotDetail(mapId, previewId)
+      .then((detail) => {
+        if (active && detail?.snapshot_data) {
+          setDetailSnapshotData(detail.snapshot_data)
+        }
+      })
+      .catch((err) => {
+        console.error('Failed to load snapshot detail:', err)
+      })
+      .finally(() => {
+        if (active) setDetailLoading(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [previewId, mapId, sorted])
 
   const confirmRestoreSnapshot = useMemo(
     () => sorted.find((s) => s && s.id === confirmRestoreId) || null,
@@ -299,12 +337,16 @@ export function VersionHistoryPanel({
     return (
       <div className="vhp-list">
         {sorted.map((s) => {
-          const nodeCount = Array.isArray(s?.snapshot_data?.nodes)
-            ? s.snapshot_data.nodes.length
-            : 0
-          const edgeCount = Array.isArray(s?.snapshot_data?.edges)
-            ? s.snapshot_data.edges.length
-            : 0
+          const nodeCount =
+            s?.nodes_count ||
+            (Array.isArray(s?.snapshot_data?.nodes)
+              ? s.snapshot_data.nodes.length
+              : 0)
+          const edgeCount =
+            s?.edges_count ||
+            (Array.isArray(s?.snapshot_data?.edges)
+              ? s.snapshot_data.edges.length
+              : 0)
           const isPreviewing = previewId === s?.id
 
           return (
@@ -406,7 +448,18 @@ export function VersionHistoryPanel({
                 </span>
               </button>
             </div>
-            <SnapshotFlowPreview snapshotData={previewSnapshot.snapshot_data} />
+            {detailLoading ? (
+              <div className="vhp-preview-empty">
+                <span className="material-symbols-outlined spin" style={{ fontSize: '24px' }}>
+                  progress_activity
+                </span>
+                <p>Loading snapshot graph…</p>
+              </div>
+            ) : (
+              <SnapshotFlowPreview
+                snapshotData={detailSnapshotData || previewSnapshot.snapshot_data}
+              />
+            )}
           </div>
         ) : (
           renderBody()
