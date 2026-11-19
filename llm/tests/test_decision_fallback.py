@@ -65,3 +65,25 @@ async def test_safe_decision_model_works_with_no_primary_configured():
     safe = SafeDecisionModel(primary=None, llm_fallback=llm)
     result = await safe.classify(state="x", question="detail level?", labels=["overview", "balanced", "detailed"])
     assert result.label == "overview"
+
+
+def test_jev_provider_host_validation_and_endpoint_resolution():
+    from providers.jev_provider import JevDecisionModel
+
+    jev_official = JevDecisionModel(api_key="test_key", api_base="https://www.jevai.org")
+    assert jev_official._is_jevai_host() is True
+    assert jev_official._resolve_endpoint() == "/api/v1/decisions"
+
+    jev_api_v1 = JevDecisionModel(api_key="test_key", api_base="https://jevai.org/api/v1")
+    assert jev_api_v1._is_jevai_host() is True
+    assert jev_api_v1._resolve_endpoint() == "/decisions"
+
+    # Incomplete URL substring sanitization bypass prevention:
+    # An attacker host having jevai.org as subdomain suffix of attacker or in path must NOT match
+    attacker_sub = JevDecisionModel(api_key="test_key", api_base="https://attacker-jevai.org")
+    assert attacker_sub._is_jevai_host() is False
+    assert attacker_sub._resolve_endpoint() == "/v1/systemone"
+
+    attacker_path = JevDecisionModel(api_key="test_key", api_base="https://attacker.com/jevai.org")
+    assert attacker_path._is_jevai_host() is False
+    assert attacker_path._resolve_endpoint() == "/v1/systemone"

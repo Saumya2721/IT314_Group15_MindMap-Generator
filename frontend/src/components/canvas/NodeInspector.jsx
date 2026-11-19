@@ -47,6 +47,15 @@ const SOURCE_CONFIG = {
   },
 }
 
+function isArxivUrl(urlString) {
+  try {
+    const parsed = new URL(urlString)
+    return parsed.hostname === 'arxiv.org' || parsed.hostname.endsWith('.arxiv.org')
+  } catch {
+    return false
+  }
+}
+
 /**
  * S2-FE8: SourceAttributionBadge
  * Renders a coloured pill badge showing how a node was derived,
@@ -189,11 +198,11 @@ export function NodeInspector({
       if (match) {
         const title = match[1].trim()
         const url = match[2].trim()
-        const type = url.includes('arxiv.org') ? 'arxiv' : 'web_research'
+        const type = isArxivUrl(url) ? 'arxiv' : 'web_research'
         return { type, title: title || url, url }
       }
       if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
-        const type = trimmed.includes('arxiv.org') ? 'arxiv' : 'web_research'
+        const type = isArxivUrl(trimmed) ? 'arxiv' : 'web_research'
         return { type, title: trimmed, url: trimmed }
       }
       return { type: 'general', title: trimmed, url: null }

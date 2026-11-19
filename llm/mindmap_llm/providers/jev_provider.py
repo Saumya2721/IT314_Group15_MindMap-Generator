@@ -22,6 +22,8 @@ low-risk change.
 
 from __future__ import annotations
 
+from urllib.parse import urlparse
+
 import httpx
 from providers.decision_model import (
     ClassifyResult,
@@ -49,9 +51,13 @@ class JevDecisionModel(DecisionModel):
     def name(self) -> str:
         return "jev"
 
+    def _is_jevai_host(self) -> bool:
+        host = (urlparse(self._api_base).hostname or "").lower()
+        return host == "jevai.org" or host.endswith(".jevai.org")
+
     def _resolve_endpoint(self) -> str:
         base = self._api_base.rstrip("/")
-        if "jevai.org" in base:
+        if self._is_jevai_host():
             if base.endswith("/api/v1"):
                 return "/decisions"
             return "/api/v1/decisions"
@@ -72,7 +78,7 @@ class JevDecisionModel(DecisionModel):
 
     async def health_check(self) -> bool:
         try:
-            if "jevai.org" in self._api_base:
+            if self._is_jevai_host():
                 resp = await self._client.get("/api/v1/decisions")
                 return resp.status_code in (200, 405)
             endpoint = "/models" if self._api_base.endswith("/v1") else "/v1/models"
