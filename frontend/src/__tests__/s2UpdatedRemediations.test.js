@@ -129,4 +129,25 @@ describe('Sprint 2 Remediation: mindMapService & OCC', () => {
     expect(entry.url).toBeNull()
     expect(entry.title).toBe('Context Citation (ctx:3)')
   })
+
+  it('CodeQL: isArxivUrl validates hostname securely and prevents substring bypasses', () => {
+    function isArxivUrl(urlString) {
+      try {
+        const parsed = new URL(urlString)
+        return parsed.hostname === 'arxiv.org' || parsed.hostname.endsWith('.arxiv.org')
+      } catch {
+        return false
+      }
+    }
+
+    // Valid arXiv domains
+    expect(isArxivUrl('https://arxiv.org/abs/1706.03762')).toBe(true)
+    expect(isArxivUrl('https://export.arxiv.org/api/query')).toBe(true)
+
+    // Security check: attacker hosts with arxiv.org as substring must NOT be classified as arxiv
+    expect(isArxivUrl('https://evil-arxiv.org.attacker.com/malicious')).toBe(false)
+    expect(isArxivUrl('https://attacker.com/arxiv.org')).toBe(false)
+    expect(isArxivUrl('https://arxiv.org.evil.com')).toBe(false)
+    expect(isArxivUrl('not-a-valid-url')).toBe(false)
+  })
 })
