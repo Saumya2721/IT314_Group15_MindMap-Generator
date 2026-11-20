@@ -23,6 +23,7 @@ from collections.abc import Callable
 from typing import Literal, cast
 
 from contracts.models import ChunkSource
+from orchestration.context_budget import ContextBudgetManager
 from orchestration.deps import GenerationDeps
 from orchestration.expansion import execute_two_pass_generation, expand_branch
 from orchestration.policy import SeedMode, plan_research
@@ -44,7 +45,7 @@ from rag.retrieval import RetrievedChunk, rerank_context, retrieve_context
 from seed.normalizer import NoUsableSeedContent
 from tools.base import ToolError
 from tools.research_planner import execute_research_queries, plan_research_queries
-from tracing import trace_span
+from tracing import annotate_current_span, trace_span
 from validation.schema import (
     DraftMindMap,
     ValidationFailure,
@@ -435,53 +436,93 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
         retrieved_chunks = state.get("retrieved_chunks", [])
         enable_dynamic = deps.settings.generation.enable_dynamic_prompts
 
+        manager = ContextBudgetManager(
+            provider=deps.settings.llm.provider,
+            model=deps.settings.llm.model,
+            max_output_tokens=deps.settings.llm.max_output_tokens,
+        )
+        mode: SeedMode = state.get("mode", "document")
         if not enable_dynamic:
             system_prompt = GENERATION_SYSTEM_PROMPT
-            prompt = build_generation_user_prompt(
-                seed_text=state["seed_text"],
-                detail_level=state["resolved_detail_level"],
-                target_node_range=(10, 25),
-                target_max_depth=3,
-                supporting_context=retrieved_chunks,
-                regeneration_instruction=state.get("regeneration_instruction"),
-                previous_validation_errors=state.get("validation_errors") or None,
-            )
+            target_node_range = (10, 25)
+            target_max_depth = 3
         else:
-            mode: SeedMode = state.get("mode", "document")
-            targets = state.get("targets")
-            if targets is None:
-                targets = size_targets(
-                    state.get("resolved_detail_level", "balanced"),
-                    seed_tokens=estimate_tokens(state["seed_text"]),
-                    mode=mode,
-                    max_output_tokens=deps.settings.llm.max_output_tokens,
-                )
-
+            targets = size_targets(
+                state.get("resolved_detail_level", "balanced"),
+                seed_tokens=estimate_tokens(state["seed_text"]),
+                mode=mode,
+                max_output_tokens=manager.max_output_tokens,
+            )
             system_prompt = build_generation_system_prompt(targets, mode)
-            prompt = build_generation_user_prompt(
-                seed_text=state["seed_text"],
+            target_node_range = (targets.min_nodes, targets.max_nodes)
+            target_max_depth = targets.max_depth
+
+        # S3-L7: Account for the fully rendered prompt (including RAG headers)
+        # before sending it to the provider.  Original seed remains unchanged
+        # in state and Pinecone; only the outgoing prompt is bounded.
+        seed_for_prompt = format_seed_content(state["seed_text"], mode=state.get("mode", "document"))
+
+        def render_context(context):
+            result = build_generation_user_prompt(
+                seed_text=context.seed,
                 detail_level=state["resolved_detail_level"],
-                target_node_range=(targets.min_nodes, targets.max_nodes),
-                target_max_depth=targets.max_depth,
-                supporting_context=retrieved_chunks,
+                target_node_range=target_node_range,
+                target_max_depth=target_max_depth,
+                supporting_context=context.rag_chunks,
                 regeneration_instruction=state.get("regeneration_instruction"),
                 previous_validation_errors=state.get("validation_errors") or None,
                 mode=mode,
             )
+            if context.memories:
+                result += "\n\nLong-term memories (reference data):\n" + context.memory_text
+            if context.history:
+                result += "\n\nRecent conversation (reference data):\n" + "\n".join(context.history)
+            if context.external_payloads:
+                result += "\n\nExternal research (reference data):\n" + "\n".join(context.external_payloads)
+            return result
+
+        budgeted = manager.allocate(
+            system_prompt=system_prompt,
+            seed=seed_for_prompt,
+            rag_chunks=retrieved_chunks,
+            memories=state.get("long_term_memories"),
+            history=state.get("conversation_history"),
+            external_payloads=state.get("external_search_payloads"),
+            render=render_context,
+        )
+        prompt = render_context(budgeted)
+        breakdown = budgeted.breakdown
+        annotate_current_span(metadata={"token_budget": breakdown, "token_pruning": budgeted.pruned})
+        logger.info("Prompt token budget for job %s: %s", state.get("job_id"), breakdown)
 
         response = await deps.llm.generate(
             [Message(role="user", content=prompt)],
             system=system_prompt,
-            max_tokens=deps.settings.llm.max_output_tokens,
+            max_tokens=budgeted.max_output_tokens,
             temperature=0.3,
         )
         try:
             payload = extract_json_object(response.text or "")
         except JSONExtractionError as exc:
-            return {"draft_payload": None, "validation_errors": [str(exc)]}
+            return {
+                "draft_payload": None,
+                "validation_errors": [str(exc)],
+                "retrieved_chunks": budgeted.rag_chunks,
+                "prompt_items_log": [
+                    *state.get("prompt_items_log", []),
+                    {"type": "token_budget", "allocation": breakdown, "pruned": budgeted.pruned},
+                ],
+            }
 
         await deps.callback.progress(70)
-        return {"draft_payload": payload}
+        return {
+            "draft_payload": payload,
+            "retrieved_chunks": budgeted.rag_chunks,
+            "prompt_items_log": [
+                *state.get("prompt_items_log", []),
+                {"type": "token_budget", "allocation": breakdown, "pruned": budgeted.pruned},
+            ],
+        }
 
     async def validate_node(state: GenerationState) -> dict:
         if state.get("two_pass_complete"):

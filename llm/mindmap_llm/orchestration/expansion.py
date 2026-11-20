@@ -24,6 +24,7 @@ from typing import Any
 from uuid import uuid4
 
 from contracts.models import EdgeDraft, NodeDraft
+from orchestration.context_budget import ContextBudgetManager
 from orchestration.deps import GenerationDeps
 from orchestration.prompts import (
     JSONExtractionError,
@@ -33,9 +34,11 @@ from orchestration.prompts import (
     build_regenerate_node_user_prompt,
     extract_headings_from_text,
     extract_json_object,
+    format_seed_content,
 )
 from providers.base import Message
 from rag.retrieval import RetrievedChunk, rerank_context, retrieve_context
+from tracing import annotate_current_span
 from validation.schema import (
     DraftMindMap,
     ValidationFailure,
@@ -118,23 +121,40 @@ async def expand_branch(
     draft: DraftMindMap | None = None
 
     for _attempt in range(max_retries + 1):
-        prompt = build_regenerate_node_user_prompt(
-            selected_node_label=selected_node.label,
-            selected_node_description=selected_node.description,
-            comment=comment,
-            ancestor_labels=ancestor_labels,
-            breadcrumb_path=breadcrumb,
-            parent_edges=parent_edges,
-            branch_context_nodes=branch_context_nodes,
-            supporting_context=chunks,
-            previous_validation_errors=validation_errors or None,
+        manager = ContextBudgetManager(
+            deps.settings.llm.provider,
+            deps.settings.llm.model,
+            deps.settings.llm.max_output_tokens,
         )
+
+        def render_branch(context, validation_errors_snapshot=tuple(validation_errors)):
+            return build_regenerate_node_user_prompt(
+                selected_node_label=selected_node.label,
+                selected_node_description=selected_node.description,
+                comment=comment,
+                ancestor_labels=ancestor_labels,
+                breadcrumb_path=breadcrumb,
+                parent_edges=parent_edges,
+                branch_context_nodes=branch_context_nodes,
+                supporting_context=context.rag_chunks,
+                previous_validation_errors=list(validation_errors_snapshot) or None,
+            )
+
+        budgeted = manager.allocate(
+            system_prompt=system_prompt,
+            seed=scoped_query,
+            rag_chunks=chunks,
+            render=render_branch,
+        )
+        chunks = budgeted.rag_chunks
+        prompt = render_branch(budgeted)
+        annotate_current_span(metadata={"token_budget": budgeted.breakdown, "token_pruning": budgeted.pruned})
 
         try:
             response = await deps.llm.generate(
                 [Message(role="user", content=prompt)],
                 system=system_prompt,
-                max_tokens=deps.settings.llm.max_output_tokens,
+                max_tokens=budgeted.max_output_tokens,
                 temperature=0.3,
             )
             payload = extract_json_object(response.text or "")
@@ -258,18 +278,34 @@ async def generate_outline(
     validation_errors: list[str] = []
 
     for _attempt in range(max_retries + 1):
-        prompt = build_outline_user_prompt(
-            seed_text=seed_text,
-            detail_level=detail_level,
-            headings=headings or None,
-            previous_validation_errors=validation_errors or None,
+        manager = ContextBudgetManager(
+            deps.settings.llm.provider,
+            deps.settings.llm.model,
+            deps.settings.llm.max_output_tokens,
         )
+
+        def render_outline(context, validation_errors_snapshot=tuple(validation_errors)):
+            return build_outline_user_prompt(
+                seed_text=context.seed,
+                detail_level=detail_level,
+                headings=headings[:25] or None,
+                previous_validation_errors=list(validation_errors_snapshot) or None,
+            )
+
+        budgeted = manager.allocate(
+            system_prompt=system_prompt,
+            seed=format_seed_content(seed_text),
+            rag_chunks=[],
+            render=render_outline,
+        )
+        prompt = render_outline(budgeted)
+        annotate_current_span(metadata={"token_budget": budgeted.breakdown, "token_pruning": budgeted.pruned})
 
         try:
             response = await deps.llm.generate(
                 [Message(role="user", content=prompt)],
                 system=system_prompt,
-                max_tokens=deps.settings.llm.max_output_tokens,
+                max_tokens=budgeted.max_output_tokens,
                 temperature=0.3,
             )
             payload = extract_json_object(response.text or "")

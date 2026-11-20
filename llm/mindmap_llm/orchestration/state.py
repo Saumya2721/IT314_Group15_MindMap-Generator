@@ -46,6 +46,9 @@ class GenerationState(TypedDict, total=False):
     tool_call_log: list[dict]
     seed_length: int
     prompt_items_log: list[dict]
+    long_term_memories: list[str]
+    conversation_history: list[str]
+    external_search_payloads: list[str]
     outline_draft: dict | None  # Pass 1 outline payload (S2-L12)
     two_pass_complete: bool
     branch_result: Any
