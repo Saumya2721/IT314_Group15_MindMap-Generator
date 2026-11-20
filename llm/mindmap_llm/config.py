@@ -131,6 +131,19 @@ class ToolConfig:
         default_factory=lambda: os.environ.get("ARXIV_API_BASE", "https://export.arxiv.org/api/query")
     )
     tool_timeout_s: float = field(default_factory=lambda: _get_float("TOOL_TIMEOUT_S", 15.0))
+    # S3-L1: Per-tool timeouts
+    web_search_timeout_s: float = field(default_factory=lambda: _get_float("TOOL_WEB_SEARCH_TIMEOUT_S", 15.0))
+    arxiv_search_timeout_s: float = field(default_factory=lambda: _get_float("TOOL_ARXIV_TIMEOUT_S", 20.0))
+    web_reader_timeout_s: float = field(default_factory=lambda: _get_float("TOOL_WEB_READER_TIMEOUT_S", 10.0))
+    # S3-L1: Enable/disable flags loaded from config
+    web_search_enabled: bool = field(default_factory=lambda: _get_bool("TOOL_WEB_SEARCH_ENABLED", True))
+    arxiv_search_enabled: bool = field(default_factory=lambda: _get_bool("TOOL_ARXIV_SEARCH_ENABLED", True))
+    web_reader_enabled: bool = field(default_factory=lambda: _get_bool("TOOL_WEB_READER_ENABLED", True))
+    # S3-L1: Per-user quota configuration (enforced via Redis limiter)
+    user_quota_calls: int = field(default_factory=lambda: _get_int("TOOL_USER_QUOTA_CALLS", 30))
+    user_quota_window_s: int = field(default_factory=lambda: _get_int("TOOL_USER_QUOTA_WINDOW_S", 60))
+    # S3-L1: Overall research time budget (S3-A2)
+    research_time_budget_s: float = field(default_factory=lambda: _get_float("RESEARCH_TIME_BUDGET_S", 30.0))
 
 
 @dataclass(frozen=True)
