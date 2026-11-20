@@ -10,12 +10,14 @@ from __future__ import annotations
 from config import Settings
 from tools.arxiv_tool import ArxivTool
 from tools.base import Tool
+from tools.web_reader import WebPageReaderTool
 from tools.web_search_tool import TavilyWebSearchTool
 
 
 def build_tool_registry(settings: Settings) -> dict[str, Tool]:
     registry: dict[str, Tool] = {
         "arxiv_search": ArxivTool(api_base=settings.tools.arxiv_api_base, timeout_s=settings.tools.tool_timeout_s),
+        "web_page_reader": WebPageReaderTool(timeout_s=min(settings.tools.tool_timeout_s, 5.0)),
     }
     if settings.tools.web_search_api_key:
         try:
