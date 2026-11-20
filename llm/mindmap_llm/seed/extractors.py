@@ -17,11 +17,14 @@ from ingestion.extractors import (
     detect_structural_cues,
     extract_pdf_outline,
     extract_plain_text,
+    extract_text_from_docx,
     extract_text_from_image,
     extract_text_from_pdf,
+    extract_text_from_pptx,
     get_default_registry,
     normalize_free_text,
     reset_default_registry,
+    validate_office_archive,
 )
 
 __all__ = [
@@ -35,9 +38,12 @@ __all__ = [
     "detect_structural_cues",
     "extract_pdf_outline",
     "extract_plain_text",
+    "extract_text_from_docx",
     "extract_text_from_image",
     "extract_text_from_pdf",
+    "extract_text_from_pptx",
     "get_default_registry",
     "normalize_free_text",
     "reset_default_registry",
+    "validate_office_archive",
 ]

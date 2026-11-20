@@ -22,8 +22,10 @@ from ingestion.extractors.base import (
     UnsupportedMediaTypeError,
     detect_structural_cues,
 )
+from ingestion.extractors.docx import extract_text_from_docx
 from ingestion.extractors.image import extract_text_from_image
 from ingestion.extractors.pdf import extract_text_from_pdf
+from ingestion.extractors.pptx import extract_text_from_pptx
 
 logger = logging.getLogger(__name__)
 
@@ -331,6 +333,40 @@ def get_default_registry() -> ExtractorRegistry:
                 timeout_seconds=10.0,
                 asset_type="text",
                 description="Normalizes structural cues from plain text and Markdown files.",
+            )
+        )
+
+        # Register Word (.docx) Extractor
+        registry.register(
+            ExtractorSpec(
+                name="docx",
+                mime_types=[
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    "application/msword",
+                ],
+                extensions=[".docx", ".doc"],
+                handler=extract_text_from_docx,
+                max_size_bytes=25 * 1024 * 1024,
+                timeout_seconds=30.0,
+                asset_type="text",
+                description="Extracts Word document headings and paragraphs into Markdown.",
+            )
+        )
+
+        # Register PowerPoint (.pptx) Extractor
+        registry.register(
+            ExtractorSpec(
+                name="pptx",
+                mime_types=[
+                    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                    "application/vnd.ms-powerpoint",
+                ],
+                extensions=[".pptx", ".ppt"],
+                handler=extract_text_from_pptx,
+                max_size_bytes=25 * 1024 * 1024,
+                timeout_seconds=30.0,
+                asset_type="text",
+                description="Extracts PowerPoint slide titles into headings and body bullets into text.",
             )
         )
 
