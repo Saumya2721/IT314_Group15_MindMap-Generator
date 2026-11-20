@@ -38,11 +38,13 @@ from orchestration.deps import GenerationDeps
 from orchestration.graph import run_generation, run_regenerate_node
 from orchestration.nodes import NoPriorSeedError, reconstruct_seed_from_namespace
 from seed.normalizer import NoUsableSeedContent, SeedSubmission, normalize_seed
+from tracing import trace_span
 from worker.files import fetch_all
 
 logger = logging.getLogger(__name__)
 
 
+@trace_span("generate_mindmap", run_type="chain")
 async def generate_mindmap(ctx: dict, request_payload: dict) -> dict:
     """ARQ entry point. `ctx` carries the shared clients built once per
     worker process in worker/settings.py::on_startup. `request_payload`
@@ -107,6 +109,13 @@ async def generate_mindmap(ctx: dict, request_payload: dict) -> dict:
     return result.model_dump(mode="json")
 
 
+@trace_span("regenerate_mindmap", run_type="chain")
+async def regenerate_mindmap(ctx: dict, request_payload: dict) -> dict:
+    """ARQ entry point for complete regeneration (S3-OBS)."""
+    return await generate_mindmap(ctx, request_payload)
+
+
+@trace_span("regenerate_node", run_type="chain")
 async def _run_regenerate_node(
     request: GenerationRequest,
     namespace: str,
@@ -202,6 +211,7 @@ async def _run_regenerate_node(
     )
 
 
+@trace_span("regenerate_node_task", run_type="chain")
 async def regenerate_node_task(ctx: dict, request_payload: dict) -> dict:
     """ARQ entry point for node-level regeneration (S2-L7, S2-L10, US-06)."""
     request = GenerationRequest.model_validate(request_payload)
@@ -247,6 +257,7 @@ async def regenerate_node_task(ctx: dict, request_payload: dict) -> dict:
     return result.model_dump(mode="json")
 
 
+@trace_span("chat_turn_task", run_type="chain")
 async def chat_turn_task(ctx: dict, request_payload: dict) -> dict:
     """ARQ entry point for chat turns (S2-L8, S2-L9, S2-L10, US-14, US-15)."""
     request = ChatTurnRequest.model_validate(request_payload)
@@ -337,6 +348,11 @@ async def chat_turn_task(ctx: dict, request_payload: dict) -> dict:
         await callback.aclose()
 
 
+@trace_span("regenerate_full", run_type="chain")
+async def _run_regenerate_full_prep(deps: GenerationDeps, namespace: str) -> str:
+    return await reconstruct_seed_from_namespace(deps, namespace=namespace)
+
+
 async def _run(request: GenerationRequest, namespace: str, deps: GenerationDeps) -> GenerationResult:
     seed_assets = []
     rejected_files: list[RejectedFile] = []
@@ -355,7 +371,7 @@ async def _run(request: GenerationRequest, namespace: str, deps: GenerationDeps)
         is_regeneration = False
 
     elif request.job_type == JobType.REGENERATE_FULL:
-        seed_text = await reconstruct_seed_from_namespace(deps, namespace=namespace)
+        seed_text = await _run_regenerate_full_prep(deps, namespace=namespace)
         is_regeneration = True
 
     elif request.job_type == JobType.REGENERATE_NODE:

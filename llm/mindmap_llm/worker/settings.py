@@ -32,7 +32,8 @@ from embeddings.registry import get_embedding_provider
 from providers.registry import get_decision_model, get_llm_provider
 from rag.pinecone_store import PineconeVectorStore
 from tools.registry import build_tool_registry
-from worker.tasks import chat_turn_task, generate_mindmap, regenerate_node_task
+from tracing import configure_langsmith
+from worker.tasks import chat_turn_task, generate_mindmap, regenerate_mindmap, regenerate_node_task
 
 logging.basicConfig(level=logging.INFO)
 
@@ -50,6 +51,7 @@ async def on_startup(ctx: dict) -> None:
         dense_weight=settings.pinecone.dense_weight,
     )
     ctx["tools"] = build_tool_registry(settings)
+    configure_langsmith(settings.langsmith)
     logging.info(
         "Worker started: llm=%s decision_model=%s embeddings=%s",
         llm.name,
@@ -87,7 +89,7 @@ def build_worker_redis_settings() -> RedisSettings:
 
 
 class WorkerSettings:
-    functions = [generate_mindmap, regenerate_node_task, chat_turn_task]
+    functions = [generate_mindmap, regenerate_mindmap, regenerate_node_task, chat_turn_task]
     on_startup = on_startup
     on_shutdown = on_shutdown
     redis_settings = build_worker_redis_settings()

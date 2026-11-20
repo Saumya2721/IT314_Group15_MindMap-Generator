@@ -158,6 +158,39 @@ class GenerationConfig:
 
 
 @dataclass(frozen=True)
+class LangSmithConfig:
+    """
+    LangSmith tracing configuration.
+
+    Supports both current LANGSMITH_* variables and legacy LANGCHAIN_* aliases.
+    When tracing_enabled is False, instrumentation is a complete no-op.
+    """
+
+    tracing_enabled: bool = field(
+        default_factory=lambda: _get_bool("LANGSMITH_TRACING", False) or _get_bool("LANGCHAIN_TRACING_V2", False)
+    )
+    api_key: str = field(
+        default_factory=lambda: os.environ.get("LANGSMITH_API_KEY") or os.environ.get("LANGCHAIN_API_KEY", "")
+    )
+    endpoint: str = field(
+        default_factory=lambda: os.environ.get(
+            "LANGSMITH_ENDPOINT",
+            os.environ.get("LANGCHAIN_ENDPOINT", "https://api.smith.langchain.com"),
+        )
+    )
+    project: str = field(
+        default_factory=lambda: os.environ.get(
+            "LANGSMITH_AGENT_ID",
+            os.environ.get(
+                "LANGSMITH_PROJECT",
+                os.environ.get("LANGCHAIN_PROJECT", "mindweave-dev"),
+            ),
+        )
+    )
+    environment: str = field(default_factory=lambda: os.environ.get("LANGSMITH_AGENT_ENVIRONMENT", "local"))
+
+
+@dataclass(frozen=True)
 class Settings:
     arq: ArqConfig = field(default_factory=ArqConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
@@ -166,6 +199,7 @@ class Settings:
     pinecone: PineconeConfig = field(default_factory=PineconeConfig)
     tools: ToolConfig = field(default_factory=ToolConfig)
     generation: GenerationConfig = field(default_factory=GenerationConfig)
+    langsmith: LangSmithConfig = field(default_factory=LangSmithConfig)
 
 
 @lru_cache(maxsize=1)
