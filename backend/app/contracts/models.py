@@ -26,12 +26,18 @@ class SeedAssetType(StrEnum):
     PDF = "pdf"
     IMAGE = "image"
     TEXT = "text"
+    DOCX = "docx"  # S3-BE7: Office Word document
+    PPTX = "pptx"  # S3-BE7: Office PowerPoint presentation
+    URL = "url"  # S3-BE7: URL-seeded content
 
 
 class ChunkSource(StrEnum):
     UPLOADED_SEED = "uploaded_seed"
     WEB_SEARCH = "web_search"
     ARXIV = "arxiv"
+    WIKIPEDIA = "wikipedia"  # S3-BE7: Wikipedia article chunk
+    SCHOLAR = "scholar"  # S3-BE7: Google Scholar / academic chunk
+    PAGE = "page"  # S3-BE7: Generic web page chunk
 
 
 class BranchContext(BaseModel):
@@ -97,6 +103,9 @@ class GenerationRequest(BaseModel):
 
     # Short-term memory context (US-15 / S2-BE4): rolling summary + recent message turns
     memory_context: dict[str, Any] | None = None
+
+    # S3-BE7: Optional URL seed — validated public address, no private/loopback IPs
+    seed_url: str | None = None
 
     @property
     def effective_branch_nodes(self) -> list[dict[str, Any]]:

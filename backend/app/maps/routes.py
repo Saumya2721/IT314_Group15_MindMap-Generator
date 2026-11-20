@@ -62,7 +62,7 @@ from services.export_service import (
 )
 from services.queue import enqueue_generation_job, get_redis_pool
 from services.runner import limiter
-from uploads.service import delete_map_storage_files, read_uploads, store_files
+from uploads.service import delete_map_storage_files, read_uploads, store_files, validate_seed_url
 
 from db.connection import transaction
 from db.repository import (
@@ -551,6 +551,7 @@ async def generate(
     detail_level: DetailLevel | None = Form(None),
     file: UploadFile | str | None = File(None, description="Upload a single PDF or image"),
     files: list[UploadFile | str] | UploadFile | str | None = File(None, description="Or upload multiple files"),
+    seed_url: str | None = Form(None, description="Optional public URL to use as generation seed (S3-BE7)"),
     uid: UUID = Depends(current_user_id),
 ):
     pool = pool_of(request)
@@ -561,6 +562,13 @@ async def generate(
     topic = (topic or "").strip() or None
     ideas = (ideas or "").strip() or None
     combined_files = []
+
+    # S3-BE7: normalise and validate the optional URL seed
+    seed_url = (seed_url or "").strip() or None
+    if seed_url:
+        url_ok, url_err = validate_seed_url(seed_url)
+        if not url_ok:
+            raise HTTPException(422, url_err)
 
     def _is_file(obj: Any) -> bool:
         return (
@@ -581,8 +589,8 @@ async def generate(
             combined_files.append(files)
 
     has_files = bool(combined_files)
-    if not (topic or ideas or has_files):
-        raise HTTPException(422, "Provide a topic, some ideas, or at least one file.")
+    if not (topic or ideas or has_files or seed_url):
+        raise HTTPException(422, "Provide a topic, some ideas, a file, or a seed URL.")
     if topic and len(topic) > 500:
         raise HTTPException(422, "Topic is too long (max 500 characters).")
     if ideas and len(ideas) > 20000:
@@ -647,6 +655,7 @@ async def generate(
             detail_level=detail_level.value if detail_level else None,
             callback_base_url=settings.BACKEND_INTERNAL_URL,
             callback_token=callback_token,
+            seed_url=seed_url,
         )
         enqueued_id = await enqueue_generation_job(redis_pool, gen_req.model_dump(mode="json"))
         if not enqueued_id:
