@@ -41,6 +41,7 @@ from maps.routes import router as maps_router
 from memory.routes import router as memory_router
 
 # API routers
+from routes.admin import router as admin_router
 from routes.auth import router as auth_router
 from routes.internal import chat_callback_router
 from routes.internal import router as internal_router
@@ -169,6 +170,7 @@ app.include_router(chat_callback_router)
 app.include_router(snapshots_router)
 app.include_router(chat_router, prefix="/api")
 app.include_router(memory_router, prefix="/api")
+app.include_router(admin_router, prefix="/api")
 
 
 @app.get("/", include_in_schema=False)
