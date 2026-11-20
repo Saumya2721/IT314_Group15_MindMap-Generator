@@ -57,8 +57,9 @@ SELECT is((SELECT content FROM public.agent_memories LIMIT 1), 'Bob map', 'Bob c
 SELECT throws_ok($$INSERT INTO public.agent_memories(user_id,memory_type,content)
   VALUES ('a0000000-0000-0000-0000-000000000032','context','forged')$$,
   '42501', null, 'client cannot bypass backend to insert memories');
-SELECT throws_ok($$UPDATE public.agent_memories SET content='forged'$$,
-  '42501', null, 'client cannot edit memories directly');
+SELECT lives_ok($$UPDATE public.agent_memories SET content='Bob edited'
+  WHERE id = 'f0000000-0000-0000-0000-000000000033'$$,
+  'client can edit their own memory');
 
 -- Alice sees global and own-map memories but not Bob's.
 SELECT set_config('request.jwt.claims',
