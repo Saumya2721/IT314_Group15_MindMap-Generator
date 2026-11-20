@@ -23,7 +23,7 @@ from ingestion.extractors.base import (
     detect_structural_cues,
 )
 from ingestion.extractors.docx import extract_text_from_docx
-from ingestion.extractors.image import extract_text_from_image
+from ingestion.extractors.image import extract_text_from_image, extract_text_with_tesseract
 from ingestion.extractors.pdf import extract_text_from_pdf
 from ingestion.extractors.pptx import extract_text_from_pptx
 
@@ -315,10 +315,11 @@ def get_default_registry() -> ExtractorRegistry:
                 ],
                 extensions=[".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tiff", ".gif"],
                 handler=extract_text_from_image,
+                fallback_handler=extract_text_with_tesseract,
                 max_size_bytes=20 * 1024 * 1024,
                 timeout_seconds=20.0,
                 asset_type="image",
-                description="Extracts text and diagrams from image uploads via OCR.",
+                description="Extracts text and diagrams from image uploads via Gemini Flash vision or OCR fallback.",
             )
         )
 
