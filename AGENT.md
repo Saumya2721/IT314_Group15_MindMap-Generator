@@ -123,3 +123,43 @@ npm run build                       # Vite production build (0 errors)
 ```powershell
 supabase test db                    # pgTAP schema and policy test suite
 ```
+
+---
+
+## 5. LangSmith Observability & Quality-Gate Evaluation
+
+### Environment Variables
+Set these variables in `llm/.env` (never commit real credentials):
+```dotenv
+LANGSMITH_TRACING=true
+LANGSMITH_ENDPOINT=https://apac.api.smith.langchain.com
+LANGSMITH_API_KEY=ls-...             # from https://smith.langchain.com → Settings → API Keys
+LANGSMITH_AGENT_ID=mindweave-dev     # project name in dashboard
+LANGSMITH_AGENT_ENVIRONMENT=local
+```
+
+### Architecture & Instrumentation
+- `configure_langsmith()` runs once at worker process initialization in `llm/mindmap_llm/worker/settings.py::on_startup`.
+- When `LANGSMITH_TRACING=false` (or unset), tracing is a complete no-op (zero network overhead, safe fallback).
+- Auto-instrumentation via LangGraph captures all graph transitions (`ingest`, `classify_routing`, `retrieve`, `generate`, `validate`).
+- Explicitly instrumented spans (`@trace_span`):
+  - `generate_mindmap`: Root chain span for full generation jobs
+  - `regenerate_mindmap` & `regenerate_full`: Spans for full map regeneration
+  - `regenerate_node_task` & `regenerate_node`: Spans for node-level regeneration
+  - `chat_turn_task`: Root span for conversational turns
+  - `generate_node` & `generate_branch_node`: LLM node synthesis spans
+  - `plan_research_queries`: Sub-query planning LLM span
+  - `groq_generate`: Raw LLM completions with token usage metadata
+  - `reconstruct_seed_from_namespace`: Vector store seed reconstruction span
+
+### Dashboard Projects
+- **Dev environment**: `LANGSMITH_AGENT_ID=mindweave-dev`
+- **Prod environment**: `LANGSMITH_AGENT_ID=mindweave-prod`
+
+### Quality-Gate Dataset
+Run the one-time benchmark seed loader:
+```powershell
+Set-Location "llm"
+python tests/evaluation/langsmith_dataset.py
+```
+This uploads the S2-L13 benchmark cases into the `mindweave-eval-seeds` dataset on LangSmith for tracking generation quality gates.

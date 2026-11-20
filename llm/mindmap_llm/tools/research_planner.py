@@ -12,6 +12,7 @@ from collections.abc import Sequence
 
 from providers.base import LLMProvider, Message
 from tools.base import Tool, ToolError, ToolResult
+from tracing import trace_span
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,7 @@ Output Requirements:
 """
 
 
+@trace_span("plan_research_queries", run_type="chain")
 async def plan_research_queries(
     *,
     llm: LLMProvider,

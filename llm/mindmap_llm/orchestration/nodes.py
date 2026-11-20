@@ -44,6 +44,7 @@ from rag.retrieval import RetrievedChunk, rerank_context, retrieve_context
 from seed.normalizer import NoUsableSeedContent
 from tools.base import ToolError
 from tools.research_planner import execute_research_queries, plan_research_queries
+from tracing import trace_span
 from validation.schema import (
     DraftMindMap,
     ValidationFailure,
@@ -394,6 +395,7 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
             "quality_warnings": retrieval_warnings,
         }
 
+    @trace_span("generate_node", run_type="chain")
     async def generate_node(state: GenerationState) -> dict:
         use_two_pass = state.get("two_pass_enabled", deps.settings.generation.enable_two_pass)
         if use_two_pass:
@@ -624,6 +626,7 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
         await deps.callback.progress(40)
         return {"retrieved_chunks": reranked, "breadcrumb_path": breadcrumb}
 
+    @trace_span("generate_branch_node", run_type="chain")
     async def generate_branch_node(state: GenerationState) -> dict:
         selected_node = state.get("selected_node")
         if selected_node is None:
@@ -734,6 +737,7 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
     }
 
 
+@trace_span("reconstruct_seed_from_namespace", run_type="chain")
 async def reconstruct_seed_from_namespace(deps: GenerationDeps, *, namespace: str) -> str:
     """Regeneration's replacement for the old load_regeneration_context:
     pulls every uploaded_seed chunk back out of Pinecone (no re-upload,

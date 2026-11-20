@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import Any
 
 from providers.base import LLMProvider, LLMResponse, Message, ToolCall, ToolSpec
+from tracing import trace_span
 
 
 class GroqProvider(LLMProvider):
@@ -77,6 +78,7 @@ class GroqProvider(LLMProvider):
             for t in tools
         ]
 
+    @trace_span("groq_generate", run_type="llm")
     async def generate(
         self,
         messages: list[Message],
