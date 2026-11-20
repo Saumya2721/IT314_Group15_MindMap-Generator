@@ -44,6 +44,7 @@ from rag.ingestion import ingest_seed_text, ingest_tool_result
 from rag.retrieval import RetrievedChunk, rerank_context, retrieve_context
 from seed.normalizer import NoUsableSeedContent
 from tools.base import ToolError
+from tools.policy import ResearchTimeBudget
 from tools.research_planner import execute_research_queries, plan_research_queries
 from tracing import annotate_current_span, trace_span
 from validation.schema import (
@@ -287,13 +288,14 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
                     )
                 tool_call_log.append({"tool": tool_name, "status": "ok", "result_count": len(results)})
         else:
-            # S2-L16: Multi-query research planner with parallel execution & quota protection
+            # S2-L16 / S3-L1: Multi-query research planner with parallel execution, quota protection & research time budget (S3-A2)
             sub_queries = await plan_research_queries(
                 llm=deps.llm,
                 seed_text=state["seed_text"],
                 n_queries=deps.settings.generation.research_queries_per_tool,
             )
             logger.info("Planned %d research sub-queries: %s", len(sub_queries), sub_queries)
+            research_budget = ResearchTimeBudget(deps.settings.tools.research_time_budget_s)
 
             for tool_name in active_tools:
                 tool = deps.tools[tool_name]
@@ -301,6 +303,7 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
                     tool=tool,
                     queries=sub_queries,
                     max_queries=deps.settings.generation.max_search_queries_per_tool,
+                    budget=research_budget,
                 )
 
                 source = ChunkSource.WEB_SEARCH if tool_name == "web_search" else ChunkSource.ARXIV
