@@ -619,6 +619,7 @@ dependencies = [
     { name = "groq" },
     { name = "httpx" },
     { name = "langgraph" },
+    { name = "langsmith" },
     { name = "numpy" },
     { name = "pillow" },
     { name = "pinecone" },
