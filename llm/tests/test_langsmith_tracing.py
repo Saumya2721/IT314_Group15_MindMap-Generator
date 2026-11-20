@@ -9,22 +9,22 @@ from unittest.mock import patch
 
 import pytest
 from config import LangSmithConfig, Settings
-from tracing import configure_langsmith, trace_span
+from tracing import annotate_current_span, configure_langsmith, trace_span
 from worker.settings import WorkerSettings
 from worker.tasks import (
     chat_turn_task,
     generate_mindmap,
-    regenerate_mindmap,
     regenerate_node_task,
 )
 
 
 def test_langsmith_config_defaults():
-    cfg = LangSmithConfig()
-    assert cfg.tracing_enabled is False
-    assert cfg.endpoint == "https://api.smith.langchain.com"
-    assert cfg.project == "mindweave-dev"
-    assert cfg.environment == "local"
+    with patch.dict(os.environ, {}, clear=True):
+        cfg = LangSmithConfig()
+        assert cfg.tracing_enabled is False
+        assert cfg.endpoint == "https://api.smith.langchain.com"
+        assert cfg.project == "mindweave-dev"
+        assert cfg.environment == "local"
 
 
 def test_langsmith_config_custom_env():
@@ -51,6 +51,10 @@ def test_langsmith_config_legacy_aliases():
         os.environ,
         {
             "LANGSMITH_TRACING": "",
+            "LANGSMITH_API_KEY": "",
+            "LANGSMITH_PROJECT": "",
+            "LANGSMITH_AGENT_ID": "",
+            "LANGSMITH_ENDPOINT": "",
             "LANGCHAIN_TRACING_V2": "true",
             "LANGCHAIN_API_KEY": "legacy-key",
             "LANGCHAIN_PROJECT": "legacy-project",
@@ -102,10 +106,14 @@ async def test_trace_span_async_function():
     assert res == "hello mindweave"
 
 
+def test_annotate_current_span_noop_when_untraced():
+    # Calling annotate_current_span without active trace must not raise
+    annotate_current_span(name="new_name", tags=["test"], metadata={"k": "v"})
+
+
 def test_worker_settings_functions_registration():
     expected_functions = {
         generate_mindmap,
-        regenerate_mindmap,
         regenerate_node_task,
         chat_turn_task,
     }

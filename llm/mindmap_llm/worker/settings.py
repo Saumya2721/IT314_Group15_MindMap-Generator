@@ -33,7 +33,7 @@ from providers.registry import get_decision_model, get_llm_provider
 from rag.pinecone_store import PineconeVectorStore
 from tools.registry import build_tool_registry
 from tracing import configure_langsmith
-from worker.tasks import chat_turn_task, generate_mindmap, regenerate_mindmap, regenerate_node_task
+from worker.tasks import chat_turn_task, generate_mindmap, regenerate_node_task
 
 logging.basicConfig(level=logging.INFO)
 
@@ -89,7 +89,7 @@ def build_worker_redis_settings() -> RedisSettings:
 
 
 class WorkerSettings:
-    functions = [generate_mindmap, regenerate_mindmap, regenerate_node_task, chat_turn_task]
+    functions = [generate_mindmap, regenerate_node_task, chat_turn_task]
     on_startup = on_startup
     on_shutdown = on_shutdown
     redis_settings = build_worker_redis_settings()

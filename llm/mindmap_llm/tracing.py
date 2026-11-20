@@ -94,3 +94,32 @@ def trace_span(
             return fn
 
         return _noop
+
+
+def annotate_current_span(
+    *,
+    name: str | None = None,
+    tags: list[str] | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    """
+    Dynamically update the active LangSmith span's name, tags, or metadata.
+    Safe no-op if tracing is disabled or no active run exists.
+    """
+    try:
+        from langsmith.run_helpers import get_current_run_tree
+
+        run = get_current_run_tree()
+        if not run:
+            return
+        if name:
+            run.name = name
+        if tags:
+            if run.tags is None:
+                run.tags = []
+            run.tags.extend(tags)
+        if metadata and hasattr(run, "extra") and isinstance(run.extra, dict):
+            run_metadata = run.extra.setdefault("metadata", {})
+            run_metadata.update(metadata)
+    except Exception:  # noqa: BLE001
+        pass

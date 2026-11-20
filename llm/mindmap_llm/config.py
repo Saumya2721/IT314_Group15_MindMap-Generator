@@ -173,18 +173,18 @@ class LangSmithConfig:
         default_factory=lambda: os.environ.get("LANGSMITH_API_KEY") or os.environ.get("LANGCHAIN_API_KEY", "")
     )
     endpoint: str = field(
-        default_factory=lambda: os.environ.get(
-            "LANGSMITH_ENDPOINT",
-            os.environ.get("LANGCHAIN_ENDPOINT", "https://api.smith.langchain.com"),
+        default_factory=lambda: (
+            os.environ.get("LANGSMITH_ENDPOINT")
+            or os.environ.get("LANGCHAIN_ENDPOINT")
+            or "https://api.smith.langchain.com"
         )
     )
     project: str = field(
-        default_factory=lambda: os.environ.get(
-            "LANGSMITH_AGENT_ID",
-            os.environ.get(
-                "LANGSMITH_PROJECT",
-                os.environ.get("LANGCHAIN_PROJECT", "mindweave-dev"),
-            ),
+        default_factory=lambda: (
+            os.environ.get("LANGSMITH_AGENT_ID")
+            or os.environ.get("LANGSMITH_PROJECT")
+            or os.environ.get("LANGCHAIN_PROJECT")
+            or "mindweave-dev"
         )
     )
     environment: str = field(default_factory=lambda: os.environ.get("LANGSMITH_AGENT_ENVIRONMENT", "local"))

@@ -38,7 +38,7 @@ from orchestration.deps import GenerationDeps
 from orchestration.graph import run_generation, run_regenerate_node
 from orchestration.nodes import NoPriorSeedError, reconstruct_seed_from_namespace
 from seed.normalizer import NoUsableSeedContent, SeedSubmission, normalize_seed
-from tracing import trace_span
+from tracing import annotate_current_span, trace_span
 from worker.files import fetch_all
 
 logger = logging.getLogger(__name__)
@@ -53,6 +53,18 @@ async def generate_mindmap(ctx: dict, request_payload: dict) -> dict:
     rather than Pydantic models directly."""
     request = GenerationRequest.model_validate(request_payload)
     namespace = str(request.map_id)
+
+    if request.job_type == JobType.REGENERATE_FULL:
+        annotate_current_span(
+            name="regenerate_mindmap",
+            tags=["regenerate_full"],
+            metadata={"job_type": "regenerate_full", "map_id": str(request.map_id)},
+        )
+    else:
+        annotate_current_span(
+            tags=["generate"],
+            metadata={"job_type": "generate", "map_id": str(request.map_id)},
+        )
 
     callback = ctx.get("callback") or JobCallbackClient(
         job_id=request.job_id,
@@ -107,12 +119,6 @@ async def generate_mindmap(ctx: dict, request_payload: dict) -> dict:
         await callback.aclose()
 
     return result.model_dump(mode="json")
-
-
-@trace_span("regenerate_mindmap", run_type="chain")
-async def regenerate_mindmap(ctx: dict, request_payload: dict) -> dict:
-    """ARQ entry point for complete regeneration (S3-OBS)."""
-    return await generate_mindmap(ctx, request_payload)
 
 
 @trace_span("regenerate_node", run_type="chain")
@@ -218,6 +224,11 @@ async def regenerate_node_task(ctx: dict, request_payload: dict) -> dict:
     request.job_type = JobType.REGENERATE_NODE
     namespace = str(request.map_id)
 
+    annotate_current_span(
+        tags=["regenerate_node"],
+        metadata={"job_type": "regenerate_node", "map_id": str(request.map_id)},
+    )
+
     callback = ctx.get("callback") or JobCallbackClient(
         job_id=request.job_id,
         base_url=request.callback_base_url,
@@ -263,6 +274,11 @@ async def chat_turn_task(ctx: dict, request_payload: dict) -> dict:
     request = ChatTurnRequest.model_validate(request_payload)
     job_id = request.job_id or uuid4()
     request.job_id = job_id
+
+    annotate_current_span(
+        tags=["chat_turn"],
+        metadata={"job_type": "chat_turn", "map_id": str(request.map_id)},
+    )
 
     callback = ctx.get("callback") or JobCallbackClient(
         job_id=job_id,
