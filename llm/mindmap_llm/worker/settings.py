@@ -29,7 +29,7 @@ load_dotenv(find_dotenv())
 from arq.connections import RedisSettings
 from config import get_settings
 from embeddings.registry import get_embedding_provider
-from providers.registry import get_decision_model, get_llm_provider
+from providers.registry import get_decision_model
 from rag.pinecone_store import PineconeVectorStore
 from tools.policy import ToolQuotaLimiter
 from tools.registry import build_tool_registry
@@ -41,7 +41,15 @@ logging.basicConfig(level=logging.INFO)
 
 async def on_startup(ctx: dict) -> None:
     settings = get_settings()
-    llm = get_llm_provider(settings)
+    from dynamic_config import DynamicConfigManager
+
+    config_manager = DynamicConfigManager(settings=settings)
+    await config_manager.load_initial()
+    config_manager.start_background_refresh()
+    ctx["dynamic_config"] = config_manager
+    ctx["prompt_manager"] = config_manager.prompt_manager
+
+    llm = config_manager.get_llm_provider()
     ctx["settings"] = settings
     ctx["llm"] = llm
     ctx["decision_model"] = get_decision_model(settings, llm_fallback=llm)
@@ -65,7 +73,9 @@ async def on_startup(ctx: dict) -> None:
 
 
 async def on_shutdown(ctx: dict) -> None:
-    pass  # httpx clients inside providers are per-call; nothing persistent to close here today
+    config_manager = ctx.get("dynamic_config")
+    if config_manager:
+        await config_manager.stop_background_refresh()
 
 
 def build_worker_redis_settings() -> RedisSettings:

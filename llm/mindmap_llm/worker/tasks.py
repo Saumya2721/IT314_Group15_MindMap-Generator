@@ -71,8 +71,12 @@ async def generate_mindmap(ctx: dict, request_payload: dict) -> dict:
         base_url=request.callback_base_url,
         token=request.callback_token,
     )
+    dynamic_cfg = ctx.get("dynamic_config")
+    active_llm = dynamic_cfg.get_llm_provider() if dynamic_cfg else ctx["llm"]
+    prompt_mgr = dynamic_cfg.prompt_manager if dynamic_cfg else ctx.get("prompt_manager")
+
     deps = GenerationDeps(
-        llm=ctx["llm"],
+        llm=active_llm,
         decision_model=ctx["decision_model"],
         embedding_provider=ctx["embedding_provider"],
         vector_store=ctx["vector_store"],
@@ -80,6 +84,8 @@ async def generate_mindmap(ctx: dict, request_payload: dict) -> dict:
         settings=ctx["settings"],
         callback=callback,
         redis_client=ctx.get("redis"),
+        prompt_manager=prompt_mgr,
+        dynamic_config=dynamic_cfg,
     )
 
     try:
@@ -235,8 +241,12 @@ async def regenerate_node_task(ctx: dict, request_payload: dict) -> dict:
         base_url=request.callback_base_url,
         token=request.callback_token,
     )
+    dynamic_cfg = ctx.get("dynamic_config")
+    active_llm = dynamic_cfg.get_llm_provider() if dynamic_cfg else ctx["llm"]
+    prompt_mgr = dynamic_cfg.prompt_manager if dynamic_cfg else ctx.get("prompt_manager")
+
     deps = GenerationDeps(
-        llm=ctx["llm"],
+        llm=active_llm,
         decision_model=ctx["decision_model"],
         embedding_provider=ctx["embedding_provider"],
         vector_store=ctx["vector_store"],
@@ -244,6 +254,8 @@ async def regenerate_node_task(ctx: dict, request_payload: dict) -> dict:
         settings=ctx["settings"],
         callback=callback,
         redis_client=ctx.get("redis"),
+        prompt_manager=prompt_mgr,
+        dynamic_config=dynamic_cfg,
     )
 
     try:
@@ -287,8 +299,12 @@ async def chat_turn_task(ctx: dict, request_payload: dict) -> dict:
         base_url=request.callback_base_url,
         token=request.callback_token,
     )
+    dynamic_cfg = ctx.get("dynamic_config")
+    active_llm = dynamic_cfg.get_llm_provider() if dynamic_cfg else ctx["llm"]
+    prompt_mgr = dynamic_cfg.prompt_manager if dynamic_cfg else ctx.get("prompt_manager")
+
     deps = GenerationDeps(
-        llm=ctx["llm"],
+        llm=active_llm,
         decision_model=ctx["decision_model"],
         embedding_provider=ctx["embedding_provider"],
         vector_store=ctx["vector_store"],
@@ -296,6 +312,8 @@ async def chat_turn_task(ctx: dict, request_payload: dict) -> dict:
         settings=ctx["settings"],
         callback=callback,
         redis_client=ctx.get("redis"),
+        prompt_manager=prompt_mgr,
+        dynamic_config=dynamic_cfg,
     )
 
     try:

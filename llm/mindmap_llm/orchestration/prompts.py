@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass, replace
 from string import Template
 from typing import TYPE_CHECKING, Any, Literal
 
 from orchestration.policy import SeedMode
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from contracts.models import NodeDraft
@@ -176,7 +179,32 @@ $example
 )
 
 
-def build_generation_system_prompt(targets: SizeTargets, mode: SeedMode) -> str:
+def build_generation_system_prompt(
+    targets: SizeTargets,
+    mode: SeedMode,
+    prompt_manager: Any = None,
+) -> str:
+    if prompt_manager is not None and hasattr(prompt_manager, "get_template"):
+        custom_tmpl = prompt_manager.get_template("generation_system")
+        if isinstance(custom_tmpl, str) and custom_tmpl.strip():
+            try:
+                return Template(custom_tmpl).safe_substitute(
+                    level=targets.level,
+                    min_nodes=targets.min_nodes,
+                    max_nodes=targets.max_nodes,
+                    min_branches=targets.min_branches,
+                    max_branches=targets.max_branches,
+                    min_depth=targets.min_depth,
+                    max_depth=targets.max_depth,
+                    mode_rule=_MODE_RULES[mode],
+                    example=json.dumps(_EXAMPLE_MAP, ensure_ascii=False),
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to render custom generation_system template: %s, falling back to default",
+                    exc,
+                )
+
     return _SYSTEM_TEMPLATE.substitute(
         level=targets.level,
         min_nodes=targets.min_nodes,
@@ -471,7 +499,11 @@ def build_outline_user_prompt(
     return "\n".join(parts)
 
 
-def build_regenerate_node_system_prompt() -> str:
+def build_regenerate_node_system_prompt(prompt_manager: Any = None) -> str:
+    if prompt_manager is not None and hasattr(prompt_manager, "get_template"):
+        tmpl = prompt_manager.get_template("regenerate_node_system")
+        if isinstance(tmpl, str) and tmpl.strip():
+            return tmpl
     return _REGENERATE_NODE_SYSTEM_TEMPLATE
 
 
