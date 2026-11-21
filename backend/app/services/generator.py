@@ -45,12 +45,43 @@ except ImportError:
     except ImportError:
         GENERATION_SYSTEM_PROMPT = ""
         JSONExtractionError = Exception
-        build_generation_user_prompt = None
-        extract_json_object = None
+
+        def _fallback_build_generation_user_prompt(
+            seed_text: str,
+            detail_level: str = "overview",
+            supporting_context: list[str] | None = None,
+            regeneration_instruction: str | None = None,
+            previous_validation_errors: list[str] | None = None,
+        ) -> str:
+            parts = [f"Topic / Ideas:\n{seed_text}", f"Detail Level: {detail_level}"]
+            if supporting_context:
+                parts.append("Context:\n" + "\n".join(supporting_context))
+            if regeneration_instruction:
+                parts.append(f"Instruction:\n{regeneration_instruction}")
+            if previous_validation_errors:
+                parts.append("Errors to fix:\n" + "\n".join(previous_validation_errors))
+            return "\n\n".join(parts)
+
+        build_generation_user_prompt = _fallback_build_generation_user_prompt
+
+        def _fallback_extract_json_object(text: str) -> dict[str, Any]:
+            import json
+            import re
+
+            match = re.search(r"\{.*\}", text, re.DOTALL)
+            if match:
+                return json.loads(match.group(0))
+            raise JSONExtractionError("No JSON object found")
+
+        extract_json_object = _fallback_extract_json_object
         LLMProvider = Any
         Message = Any
         ValidationFailure = Exception
-        validate_draft = None
+
+        def _fallback_validate_draft(draft: dict[str, Any]) -> dict[str, Any]:
+            return draft
+
+        validate_draft = _fallback_validate_draft
 
 logger = logging.getLogger(__name__)
 
