@@ -18,6 +18,7 @@ dependencies = [
     "pypdf>=4.0.0",
     "pytesseract>=0.3.10",
     "pillow>=10.0.0",
+    "google-genai>=0.1.1",
     "langsmith>=0.14.0",
 ]
 

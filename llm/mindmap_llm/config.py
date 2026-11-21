@@ -204,6 +204,25 @@ class LangSmithConfig:
 
 
 @dataclass(frozen=True)
+class VisionConfig:
+    """Multimodal vision model configuration for image ingestion."""
+
+    extractor: str = field(default_factory=lambda: os.environ.get("IMAGE_EXTRACTOR", "gemini").lower())
+    gemini_api_key: str = field(
+        default_factory=lambda: os.environ.get("GEMINI_API_KEY", "") or os.environ.get("GOOGLE_API_KEY", "")
+    )
+    gemini_model: str = field(default_factory=lambda: os.environ.get("GEMINI_VISION_MODEL", "gemini-2.0-flash"))
+    openrouter_api_key: str = field(default_factory=lambda: os.environ.get("OPENROUTER_API_KEY", ""))
+    openrouter_model: str = field(
+        default_factory=lambda: os.environ.get("OPENROUTER_VISION_MODEL", "google/gemini-2.0-flash-001")
+    )
+    openrouter_api_base: str = field(
+        default_factory=lambda: os.environ.get("OPENROUTER_API_BASE", "https://openrouter.ai/api/v1")
+    )
+    timeout_s: float = field(default_factory=lambda: _get_float("VISION_TIMEOUT_S", 20.0))
+
+
+@dataclass(frozen=True)
 class Settings:
     arq: ArqConfig = field(default_factory=ArqConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
@@ -213,6 +232,7 @@ class Settings:
     tools: ToolConfig = field(default_factory=ToolConfig)
     generation: GenerationConfig = field(default_factory=GenerationConfig)
     langsmith: LangSmithConfig = field(default_factory=LangSmithConfig)
+    vision: VisionConfig = field(default_factory=VisionConfig)
 
 
 @lru_cache(maxsize=1)
