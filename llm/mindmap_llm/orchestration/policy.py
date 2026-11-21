@@ -24,6 +24,7 @@ class ResearchPlan:
     mode: SeedMode
     web_search: bool | None
     arxiv_search: bool | None
+    wikipedia: bool | None
     reason: str
 
 
@@ -55,5 +56,11 @@ def plan_research(
         elif norm_purpose in NON_RESEARCH_PURPOSES:
             arxiv = False
 
+    # S3-T1 / fixes #184: Wikipedia research tool is used for topic-only seeds,
+    # where an authoritative reference article grounds the mind map.
+    wikipedia: bool | None = None
+    if mode == "topic" and "wikipedia" in available_tools:
+        wikipedia = True
+
     reason = f"mode={mode}, purpose={purpose or 'unset'}"
-    return ResearchPlan(mode=mode, web_search=web, arxiv_search=arxiv, reason=reason)
+    return ResearchPlan(mode=mode, web_search=web, arxiv_search=arxiv, wikipedia=wikipedia, reason=reason)

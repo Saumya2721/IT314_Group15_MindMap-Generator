@@ -66,8 +66,10 @@ async def ingest_tool_result(
     source_title: str | None,
     source_url: str,
     embedding_provider: EmbeddingProvider,
+    license: str | None = None,
+    attribution: str | None = None,
 ) -> int:
-    """Same as ingest_seed_text but for web_search/arxiv tool output,
+    """Same as ingest_seed_text but for web_search/arxiv/wikipedia tool output,
     where source_url is always populated (mirrors the old
     chk_embeddings_source_url constraint, now enforced by convention
     rather than a DB CHECK)."""
@@ -84,6 +86,8 @@ async def ingest_tool_result(
             generation_job_id=generation_job_id,
             source_title=source_title,
             source_url=source_url,
+            license=license,
+            attribution=attribution,
             section_path=chunk.section_path,
             heading_level=chunk.heading_level,
             page_number=getattr(chunk, "page_number", None),

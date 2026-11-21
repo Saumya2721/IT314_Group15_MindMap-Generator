@@ -38,6 +38,15 @@ from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from maps.routes import router as maps_router
+from memories.routes import (
+    internal_router as internal_memory_router,
+)
+from memories.routes import (
+    memories_plural_router,
+)
+from memories.routes import (
+    router as agent_memory_router,
+)
 from memory.routes import router as memory_router
 
 # API routers
@@ -170,6 +179,12 @@ app.include_router(chat_callback_router)
 app.include_router(snapshots_router)
 app.include_router(chat_router, prefix="/api")
 app.include_router(memory_router, prefix="/api")
+app.include_router(agent_memory_router, prefix="/api")
+app.include_router(agent_memory_router)
+app.include_router(memories_plural_router, prefix="/api")
+app.include_router(memories_plural_router)
+app.include_router(internal_memory_router)
+app.include_router(internal_memory_router, prefix="/api")
 app.include_router(admin_router, prefix="/api")
 app.include_router(admin_router, include_in_schema=False)
 
