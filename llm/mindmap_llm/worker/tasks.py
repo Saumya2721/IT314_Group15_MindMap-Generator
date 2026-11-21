@@ -34,6 +34,7 @@ from contracts.models import (
     RejectedFile,
     ToolCallLogEntry,
 )
+from memory.integration import fire_and_forget_memory_extraction, retrieve_and_inject_memories
 from orchestration.deps import GenerationDeps
 from orchestration.graph import run_generation, run_regenerate_node
 from orchestration.nodes import NoPriorSeedError, reconstruct_seed_from_namespace
@@ -88,10 +89,25 @@ async def generate_mindmap(ctx: dict, request_payload: dict) -> dict:
         dynamic_config=dynamic_cfg,
     )
 
+    # S3-L3: Retrieve user memories before generation and inject into initial state.
+    # Gracefully skips if user_id/callback_base_url absent or backend unreachable.
+    gen_query = request.topic or request.ideas or "mind map generation"
+    _mem_system_prompt, retrieved_memories = await retrieve_and_inject_memories(
+        system_prompt="",  # We pass memories via state's long_term_memories list instead
+        query=gen_query,
+        user_id=request.user_id,
+        map_id=request.map_id,
+        callback_base_url=request.callback_base_url,
+        callback_token=request.callback_token,
+        llm_provider=deps.settings.llm.provider,
+        llm_model=deps.settings.llm.model,
+    )
+    # Format memories as strings for injection via state.long_term_memories
+    long_term_memories = [f"[{m.memory_type}] {m.content}" for m in retrieved_memories if m.is_active]
+
     try:
-        result = await _run(request, namespace, deps)
-    except (NoUsableSeedContent, NoPriorSeedError) as exc:
-        # "Nothing to generate from" — a clean reject, not a crash.
+        result = await _run(request, namespace, deps, long_term_memories=long_term_memories)
+    except (NoUsableSeedContent, NoPriorSeedError) as exc:  # "Nothing to generate from" — a clean reject, not a crash.
         # NoUsableSeedContent: every uploaded file + text was unusable (generate).
         # NoPriorSeedError: no prior seed to regenerate from (reconstruct_seed_from_namespace).
         result = GenerationResult(
@@ -122,6 +138,19 @@ async def generate_mindmap(ctx: dict, request_payload: dict) -> dict:
         await _send_terminal(callback, result)
     else:
         await _send_terminal(callback, result)
+        # S3-L3: Fire-and-forget background memory extraction after successful generation.
+        if result.status == "completed" and request.user_id:
+            user_inputs = [s for s in [request.topic, request.ideas] if s]
+            fire_and_forget_memory_extraction(
+                llm=deps.llm,
+                callback_base_url=request.callback_base_url,
+                callback_token=request.callback_token,
+                user_id=request.user_id,
+                map_id=request.map_id,
+                user_inputs=user_inputs,
+                interaction_summary=f"Generated mind map on: {gen_query}",
+                existing_memories=retrieved_memories,
+            )
     finally:
         await callback.aclose()
 
@@ -317,6 +346,27 @@ async def chat_turn_task(ctx: dict, request_payload: dict) -> dict:
     )
 
     try:
+        # S3-L3: Retrieve user memories from backend and inject into request's memory context.
+        # Uses request.memory_context["user_id"] if present (passed by backend via ChatTurnRequest).
+        chat_user_id = (request.memory_context or {}).get("user_id") if request.memory_context else None
+        _mem_sys, chat_retrieved_memories = await retrieve_and_inject_memories(
+            system_prompt="",
+            query=request.message,
+            user_id=chat_user_id,
+            map_id=request.map_id,
+            callback_base_url=request.callback_base_url,
+            callback_token=request.callback_token,
+            llm_provider=deps.settings.llm.provider,
+            llm_model=deps.settings.llm.model,
+        )
+        # Inject formatted memories into request.memory_context so handlers can read them
+        if chat_retrieved_memories:
+            existing_ctx = dict(request.memory_context or {})
+            existing_ctx["long_term_memories"] = [
+                f"[{m.memory_type}] {m.content}" for m in chat_retrieved_memories if m.is_active
+            ]
+            request.memory_context = existing_ctx
+
         response = await run_chat_turn(deps, request)
 
         if response.answer:
@@ -364,6 +414,18 @@ async def chat_turn_task(ctx: dict, request_payload: dict) -> dict:
             cited_node_ids=response.cited_node_ids,
             source_refs=response.source_refs,
         )
+        # S3-L3: Fire-and-forget background memory extraction after chat turn.
+        if chat_user_id:
+            fire_and_forget_memory_extraction(
+                llm=deps.llm,
+                callback_base_url=request.callback_base_url,
+                callback_token=request.callback_token,
+                user_id=chat_user_id,
+                map_id=request.map_id,
+                user_inputs=[request.message],
+                interaction_summary=assistant_message[:300] if assistant_message else "",
+                existing_memories=chat_retrieved_memories,
+            )
         return response.model_dump(mode="json")
     except Exception as exc:  # noqa: BLE001 - catch-all for terminal failure reporting
         logger.exception("job %s: unhandled exception during chat turn", job_id)
@@ -390,7 +452,12 @@ async def _run_regenerate_full_prep(deps: GenerationDeps, namespace: str) -> str
     return await reconstruct_seed_from_namespace(deps, namespace=namespace)
 
 
-async def _run(request: GenerationRequest, namespace: str, deps: GenerationDeps) -> GenerationResult:
+async def _run(
+    request: GenerationRequest,
+    namespace: str,
+    deps: GenerationDeps,
+    long_term_memories: list[str] | None = None,
+) -> GenerationResult:
     seed_assets = []
     rejected_files: list[RejectedFile] = []
 
@@ -429,6 +496,7 @@ async def _run(request: GenerationRequest, namespace: str, deps: GenerationDeps)
             "is_regeneration": is_regeneration,
             "purpose": request.purpose,
             "seed_has_files": bool(request.files or request.seed_has_files),
+            "long_term_memories": long_term_memories or [],
         },
         max_retries=deps.settings.generation.max_generation_retries,
     )
