@@ -543,10 +543,11 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
         mode: SeedMode = state.get("mode", "document")
         prompt_mgr = getattr(deps, "prompt_manager", None)
         if not enable_dynamic:
-            if prompt_mgr and hasattr(prompt_mgr, "get_template"):
-                system_prompt = prompt_mgr.get_template("generation_system") or GENERATION_SYSTEM_PROMPT
-            else:
-                system_prompt = GENERATION_SYSTEM_PROMPT
+            system_prompt = GENERATION_SYSTEM_PROMPT
+            if prompt_mgr is not None and hasattr(prompt_mgr, "get_template"):
+                tmpl = prompt_mgr.get_template("generation_system")
+                if isinstance(tmpl, str) and tmpl.strip():
+                    system_prompt = tmpl
             target_node_range = (10, 25)
             target_max_depth = 3
         else:

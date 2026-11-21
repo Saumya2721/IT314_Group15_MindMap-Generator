@@ -186,7 +186,7 @@ def build_generation_system_prompt(
 ) -> str:
     if prompt_manager is not None and hasattr(prompt_manager, "get_template"):
         custom_tmpl = prompt_manager.get_template("generation_system")
-        if custom_tmpl:
+        if isinstance(custom_tmpl, str) and custom_tmpl.strip():
             try:
                 return Template(custom_tmpl).safe_substitute(
                     level=targets.level,
@@ -502,7 +502,7 @@ def build_outline_user_prompt(
 def build_regenerate_node_system_prompt(prompt_manager: Any = None) -> str:
     if prompt_manager is not None and hasattr(prompt_manager, "get_template"):
         tmpl = prompt_manager.get_template("regenerate_node_system")
-        if tmpl:
+        if isinstance(tmpl, str) and tmpl.strip():
             return tmpl
     return _REGENERATE_NODE_SYSTEM_TEMPLATE
 
