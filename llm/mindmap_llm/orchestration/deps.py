@@ -28,3 +28,5 @@ class GenerationDeps:
     settings: Settings
     callback: JobCallbackClient
     redis_client: Any = None
+    prompt_manager: Any = None
+    dynamic_config: Any = None
