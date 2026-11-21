@@ -282,3 +282,114 @@ async def list_audit_log(request: Request, limit: int = 50) -> list[dict[str, An
         clamped_limit,
     )
     return [dict(r) for r in rows]
+
+
+# ------------------------------------------------------------------ Aggregate Analytics
+@router.get("/stats", status_code=200)
+async def admin_stats(request: Request) -> dict[str, Any]:
+    """Return aggregate operational analytics for platform administrators.
+
+    Privacy & Security Invariants:
+    - Queries STRICTLY against aggregate database views (public.admin_*).
+    - NEVER queries raw content tables (mind_maps, nodes, edges, chat_messages, agent_memories).
+    - Exposes zero user-generated content or sensitive user information.
+    - Protected by require_admin_role at the router level.
+    """
+    pool = _get_pool(request)
+
+    try:
+        user_task = pool.fetchrow(
+            "SELECT total_users, active_users_last_7_days, active_users_last_30_days FROM public.admin_active_users"
+        )
+        gen_task = pool.fetchrow(
+            "SELECT total_generations, generations_last_7_days, generations_last_30_days, "
+            "maps_generated_last_7_days, maps_generated_last_30_days "
+            "FROM public.admin_generation_counts"
+        )
+        failure_task = pool.fetchrow(
+            "SELECT failed_jobs, completed_jobs, failure_rate FROM public.admin_generation_failure_rates"
+        )
+        error_task = pool.fetch("SELECT category, count FROM public.admin_job_error_categories")
+        perf_task = pool.fetchrow(
+            "SELECT avg_generation_latency, avg_chat_turn_latency FROM public.admin_performance_latencies"
+        )
+
+        user_row, gen_row, failure_row, error_rows, perf_row = await asyncio.gather(
+            user_task, gen_task, failure_task, error_task, perf_task
+        )
+    except Exception as exc:
+        logger.error("Failed to query aggregate admin analytics views: %s", exc)
+        raise HTTPException(500, "Failed to retrieve aggregate operational analytics") from exc
+
+    # Parse user metrics
+    user_data = dict(user_row) if user_row else {}
+    total_users = int(user_data.get("total_users") or 0)
+    active_7d = int(user_data.get("active_users_last_7_days") or 0)
+    active_30d = int(user_data.get("active_users_last_30_days") or 0)
+
+    # Parse map generation metrics
+    gen_data = dict(gen_row) if gen_row else {}
+    maps_7d = int(gen_data.get("maps_generated_last_7_days") or gen_data.get("generations_last_7_days") or 0)
+    maps_30d = int(gen_data.get("maps_generated_last_30_days") or gen_data.get("generations_last_30_days") or 0)
+    total_gen = int(gen_data.get("total_generations") or 0)
+
+    # Parse failure metrics
+    failure_data = dict(failure_row) if failure_row else {}
+    failure_rate = float(failure_data.get("failure_rate") or 0.0)
+    failed_jobs = int(failure_data.get("failed_jobs") or 0)
+    completed_jobs = int(failure_data.get("completed_jobs") or 0)
+
+    # Parse error categories breakdown
+    error_categories: dict[str, int] = {}
+    if error_rows:
+        for r in error_rows:
+            d = dict(r)
+            cat = str(d.get("category") or "unknown")
+            count = int(d.get("count") or 0)
+            error_categories[cat] = count
+
+    # Parse performance latencies
+    perf_data = dict(perf_row) if perf_row else {}
+    avg_gen_latency = float(
+        perf_data.get("avg_generation_latency") or perf_data.get("avg_generation_latency_seconds") or 0.0
+    )
+    avg_chat_latency = float(
+        perf_data.get("avg_chat_turn_latency") or perf_data.get("avg_chat_turn_latency_seconds") or 0.0
+    )
+
+    return {
+        "users": {
+            "total_users": total_users,
+            "active_users_last_7_days": active_7d,
+            "active_users_last_30_days": active_30d,
+        },
+        "map_generation": {
+            "maps_generated_last_7_days": maps_7d,
+            "maps_generated_last_30_days": maps_30d,
+            "total_generations": total_gen,
+        },
+        "job_failures": {
+            "failure_rate": failure_rate,
+            "failed_jobs": failed_jobs,
+            "completed_jobs": completed_jobs,
+            "error_categories": error_categories,
+        },
+        "performance": {
+            "avg_generation_latency": avg_gen_latency,
+            "avg_generation_latency_seconds": avg_gen_latency,
+            "avg_chat_turn_latency": avg_chat_latency,
+            "avg_chat_turn_latency_seconds": avg_chat_latency,
+        },
+        # Flat aliases for direct field access
+        "total_users": total_users,
+        "active_users_last_7_days": active_7d,
+        "active_users_last_30_days": active_30d,
+        "maps_generated_last_7_days": maps_7d,
+        "maps_generated_last_30_days": maps_30d,
+        "failure_rate": failure_rate,
+        "error_categories": error_categories,
+        "avg_generation_latency": avg_gen_latency,
+        "avg_generation_latency_seconds": avg_gen_latency,
+        "avg_chat_turn_latency": avg_chat_latency,
+        "avg_chat_turn_latency_seconds": avg_chat_latency,
+    }
