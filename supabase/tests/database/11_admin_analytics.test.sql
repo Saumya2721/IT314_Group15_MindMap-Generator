@@ -1,7 +1,7 @@
 -- S3-DB3 / Issue #167: admin aggregate analytics views test
 BEGIN;
 CREATE EXTENSION IF NOT EXISTS pgtap WITH SCHEMA extensions;
-SELECT plan(18);
+SELECT plan(19);
 
 -- 1. View existence
 SELECT has_view('public', 'admin_active_users', 'admin_active_users view exists');
@@ -27,9 +27,14 @@ SELECT has_column('public', 'admin_job_error_categories', 'count', 'admin_job_er
 SELECT has_column('public', 'admin_performance_latencies', 'avg_generation_latency', 'admin_performance_latencies has avg_generation_latency');
 SELECT has_column('public', 'admin_performance_latencies', 'avg_chat_turn_latency', 'admin_performance_latencies has avg_chat_turn_latency');
 
--- 3. Anonymous caller cannot select views
+-- 3. Anonymous caller cannot select views (42501: insufficient privilege)
+SELECT set_config('request.jwt.claims', '{"role":"anon"}', true);
+SET LOCAL ROLE anon;
 SELECT throws_ok($$SELECT * FROM public.admin_performance_latencies$$, '42501', null,
     'anonymous users cannot query admin performance latencies');
+SELECT throws_ok($$SELECT * FROM public.admin_job_error_categories$$, '42501', null,
+    'anonymous users cannot query admin job error categories');
+RESET ROLE;
 
 SELECT * FROM finish();
 ROLLBACK;
