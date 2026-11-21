@@ -13,12 +13,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from contracts.models import SeedAssetDraft, SeedAssetType
+from ingestion.extractors import get_default_registry
 from providers.decision_model import DecisionModel
 from seed.extractors import (
     SeedExtractionError,
     checksum_sha256,
-    extract_text_from_image,
-    extract_text_from_pdf,
     normalize_free_text,
 )
 
@@ -101,18 +100,20 @@ async def normalize_seed(
                 raise SeedExtractionError("The file is empty.")
             if len(f.data) > MAX_FILE_SIZE_BYTES:
                 raise SeedExtractionError(f"File exceeds the {MAX_FILE_SIZE_BYTES // (1024 * 1024)} MB limit.")
-            if not f.mime_type.startswith(SUPPORTED_MIME_PREFIXES):
+            registry = get_default_registry()
+            if not (f.mime_type.startswith(SUPPORTED_MIME_PREFIXES) or registry.is_supported(f.mime_type, f.file_name)):
                 raise SeedExtractionError(f"Unsupported file type: {f.mime_type}")
 
             if not await _classify_is_supported_upload(decision_model, f.file_name, f.mime_type, len(f.data)):
                 raise SeedExtractionError("This file doesn't look like a valid PDF or image.")
 
-            if f.mime_type.startswith("application/pdf"):
-                extracted = extract_text_from_pdf(f.data)
+            extracted, spec = registry.extract_with_spec(f.data, mime_type=f.mime_type, filename=f.file_name)
+            if spec.asset_type == "pdf":
                 asset_type = SeedAssetType.PDF
-            else:
-                extracted = extract_text_from_image(f.data)
+            elif spec.asset_type == "image":
                 asset_type = SeedAssetType.IMAGE
+            else:
+                asset_type = SeedAssetType.TEXT
 
             seed_assets.append(
                 SeedAssetDraft(

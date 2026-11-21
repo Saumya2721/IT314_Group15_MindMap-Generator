@@ -9,9 +9,11 @@ import json
 import logging
 import re
 from collections.abc import Sequence
+from typing import Any
 
 from providers.base import LLMProvider, Message
 from tools.base import Tool, ToolError, ToolResult
+from tools.policy import ResearchTimeBudget
 from tracing import trace_span
 
 logger = logging.getLogger(__name__)
@@ -85,15 +87,32 @@ async def execute_research_queries(
     tool: Tool,
     queries: Sequence[str],
     max_queries: int = 3,
+    budget: ResearchTimeBudget | None = None,
+    user_id: Any | None = None,
 ) -> list[ToolResult]:
-    """Execute up to max_queries in parallel, deduplicate results by URL."""
+    """Execute up to max_queries in parallel, deduplicate results by URL,
+
+    enforcing overall research time budget (S3-A2) and per-user quotas (S3-L1).
+    """
+    if budget is not None and budget.is_expired():
+        logger.warning("Research budget already exhausted before executing queries")
+        return []
+
     queries_to_run = [q for q in queries if q.strip()][:max_queries]
     if not queries_to_run:
         return []
 
     async def _safe_invoke(query_str: str) -> list[ToolResult]:
+        if budget is not None and budget.is_expired():
+            logger.warning("Research budget exhausted, skipping query: %r", query_str)
+            return []
         try:
-            return await tool.invoke(query=query_str)
+            kwargs: dict[str, Any] = {"query": query_str}
+            if budget is not None:
+                kwargs["budget"] = budget
+            if user_id is not None:
+                kwargs["user_id"] = user_id
+            return await tool.invoke(**kwargs)
         except ToolError as exc:
             logger.warning("Tool query %r failed: %s", query_str, exc)
             return []

@@ -79,6 +79,7 @@ async def generate_mindmap(ctx: dict, request_payload: dict) -> dict:
         tools=ctx["tools"],
         settings=ctx["settings"],
         callback=callback,
+        redis_client=ctx.get("redis"),
     )
 
     try:
@@ -242,6 +243,7 @@ async def regenerate_node_task(ctx: dict, request_payload: dict) -> dict:
         tools=ctx["tools"],
         settings=ctx["settings"],
         callback=callback,
+        redis_client=ctx.get("redis"),
     )
 
     try:
@@ -293,6 +295,7 @@ async def chat_turn_task(ctx: dict, request_payload: dict) -> dict:
         tools=ctx["tools"],
         settings=ctx["settings"],
         callback=callback,
+        redis_client=ctx.get("redis"),
     )
 
     try:

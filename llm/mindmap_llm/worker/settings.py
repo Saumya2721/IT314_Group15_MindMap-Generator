@@ -31,6 +31,7 @@ from config import get_settings
 from embeddings.registry import get_embedding_provider
 from providers.registry import get_decision_model, get_llm_provider
 from rag.pinecone_store import PineconeVectorStore
+from tools.policy import ToolQuotaLimiter
 from tools.registry import build_tool_registry
 from tracing import configure_langsmith
 from worker.tasks import chat_turn_task, generate_mindmap, regenerate_node_task
@@ -50,7 +51,10 @@ async def on_startup(ctx: dict) -> None:
         index_name=settings.pinecone.index_name,
         dense_weight=settings.pinecone.dense_weight,
     )
-    ctx["tools"] = build_tool_registry(settings)
+    redis_client = ctx.get("redis")
+    quota_limiter = ToolQuotaLimiter(redis_client=redis_client)
+    ctx["quota_limiter"] = quota_limiter
+    ctx["tools"] = build_tool_registry(settings, limiter=quota_limiter)
     configure_langsmith(settings.langsmith)
     logging.info(
         "Worker started: llm=%s decision_model=%s embeddings=%s",

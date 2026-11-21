@@ -22,6 +22,7 @@ class GenerationState(TypedDict, total=False):
     is_regeneration: bool
     purpose: str | None
     seed_has_files: bool
+    user_id: UUID | str | None
     two_pass_enabled: bool
 
     # --- node regeneration inputs (S2-L7) ---
@@ -46,12 +47,16 @@ class GenerationState(TypedDict, total=False):
     tool_call_log: list[dict]
     seed_length: int
     prompt_items_log: list[dict]
+    long_term_memories: list[str]
+    conversation_history: list[str]
+    external_search_payloads: list[str]
     outline_draft: dict | None  # Pass 1 outline payload (S2-L12)
     two_pass_complete: bool
     branch_result: Any
     draft_payload: dict | None  # raw LLM JSON output, pre-validation
     validation_errors: list[str]
     quality_warnings: list[str]
+    research_warnings: list[str]
     best_valid_draft: Any
     retry_count: int
     _max_retries: int
