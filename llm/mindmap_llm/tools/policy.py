@@ -186,6 +186,10 @@ def load_tool_policy(tool_name: str, settings: Settings) -> ToolPolicy:
     elif tool_name == "web_reader":
         enabled = cfg.web_reader_enabled
         timeout_s = cfg.web_reader_timeout_s
+    elif tool_name == "wikipedia":
+        # S3-T1 / fixes #184: Wikipedia research tool (rate limit + timeout via S3-L1)
+        enabled = cfg.wikipedia_enabled
+        timeout_s = cfg.wikipedia_timeout_s
     else:
         enabled = True
         timeout_s = cfg.tool_timeout_s

@@ -12,6 +12,7 @@ from tools.arxiv_tool import ArxivTool
 from tools.base import Tool
 from tools.policy import ToolQuotaLimiter, wrap_tool_registry
 from tools.web_search_tool import TavilyWebSearchTool
+from tools.wikipedia_tool import WikipediaTool
 
 
 def build_tool_registry(
@@ -32,6 +33,14 @@ def build_tool_registry(
             )
         except RuntimeError:
             pass  # no key configured — web_search simply won't be offered to the LLM
+
+    # S3-T1 / fixes #184: Wikipedia research tool (CC BY-SA attribution, section hierarchy)
+    if settings.tools.wikipedia_enabled:
+        registry["wikipedia"] = WikipediaTool(
+            api_base=settings.tools.wikipedia_api_base,
+            timeout_s=settings.tools.wikipedia_timeout_s,
+            max_sections=settings.tools.wikipedia_max_sections,
+        )
 
     # S3-L1: Apply policy enforcement layer (per-tool timeouts, enable/disable flags, quota limits)
     return wrap_tool_registry(registry, settings, limiter=limiter)

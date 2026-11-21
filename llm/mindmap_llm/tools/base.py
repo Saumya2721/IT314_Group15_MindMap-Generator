@@ -19,6 +19,12 @@ class ToolResult:
     content: str
     source_title: str | None
     source_url: str  # required: embeddings.chk_embeddings_source_url needs this for non-seed sources
+    # Structural headings surfaced by tools that work at document/section level
+    # (e.g. Wikipedia article section trees) so they can feed the Pass-1 outline.
+    sections: list[str] | None = None
+    # Source license / attribution metadata (e.g. CC BY-SA for Wikipedia content).
+    license: str | None = None
+    attribution: str | None = None
 
 
 class ToolError(Exception):

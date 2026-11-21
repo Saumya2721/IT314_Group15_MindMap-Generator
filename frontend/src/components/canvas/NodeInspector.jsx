@@ -31,6 +31,13 @@ const SOURCE_CONFIG = {
     bg: '#e8daef',
     tooltip: 'This concept was synthesised from a peer-reviewed arXiv publication.',
   },
+  wikipedia: {
+    label: 'Wikipedia',
+    icon: 'article',
+    color: '#1e7145',
+    bg: '#d9ead3',
+    tooltip: 'This concept was grounded using Wikipedia article content available under CC BY-SA 4.0.',
+  },
   context_citation: {
     label: 'Context Citation',
     icon: 'bookmark',
@@ -51,6 +58,19 @@ function isArxivUrl(urlString) {
   try {
     const parsed = new URL(urlString)
     return parsed.hostname === 'arxiv.org' || parsed.hostname.endsWith('.arxiv.org')
+  } catch {
+    return false
+  }
+}
+
+function isWikipediaUrl(urlString) {
+  try {
+    const parsed = new URL(urlString)
+    return (
+      parsed.hostname === 'en.wikipedia.org' ||
+      parsed.hostname === 'wikipedia.org' ||
+      parsed.hostname.endsWith('.wikipedia.org')
+    )
   } catch {
     return false
   }
@@ -175,7 +195,13 @@ export function NodeInspector({
         src.kind ||
         src.source_type ||
         src.type ||
-        (src.url?.includes('arxiv') ? 'arxiv' : src.url ? 'web_research' : 'general')
+        (src.url?.includes('arxiv')
+          ? 'arxiv'
+          : isWikipediaUrl(src.url || '')
+          ? 'wikipedia'
+          : src.url
+          ? 'web_research'
+          : 'general')
       return {
         type: type === 'seed' ? 'seed_material' : type,
         title: src.title || src.label || src.url || 'Source',
@@ -198,11 +224,11 @@ export function NodeInspector({
       if (match) {
         const title = match[1].trim()
         const url = match[2].trim()
-        const type = isArxivUrl(url) ? 'arxiv' : 'web_research'
+        const type = isArxivUrl(url) ? 'arxiv' : isWikipediaUrl(url) ? 'wikipedia' : 'web_research'
         return { type, title: title || url, url }
       }
       if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
-        const type = isArxivUrl(trimmed) ? 'arxiv' : 'web_research'
+        const type = isArxivUrl(trimmed) ? 'arxiv' : isWikipediaUrl(trimmed) ? 'wikipedia' : 'web_research'
         return { type, title: trimmed, url: trimmed }
       }
       return { type: 'general', title: trimmed, url: null }

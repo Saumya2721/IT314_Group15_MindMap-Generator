@@ -271,10 +271,20 @@ async def generate_outline(
     min_branches: int = 4,
     max_branches: int = 8,
     max_retries: int = 2,
+    section_headings: list[str] | None = None,
 ) -> tuple[DraftMindMap, _DraftNode, list[_DraftNode]]:
-    """Execute Pass 1: Generate a high-level structural outline with 4-8 branches."""
+    """Execute Pass 1: Generate a high-level structural outline with 4-8 branches.
+
+    Structural headings from external sources (e.g. the Wikipedia article
+    section tree collected during research) are merged in as guidance for the
+    top-level branches when the seed itself carries no document headings.
+    """
     system_prompt = build_outline_system_prompt()
     headings = extract_headings_from_text(seed_text)
+    for heading in section_headings or []:
+        cleaned = (heading or "").strip()
+        if cleaned and cleaned not in headings:
+            headings.append(cleaned)
     validation_errors: list[str] = []
 
     for _attempt in range(max_retries + 1):
@@ -528,6 +538,7 @@ async def execute_two_pass_generation(
     max_retries: int = 2,
     target_node_range: tuple[int, int] = (10, 35),
     target_max_depth: int = 4,
+    section_headings: list[str] | None = None,
 ) -> tuple[list[NodeDraft], list[EdgeDraft], list[RetrievedChunk], list[str]]:
     """Execute the complete two-pass generation pipeline:
 
@@ -543,6 +554,7 @@ async def execute_two_pass_generation(
         min_branches=min_branches,
         max_branches=max_branches,
         max_retries=max_retries,
+        section_headings=section_headings,
     )
     logger.info("Pass 1 completed with %d branches", len(branch_nodes))
 

@@ -135,6 +135,13 @@ class ToolConfig:
     web_search_timeout_s: float = field(default_factory=lambda: _get_float("TOOL_WEB_SEARCH_TIMEOUT_S", 15.0))
     arxiv_search_timeout_s: float = field(default_factory=lambda: _get_float("TOOL_ARXIV_TIMEOUT_S", 20.0))
     web_reader_timeout_s: float = field(default_factory=lambda: _get_float("TOOL_WEB_READER_TIMEOUT_S", 10.0))
+    # S3-T1 / fixes #184: Wikipedia research tool (CC BY-SA attribution, section hierarchy)
+    wikipedia_api_base: str = field(
+        default_factory=lambda: os.environ.get("WIKIPEDIA_API_BASE", "https://en.wikipedia.org/api/rest_v1")
+    )
+    wikipedia_timeout_s: float = field(default_factory=lambda: _get_float("TOOL_WIKIPEDIA_TIMEOUT_S", 10.0))
+    wikipedia_max_sections: int = field(default_factory=lambda: _get_int("TOOL_WIKIPEDIA_MAX_SECTIONS", 30))
+    wikipedia_enabled: bool = field(default_factory=lambda: _get_bool("TOOL_WIKIPEDIA_ENABLED", True))
     # S3-L1: Enable/disable flags loaded from config
     web_search_enabled: bool = field(default_factory=lambda: _get_bool("TOOL_WEB_SEARCH_ENABLED", True))
     arxiv_search_enabled: bool = field(default_factory=lambda: _get_bool("TOOL_ARXIV_SEARCH_ENABLED", True))

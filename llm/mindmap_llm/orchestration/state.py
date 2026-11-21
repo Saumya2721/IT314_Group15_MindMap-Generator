@@ -51,6 +51,9 @@ class GenerationState(TypedDict, total=False):
     external_search_payloads: list[str]
     outline_draft: dict | None  # Pass 1 outline payload (S2-L12)
     two_pass_complete: bool
+    # S3-T1 / fixes #184: Wikipedia article section hierarchy collected during
+    # research; feeds the Pass-1 outline generator for topic-only seeds.
+    wikipedia_sections: list[str]
     branch_result: Any
     draft_payload: dict | None  # raw LLM JSON output, pre-validation
     validation_errors: list[str]

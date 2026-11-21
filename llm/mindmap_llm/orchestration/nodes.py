@@ -68,6 +68,15 @@ class NoPriorSeedError(NoUsableSeedContent):
     pass
 
 
+def _chunk_source_for_tool(tool_name: str) -> ChunkSource:
+    """Map a research tool name to its chunk source (S3-T1 / fixes #184)."""
+    if tool_name == "web_search":
+        return ChunkSource.WEB_SEARCH
+    if tool_name == "arxiv_search":
+        return ChunkSource.ARXIV
+    return ChunkSource.WIKIPEDIA
+
+
 def _extract_shingles(words: list[str], n: int) -> list[str]:
     """Extract consecutive n-gram word shingles."""
     if len(words) < n:
@@ -169,7 +178,7 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
             resolved_detail = cast(Literal["overview", "balanced", "detailed"], result.label)
             logger.info("Inferred detail_level=%s (confidence=%.2f)", resolved_detail, result.confidence)
 
-        routing: dict[str, bool] = {"web_search": False, "arxiv_search": False}
+        routing: dict[str, bool] = {"web_search": False, "arxiv_search": False, "wikipedia": False}
 
         if not enable_dynamic:
             # Legacy Sprint 1 routing and sizing
@@ -187,6 +196,13 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
                     labels=["yes", "no"],
                 )
                 routing["arxiv_search"] = r.label == "yes"
+            if "wikipedia" in deps.tools:
+                r = await deps.decision_model.classify(
+                    state=query_text[:4000],
+                    question="Would a Wikipedia article on this topic improve grounding of the mind map's content?",
+                    labels=["yes", "no"],
+                )
+                routing["wikipedia"] = r.label == "yes"
 
             await deps.callback.progress(20)
             return {"resolved_detail_level": resolved_detail, "routing_decision": routing}
@@ -224,6 +240,17 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
                 )
                 routing["arxiv_search"] = r.label == "yes"
 
+        if "wikipedia" in available_tools:
+            if plan.wikipedia is not None:
+                routing["wikipedia"] = plan.wikipedia
+            else:
+                r = await deps.decision_model.classify(
+                    state=query_text[:4000],
+                    question="Would a Wikipedia article on this topic improve grounding of the mind map's content?",
+                    labels=["yes", "no"],
+                )
+                routing["wikipedia"] = r.label == "yes"
+
         targets = size_targets(
             resolved_detail,
             seed_tokens=estimate_tokens(state["seed_text"]),
@@ -245,10 +272,11 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
         query = state["seed_text"][:2000]
         tool_call_log: list[dict] = []
         enable_dynamic = deps.settings.generation.enable_dynamic_prompts
+        wikipedia_sections: list[str] = []
 
         active_tools = [
             t
-            for t in ("web_search", "arxiv_search")
+            for t in ("web_search", "arxiv_search", "wikipedia")
             if state["routing_decision"].get(t) and deps.tools.get(t) is not None
         ]
 
@@ -274,7 +302,7 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
                     tool_call_log.append({"tool": tool_name, "status": "failed", "error": str(exc)})
                     continue
 
-                source = ChunkSource.WEB_SEARCH if tool_name == "web_search" else ChunkSource.ARXIV
+                source = _chunk_source_for_tool(tool_name)
                 for r in results:
                     await ingest_tool_result(
                         vector_store=deps.vector_store,
@@ -284,8 +312,12 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
                         source=source,
                         source_title=r.source_title,
                         source_url=r.source_url,
+                        license=r.license,
+                        attribution=r.attribution,
                         embedding_provider=deps.embedding_provider,
                     )
+                    if tool_name == "wikipedia":
+                        wikipedia_sections.extend(s for s in (r.sections or []) if s and s.strip())
                 tool_call_log.append({"tool": tool_name, "status": "ok", "result_count": len(results)})
         else:
             # S2-L16 / S3-L1: Multi-query research planner with parallel execution, quota protection & research time budget (S3-A2)
@@ -306,7 +338,7 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
                     budget=research_budget,
                 )
 
-                source = ChunkSource.WEB_SEARCH if tool_name == "web_search" else ChunkSource.ARXIV
+                source = _chunk_source_for_tool(tool_name)
                 for r in results:
                     await ingest_tool_result(
                         vector_store=deps.vector_store,
@@ -316,8 +348,12 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
                         source=source,
                         source_title=r.source_title,
                         source_url=r.source_url,
+                        license=r.license,
+                        attribution=r.attribution,
                         embedding_provider=deps.embedding_provider,
                     )
+                    if tool_name == "wikipedia":
+                        wikipedia_sections.extend(s for s in (r.sections or []) if s and s.strip())
                 status = "ok" if results else "failed"
                 tool_call_log.append({"tool": tool_name, "status": status, "result_count": len(results)})
 
@@ -397,6 +433,9 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
             "prompt_items_log": prompt_items_log,
             "seed_length": seed_len,
             "quality_warnings": retrieval_warnings,
+            # S3-T1 / fixes #184: Wikipedia section hierarchy for the Pass-1 outline
+            # generator when the seed is a topic (see generate_node below).
+            "wikipedia_sections": wikipedia_sections,
         }
 
     @trace_span("generate_node", run_type="chain")
@@ -420,6 +459,9 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
                     max_branches=deps.settings.generation.max_outline_branches,
                     target_node_range=target_node_range,
                     target_max_depth=target_max_depth,
+                    # S3-T1 / fixes #184: Wikipedia section tree guides the
+                    # Pass-1 outline for topic-only seeds.
+                    section_headings=state.get("wikipedia_sections") or None,
                 )
                 await deps.callback.progress(70)
                 return {
