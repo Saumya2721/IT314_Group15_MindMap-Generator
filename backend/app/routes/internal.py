@@ -630,3 +630,46 @@ async def report_chat_complete(
         "already_processed": False,
         "summary_updated": bool(payload.summary),
     }
+
+
+# ---------------------------------------------------------------------
+# Internal Pipeline Configuration (S3-BE8)
+# ---------------------------------------------------------------------
+config_router = APIRouter(prefix="/internal/config", tags=["Internal Pipeline Config"])
+
+
+@config_router.get("", status_code=200)
+async def get_internal_pipeline_config() -> dict[str, Any]:
+    """Expose active LLM pipeline configuration and versioned prompt templates (S3-BE8).
+
+    Security Invariant: Never exposes API keys, credentials, or provider secrets.
+    Only exposes model identifiers, provider selections, hyperparameters, and prompt templates.
+    """
+    import os
+
+    return {
+        "version": "1.0.0",
+        "llm": {
+            "provider": os.environ.get("LLM_PROVIDER", "groq"),
+            "model": os.environ.get("LLM_MODEL", "llama-3.3-70b-versatile"),
+            "api_base": os.environ.get("LLM_API_BASE") or None,
+            "hyperparameters": {
+                "temperature": float(os.environ.get("LLM_TEMPERATURE", "0.2")),
+                "max_output_tokens": int(os.environ.get("LLM_MAX_OUTPUT_TOKENS", "8000")),
+                "request_timeout_s": float(os.environ.get("LLM_TIMEOUT_S", "90.0")),
+            },
+        },
+        "prompts": {
+            "version": "v1.0",
+            "templates": {
+                "generation_system": (
+                    "You are the synthesis engine of a mind-mapping tool. You turn raw user input "
+                    "(notes, transcripts, outlines, brain dumps) into structured mind maps as JSON.\n"
+                    "Size for this request ($level level): $min_nodes to $max_nodes nodes, "
+                    "$min_branches to $max_branches first-level branches, and $min_depth to $max_depth "
+                    "levels below the root.\n$mode_rule\nFORMAT EXAMPLE:\n$example"
+                ),
+            },
+        },
+        "refresh_interval_s": int(os.environ.get("CONFIG_REFRESH_INTERVAL_S", "60")),
+    }
