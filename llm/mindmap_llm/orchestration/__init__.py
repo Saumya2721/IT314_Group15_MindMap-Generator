@@ -8,12 +8,15 @@ Exports the unified shared branch expansion engine:
   - BranchQualityReport: Quality check metrics and warnings.
 """
 
-from orchestration.expansion import (
-    BranchExpansionResult,
-    BranchQualityReport,
-    check_branch_quality,
-    expand_branch,
-)
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from orchestration.expansion import (
+        BranchExpansionResult,
+        BranchQualityReport,
+        check_branch_quality,
+        expand_branch,
+    )
 
 __all__ = [
     "BranchExpansionResult",
@@ -21,3 +24,11 @@ __all__ = [
     "check_branch_quality",
     "expand_branch",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    if name in __all__:
+        import orchestration.expansion as exp
+
+        return getattr(exp, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
