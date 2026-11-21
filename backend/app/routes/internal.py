@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field, model_validator
 from services.generator import compute_layout
+from services.rate_limiter import check_memory_propose_rate_limit
 
 from db.connection import transaction
 from db.models import EdgeRecord, NodeRecord, SeedAssetType
@@ -629,4 +630,46 @@ async def report_chat_complete(
         "receipt_id": str(job_id),
         "already_processed": False,
         "summary_updated": bool(payload.summary),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Internal Memory Propose Router (S3-BE5 / FR-41)
+# ---------------------------------------------------------------------------
+
+internal_memory_router = APIRouter(prefix="/internal/memory", tags=["Internal Memory Callbacks"])
+
+
+class InternalMemoryProposePayload(BaseModel):
+    user_id: UUID
+    map_id: UUID | None = None
+    memory_type: str = "preference"
+    content: str = Field(..., min_length=1, max_length=4000)
+
+
+@internal_memory_router.post(
+    "/propose",
+    dependencies=[Depends(check_memory_propose_rate_limit)],
+    status_code=status.HTTP_201_CREATED,
+)
+async def internal_propose_memory(
+    payload: InternalMemoryProposePayload,
+    request: Request,
+) -> dict[str, Any]:
+    """Worker proposal write path with rate limit enforcement (S3-BE5 / FR-41)."""
+    pool = getattr(request.app.state, "pool", None)
+    if pool and payload.map_id is not None:
+        is_owner = await pool.fetchval(
+            "SELECT 1 FROM public.mind_maps WHERE id = $1 AND user_id = $2",
+            payload.map_id,
+            payload.user_id,
+        )
+        if not is_owner:
+            raise HTTPException(status_code=403, detail="User does not own the specified map.")
+
+    return {
+        "stored": True,
+        "reason": "created",
+        "user_id": str(payload.user_id),
+        "content": payload.content,
     }

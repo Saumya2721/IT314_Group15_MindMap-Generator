@@ -388,7 +388,7 @@ async def export_map(
     if not is_owner:
         raise HTTPException(status_code=404, detail="Map not found")
 
-    limiter.check(uid)
+    await limiter.check(uid, api="export", redis=get_redis_pool(request))
 
     map_row = await pool.fetchrow("SELECT title FROM public.mind_maps WHERE id = $1", map_id)
     raw_title = (map_row["title"] if map_row and map_row["title"] else "mindmap").strip()
@@ -437,7 +437,7 @@ async def quick_generate(
     if not (body.topic or "").strip() and not (body.ideas or "").strip():
         raise HTTPException(422, "Provide a topic or some ideas.")
 
-    limiter.check(uid)
+    await limiter.check(uid, api="generation", redis=redis_pool)
 
     map_id = body.map_id
     if map_id:
@@ -601,7 +601,7 @@ async def generate(
     if await has_active_job(pool, map_id):
         raise HTTPException(409, "Generation already in progress for this map.")
 
-    limiter.check(uid)
+    await limiter.check(uid, api="generation", redis=get_redis_pool(request))
 
     job_id = uuid4()
     callback_token = secrets.token_urlsafe(32)
@@ -743,7 +743,7 @@ async def regenerate(
     if not has_seed:
         raise HTTPException(409, "This map has no original seed to regenerate from. Run generate first.")
 
-    limiter.check(uid)
+    await limiter.check(uid, api="generation", redis=get_redis_pool(request))
 
     redis_pool = get_redis_pool(request)
     if not redis_pool:
@@ -885,7 +885,7 @@ async def regenerate_node(
         else:
             instruction = f"Refine and expand the mind map branch for node '{target_node['label']}'"
 
-    limiter.check(uid)
+    await limiter.check(uid, api="generation", redis=get_redis_pool(request))
 
     redis_pool = get_redis_pool(request)
     if not redis_pool:
