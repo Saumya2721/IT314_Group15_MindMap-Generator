@@ -38,6 +38,13 @@ class AppConfig:
     EXPORT_CONVERTER_URL: str = os.getenv("EXPORT_CONVERTER_URL", "http://localhost:3001/convert")
     EXPORT_TIMEOUT_SECONDS: float = float(os.getenv("EXPORT_TIMEOUT_SECONDS", "15.0"))
 
+    # Rate Limiting & Quota Settings (S3-BE5 / FR-41)
+    GEN_RATE_LIMIT_PER_HOUR: int = int(os.getenv("GEN_RATE_LIMIT_PER_HOUR", "30"))
+    GEN_RATE_LIMIT_WINDOW_S: int = int(os.getenv("GEN_RATE_LIMIT_WINDOW_S", "3600"))
+    CHAT_RATE_LIMIT_PER_MINUTE: int = int(os.getenv("CHAT_RATE_LIMIT_PER_MINUTE", "20"))
+    CHAT_RATE_LIMIT_WINDOW_S: int = int(os.getenv("CHAT_RATE_LIMIT_WINDOW_S", "60"))
+    MEMORY_PROPOSE_RATE_LIMIT_PER_MINUTE: int = int(os.getenv("MEMORY_PROPOSE_RATE_LIMIT_PER_MINUTE", "30"))
+    MEMORY_PROPOSE_RATE_LIMIT_WINDOW_S: int = int(os.getenv("MEMORY_PROPOSE_RATE_LIMIT_WINDOW_S", "60"))
     # Memory Settings (S3-BE4)
     MEMORY_PER_USER_LIMIT: int = int(os.getenv("MEMORY_PER_USER_LIMIT", "500"))
 

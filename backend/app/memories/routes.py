@@ -30,6 +30,7 @@ from memories.schemas import (
     MemoryProposeResponse,
 )
 from memories.service import delete_memory, gdpr_export, get_memory, list_memories, patch_memory, propose_memory
+from services.rate_limiter import check_memory_propose_rate_limit
 
 from db.repository import assert_map_owner
 
@@ -58,6 +59,7 @@ def _pool(request: Request):
 @internal_router.post(
     "/propose",
     response_model=MemoryProposeResponse,
+    dependencies=[Depends(check_memory_propose_rate_limit)],
     summary="Worker proposal write path (validate, dedupe, limit, store)",
 )
 async def propose_memory_route(
