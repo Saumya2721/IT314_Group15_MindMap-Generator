@@ -19,9 +19,13 @@ from ingestion.extractors import (
     extract_plain_text,
     extract_text_from_image,
     extract_text_from_pdf,
+    extract_text_with_gemini,
+    extract_text_with_openrouter,
+    extract_text_with_tesseract,
     get_default_registry,
     normalize_free_text,
     reset_default_registry,
+    sniff_image_mime,
 )
 
 __all__ = [
@@ -37,7 +41,11 @@ __all__ = [
     "extract_plain_text",
     "extract_text_from_image",
     "extract_text_from_pdf",
+    "extract_text_with_gemini",
+    "extract_text_with_openrouter",
+    "extract_text_with_tesseract",
     "get_default_registry",
     "normalize_free_text",
     "reset_default_registry",
+    "sniff_image_mime",
 ]
