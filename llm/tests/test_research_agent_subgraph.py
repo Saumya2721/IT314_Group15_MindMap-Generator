@@ -715,16 +715,13 @@ async def test_feature_flag_subgraph_and_inline_dispatch():
 async def test_wikipedia_tool_direct_invocation():
     wiki_tool = WikipediaTool()
 
+    # S3-T1: the tool now uses the Wikipedia REST summary API (canonical URL +
+    # CC BY-SA attribution) rather than the MediaWiki search API.
     fake_response_data = {
-        "query": {
-            "search": [
-                {
-                    "title": "Quantum computing",
-                    "snippet": "<span>Quantum computing</span> is a rapidly-emerging technology.",
-                    "pageid": 24639,
-                }
-            ]
-        }
+        "title": "Quantum computing",
+        "pageid": 24639,
+        "extract": "Quantum computing is a rapidly-emerging technology.",
+        "content_urls": {"desktop": {"page": "https://en.wikipedia.org/wiki/Quantum_computing"}},
     }
 
     mock_resp = MagicMock()
@@ -735,9 +732,10 @@ async def test_wikipedia_tool_direct_invocation():
         results = await wiki_tool.invoke(query="Quantum computing")
 
     assert len(results) == 1
-    assert results[0].source_title == "Quantum computing - Wikipedia"
+    assert results[0].source_title == "Quantum computing"
     assert "https://en.wikipedia.org/wiki/Quantum_computing" in results[0].source_url
-    assert "<span>" not in results[0].content  # HTML stripped
+    assert "rapidly-emerging technology" in results[0].content
+    assert results[0].license == "CC BY-SA 4.0"
 
 
 @pytest.mark.asyncio
