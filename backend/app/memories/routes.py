@@ -52,8 +52,33 @@ def _pool(request: Request):
 
 
 # ---------------------------------------------------------------------------
-# Worker-proposal write path: POST /internal/memory/propose
+# Worker-proposal write path: POST /internal/memory/propose & GET /internal/memory
 # ---------------------------------------------------------------------------
+
+
+@internal_router.get(
+    "",
+    response_model=MemoryListResponse,
+    summary="Worker internal memory retrieval (by user_id)",
+)
+async def internal_list_memories(
+    request: Request,
+    user_id: UUID = Query(..., description="Target user ID"),
+    map_id: UUID | None = Query(None, description="Optional map scope"),
+    is_active: bool | None = Query(True, description="Filter by active state"),
+    limit: int = Query(50, ge=1, le=200),
+) -> dict[str, Any]:
+    """Internal read-path for workers to retrieve active memories for a given user."""
+    pool = _pool(request)
+    items, total = await list_memories(
+        pool,
+        user_id=user_id,
+        map_id=map_id,
+        is_active=is_active,
+        limit=limit,
+        offset=0,
+    )
+    return {"items": items, "total": total, "limit": limit, "offset": 0}
 
 
 @internal_router.post(

@@ -47,6 +47,18 @@ async def build_action_proposal(
     sets needs_clarification=True.
     """
     system = build_proposal_system_prompt(request.map_snapshot)
+    # S3-L3: Inject user memories from memory_context into the proposal system prompt.
+    # Lazy import to avoid circular dependency: chat → memory → chat
+    from memory.prompt import inject_memories_into_system_prompt  # noqa: PLC0415
+
+    long_term_memories = (request.memory_context or {}).get("long_term_memories", [])
+    if long_term_memories:
+        system = inject_memories_into_system_prompt(
+            system,
+            long_term_memories,
+            provider=deps.settings.llm.provider,
+            model=deps.settings.llm.model,
+        )
     assembled = assemble_chat_context(
         current_message=request.message,
         history=request.history,
