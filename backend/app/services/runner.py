@@ -7,11 +7,10 @@ from __future__ import annotations
 
 import logging
 import os
-import time
-from collections import defaultdict, deque
+from typing import Any
 from uuid import UUID
 
-from fastapi import HTTPException
+from services.rate_limiter import RedisRateLimiter
 
 from db.repository import ActiveJobAlreadyExists
 
@@ -33,26 +32,42 @@ FAIL_MESSAGE = "Generation failed unexpectedly. Please try again."
 
 
 class RateLimiter:
-    """Sliding-window rate limiter for generation requests."""
+    """Sliding-window rate limiter for generation requests.
+
+    Backed by RedisRateLimiter for distributed multi-replica and rolling-deploy consistency (S3-BE5).
+    """
 
     def __init__(self, max_calls: int, window_s: int):
         self.max_calls = max_calls
         self.window_s = window_s
-        self._hits: dict[str, deque] = defaultdict(deque)
+        self._limiter = RedisRateLimiter(
+            {
+                "generation": (max_calls, window_s),
+                "export": (max_calls, window_s),
+            }
+        )
 
-    def check(self, key: UUID | str) -> None:
-        now = time.monotonic()
-        q = self._hits[str(key)]
-        while q and now - q[0] > self.window_s:
-            q.popleft()
-        if len(q) >= self.max_calls:
-            wait = int(self.window_s - (now - q[0])) + 1
-            raise HTTPException(
-                429,
-                "Too many generation requests. Please wait a bit and try again.",
-                headers={"Retry-After": str(wait)},
-            )
-        q.append(now)
+    async def check(
+        self,
+        key: UUID | str,
+        api: str = "generation",
+        redis: Any = None,
+    ) -> None:
+        await self._limiter.check(
+            key=key,
+            api=api,
+            redis=redis,
+            max_calls=self.max_calls,
+            window_s=self.window_s,
+        )
+
+    def check_sync(self, key: UUID | str, api: str = "generation") -> None:
+        self._limiter.check_in_memory(
+            key=key,
+            api=api,
+            max_calls=self.max_calls,
+            window_s=self.window_s,
+        )
 
 
 limiter = RateLimiter(int(os.getenv("GEN_RATE_LIMIT_PER_HOUR", "30")), 3600)

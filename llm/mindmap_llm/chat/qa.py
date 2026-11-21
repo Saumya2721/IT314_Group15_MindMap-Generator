@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 _QA_TOP_K_RETRIEVE = 10
 _QA_TOP_K_RERANK = 5
-_QA_MAX_TOKENS = 1024
+_QA_MAX_TOKENS = 800
 
 # Pattern to extract [node:<uuid>] citations from LLM output.
 _NODE_CITE_RE = re.compile(r"\[node:([0-9a-fA-F-]{36})\]")
@@ -81,6 +81,19 @@ async def answer_question(
 
     # Stage 3 — generate
     system = build_chat_qa_system_prompt(request.map_snapshot)
+
+    # S3-L3: Inject user memories from memory_context into the system prompt.
+    # Lazy import to avoid circular dependency: chat → memory → chat
+    from memory.prompt import inject_memories_into_system_prompt  # noqa: PLC0415
+
+    long_term_memories = (request.memory_context or {}).get("long_term_memories", [])
+    if long_term_memories:
+        system = inject_memories_into_system_prompt(
+            system,
+            long_term_memories,
+            provider=deps.settings.llm.provider,
+            model=deps.settings.llm.model,
+        )
 
     chunks_overhead = sum(estimate_tokens(c.chunk_text) for c in top_records)
     budget = TokenBudget(

@@ -55,24 +55,41 @@ MINDWEAVE implements an enterprise **Dual-Defense Architecture**:
 
 ---
 
-## 3. Sprint Scope & Canvas Engine
+## 3. Sprint Scope & Studio Engine
 
-### Sprint 1 Implemented Capabilities
-- **Seed Submission & Generation**: Unified 2-step pipeline: `POST /api/maps` followed by `POST /api/maps/{id}/generate` with multipart support for text and document uploads.
-- **Truthful Progress Feedback**: Bounded exponential backoff polling (`1s` - `2.5s`) tracking real ARQ worker milestones (0% to 100%).
-- **Leave Generation / Run in Background**: Users can leave the synthesis screen anytime; worker processing continues asynchronously and results appear on the dashboard.
-- **React Flow Display Engine**: Fully migrated to `@xyflow/react` (`^12.4.4`) in read-only presentation mode:
-  - Preserves DAG cross-links 1:1 without collapsing into strict single-parent trees (DR-02 compliance).
-  - Custom nodes: `RootNode` (central theme), `BranchNode` (thematic groupings), `ConceptNode` (detailed concepts).
-  - Native `<Background />`, `<Controls />`, and `<MiniMap />` navigation.
-  - Contextual `NodeInspector` flyout displaying concept label, description, and direct connection metrics.
+### Sprint 2 Delivered Capabilities
+- **Interactive Editing Canvas (`@xyflow/react` v12.4.4)**:
+  - Free-form node dragging with persistent Cartesian coordinates (`PATCH /api/maps/{id}/graph`) and Optimistic Concurrency Control (`expected_version`).
+  - Autosave state machine with visual status badge (`Saving...`, `Saved`, `Save failed (Retry)`), debounced persistence, and window focus revalidation.
+  - Custom nodes: `RootNode` (central theme), `BranchNode` (thematic groupings), `ConceptNode` (detailed insights).
+- **Node & Edge CRUD**:
+  - `AddNodeDialog`: Create root, branch, or concept nodes with auto-selected parents.
+  - In-place text editing for labels and descriptions with blur-to-save.
+  - Interactive edge drawing, custom relationship labels, and `EdgeInspector` with cycle detection.
+  - Optimistic updates with automatic rollback on failed network requests.
+- **Cycle-Safe Outline View (`OutlineView.jsx`)**:
+  - Full-featured hierarchical outline view with collapsible branches (`▼` / `►`).
+  - Small inline badges displaying relationship labels (e.g. *"formulated as"*, *"depends on"*).
+  - DFS traversal preserving cross-links without collapsing DAG subtrees, with text overflow protection.
+- **Node-Level Partial Regeneration**:
+  - Regenerate subtrees or individual branches via the inspector without touching the rest of the mind map.
+- **Version History & Rollback (`VersionHistoryPanel.jsx`)**:
+  - Chronological snapshot list with node/edge counts, timestamps, and trigger reasons.
+  - Interactive snapshot preview canvas with automatic topological depth layout.
+  - Double-click restore guard (`isRestoring`) and OCC version synchronization.
+- **Conversational Mind Map Assistant (`ChatPanel.jsx`)**:
+  - Context-aware chat grounded in the mind map topology.
+  - Cited concept chips (jumping to nodes on canvas) and grounding source badges.
+  - Action proposals: Diff cards allowing one-click **Confirm** or **Dismiss**, executing live graph deltas with animated progress bars directly inside chat bubbles.
+- **Multi-Format Export Studio (`ExportModal.jsx`, `exportService.js`)**:
+  - High-resolution PNG export with transparent, light, or dark background and 1x/2x pixel density.
+  - Paginated vector PDF export (A4 and US Letter, Portrait or Landscape) with contain-fit scaling.
+  - Structured Markdown outline export preserving concept taxonomy.
 
-### Sprint 2 Planned Roadmap (Explicitly Deferred)
-- Direct canvas node dragging and Cartesian coordinate persistence (`PUT /api/maps/{id}/graph`).
-- Interactive node mutation (inline text editing, node addition/deletion, reparenting).
-- Node-level partial regeneration (`POST /api/maps/{id}/nodes/{node_id}/regenerate`).
-- Undo/redo state history stack.
-- Multi-format vector exports (PNG, SVG, Markdown outline).
+### Sprint 3 Roadmap (Planned)
+- Real-time Server-Sent Events (SSE) push channel for worker progress.
+- Cloud vision model integration (Google Gemini 2.0 Flash) replacing local OCR.
+- Real-time collaborative multi-user editing.
 
 ---
 

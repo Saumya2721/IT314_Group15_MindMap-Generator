@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import traceback
+from typing import Any
 from uuid import uuid4
 
 from callback.client import CallbackAlreadySent, JobCallbackClient
@@ -33,15 +34,18 @@ from contracts.models import (
     RejectedFile,
     ToolCallLogEntry,
 )
+from memory.integration import fire_and_forget_memory_extraction, retrieve_and_inject_memories
 from orchestration.deps import GenerationDeps
 from orchestration.graph import run_generation, run_regenerate_node
 from orchestration.nodes import NoPriorSeedError, reconstruct_seed_from_namespace
 from seed.normalizer import NoUsableSeedContent, SeedSubmission, normalize_seed
+from tracing import annotate_current_span, trace_span
 from worker.files import fetch_all
 
 logger = logging.getLogger(__name__)
 
 
+@trace_span("generate_mindmap", run_type="chain")
 async def generate_mindmap(ctx: dict, request_payload: dict) -> dict:
     """ARQ entry point. `ctx` carries the shared clients built once per
     worker process in worker/settings.py::on_startup. `request_payload`
@@ -51,25 +55,59 @@ async def generate_mindmap(ctx: dict, request_payload: dict) -> dict:
     request = GenerationRequest.model_validate(request_payload)
     namespace = str(request.map_id)
 
+    if request.job_type == JobType.REGENERATE_FULL:
+        annotate_current_span(
+            name="regenerate_mindmap",
+            tags=["regenerate_full"],
+            metadata={"job_type": "regenerate_full", "map_id": str(request.map_id)},
+        )
+    else:
+        annotate_current_span(
+            tags=["generate"],
+            metadata={"job_type": "generate", "map_id": str(request.map_id)},
+        )
+
     callback = ctx.get("callback") or JobCallbackClient(
         job_id=request.job_id,
         base_url=request.callback_base_url,
         token=request.callback_token,
     )
+    dynamic_cfg = ctx.get("dynamic_config")
+    active_llm = dynamic_cfg.get_llm_provider() if dynamic_cfg else ctx["llm"]
+    prompt_mgr = dynamic_cfg.prompt_manager if dynamic_cfg else ctx.get("prompt_manager")
+
     deps = GenerationDeps(
-        llm=ctx["llm"],
+        llm=active_llm,
         decision_model=ctx["decision_model"],
         embedding_provider=ctx["embedding_provider"],
         vector_store=ctx["vector_store"],
         tools=ctx["tools"],
         settings=ctx["settings"],
         callback=callback,
+        redis_client=ctx.get("redis"),
+        prompt_manager=prompt_mgr,
+        dynamic_config=dynamic_cfg,
     )
 
+    # S3-L3: Retrieve user memories before generation and inject into initial state.
+    # Gracefully skips if user_id/callback_base_url absent or backend unreachable.
+    gen_query = request.topic or request.ideas or "mind map generation"
+    _mem_system_prompt, retrieved_memories = await retrieve_and_inject_memories(
+        system_prompt="",  # We pass memories via state's long_term_memories list instead
+        query=gen_query,
+        user_id=request.user_id,
+        map_id=request.map_id,
+        callback_base_url=request.callback_base_url,
+        callback_token=request.callback_token,
+        llm_provider=deps.settings.llm.provider,
+        llm_model=deps.settings.llm.model,
+    )
+    # Format memories as strings for injection via state.long_term_memories
+    long_term_memories = [f"[{m.memory_type}] {m.content}" for m in retrieved_memories if m.is_active]
+
     try:
-        result = await _run(request, namespace, deps)
-    except (NoUsableSeedContent, NoPriorSeedError) as exc:
-        # "Nothing to generate from" — a clean reject, not a crash.
+        result = await _run(request, namespace, deps, long_term_memories=long_term_memories)
+    except (NoUsableSeedContent, NoPriorSeedError) as exc:  # "Nothing to generate from" — a clean reject, not a crash.
         # NoUsableSeedContent: every uploaded file + text was unusable (generate).
         # NoPriorSeedError: no prior seed to regenerate from (reconstruct_seed_from_namespace).
         result = GenerationResult(
@@ -100,12 +138,26 @@ async def generate_mindmap(ctx: dict, request_payload: dict) -> dict:
         await _send_terminal(callback, result)
     else:
         await _send_terminal(callback, result)
+        # S3-L3: Fire-and-forget background memory extraction after successful generation.
+        if result.status == "completed" and request.user_id:
+            user_inputs = [s for s in [request.topic, request.ideas] if s]
+            fire_and_forget_memory_extraction(
+                llm=deps.llm,
+                callback_base_url=request.callback_base_url,
+                callback_token=request.callback_token,
+                user_id=request.user_id,
+                map_id=request.map_id,
+                user_inputs=user_inputs,
+                interaction_summary=f"Generated mind map on: {gen_query}",
+                existing_memories=retrieved_memories,
+            )
     finally:
         await callback.aclose()
 
     return result.model_dump(mode="json")
 
 
+@trace_span("regenerate_node", run_type="chain")
 async def _run_regenerate_node(
     request: GenerationRequest,
     namespace: str,
@@ -137,9 +189,21 @@ async def _run_regenerate_node(
     if not selected_node:
         raise ValueError("regenerate_node request must include selected_node")
 
-    ancestor_labels = request.ancestor_labels or []
+    ancestor_labels = request.effective_ancestor_labels
     breadcrumb = " > ".join([*ancestor_labels, selected_node.label])
     allowed_ids = {str(selected_node.id), *(str(n.id) for n in branch_nodes)}
+
+    parent_edges: list[Any] = []
+    if isinstance(request.branch_context, dict):
+        parent_edges = request.branch_context.get("parent_edges") or []
+        if not parent_edges and request.branch_context.get("parent_edge"):
+            parent_edges = [request.branch_context["parent_edge"]]
+    elif (
+        request.branch_context is not None
+        and hasattr(request.branch_context, "parent_edges")
+        and request.branch_context.parent_edges
+    ):
+        parent_edges = list(request.branch_context.parent_edges)
 
     final_state = await run_regenerate_node(
         deps,
@@ -151,6 +215,7 @@ async def _run_regenerate_node(
             "target_node_id": request.target_node_id or selected_node.id,
             "comment": comment,
             "ancestor_labels": ancestor_labels,
+            "parent_edges": parent_edges,
             "branch_nodes": branch_nodes,
             "branch_edges": branch_edges,
             "allowed_node_ids": allowed_ids,
@@ -188,25 +253,38 @@ async def _run_regenerate_node(
     )
 
 
+@trace_span("regenerate_node_task", run_type="chain")
 async def regenerate_node_task(ctx: dict, request_payload: dict) -> dict:
     """ARQ entry point for node-level regeneration (S2-L7, S2-L10, US-06)."""
     request = GenerationRequest.model_validate(request_payload)
     request.job_type = JobType.REGENERATE_NODE
     namespace = str(request.map_id)
 
+    annotate_current_span(
+        tags=["regenerate_node"],
+        metadata={"job_type": "regenerate_node", "map_id": str(request.map_id)},
+    )
+
     callback = ctx.get("callback") or JobCallbackClient(
         job_id=request.job_id,
         base_url=request.callback_base_url,
         token=request.callback_token,
     )
+    dynamic_cfg = ctx.get("dynamic_config")
+    active_llm = dynamic_cfg.get_llm_provider() if dynamic_cfg else ctx["llm"]
+    prompt_mgr = dynamic_cfg.prompt_manager if dynamic_cfg else ctx.get("prompt_manager")
+
     deps = GenerationDeps(
-        llm=ctx["llm"],
+        llm=active_llm,
         decision_model=ctx["decision_model"],
         embedding_provider=ctx["embedding_provider"],
         vector_store=ctx["vector_store"],
         tools=ctx["tools"],
         settings=ctx["settings"],
         callback=callback,
+        redis_client=ctx.get("redis"),
+        prompt_manager=prompt_mgr,
+        dynamic_config=dynamic_cfg,
     )
 
     try:
@@ -233,28 +311,62 @@ async def regenerate_node_task(ctx: dict, request_payload: dict) -> dict:
     return result.model_dump(mode="json")
 
 
+@trace_span("chat_turn_task", run_type="chain")
 async def chat_turn_task(ctx: dict, request_payload: dict) -> dict:
     """ARQ entry point for chat turns (S2-L8, S2-L9, S2-L10, US-14, US-15)."""
     request = ChatTurnRequest.model_validate(request_payload)
     job_id = request.job_id or uuid4()
     request.job_id = job_id
 
+    annotate_current_span(
+        tags=["chat_turn"],
+        metadata={"job_type": "chat_turn", "map_id": str(request.map_id)},
+    )
+
     callback = ctx.get("callback") or JobCallbackClient(
         job_id=job_id,
         base_url=request.callback_base_url,
         token=request.callback_token,
     )
+    dynamic_cfg = ctx.get("dynamic_config")
+    active_llm = dynamic_cfg.get_llm_provider() if dynamic_cfg else ctx["llm"]
+    prompt_mgr = dynamic_cfg.prompt_manager if dynamic_cfg else ctx.get("prompt_manager")
+
     deps = GenerationDeps(
-        llm=ctx["llm"],
+        llm=active_llm,
         decision_model=ctx["decision_model"],
         embedding_provider=ctx["embedding_provider"],
         vector_store=ctx["vector_store"],
         tools=ctx["tools"],
         settings=ctx["settings"],
         callback=callback,
+        redis_client=ctx.get("redis"),
+        prompt_manager=prompt_mgr,
+        dynamic_config=dynamic_cfg,
     )
 
     try:
+        # S3-L3: Retrieve user memories from backend and inject into request's memory context.
+        # Uses request.memory_context["user_id"] if present (passed by backend via ChatTurnRequest).
+        chat_user_id = (request.memory_context or {}).get("user_id") if request.memory_context else None
+        _mem_sys, chat_retrieved_memories = await retrieve_and_inject_memories(
+            system_prompt="",
+            query=request.message,
+            user_id=chat_user_id,
+            map_id=request.map_id,
+            callback_base_url=request.callback_base_url,
+            callback_token=request.callback_token,
+            llm_provider=deps.settings.llm.provider,
+            llm_model=deps.settings.llm.model,
+        )
+        # Inject formatted memories into request.memory_context so handlers can read them
+        if chat_retrieved_memories:
+            existing_ctx = dict(request.memory_context or {})
+            existing_ctx["long_term_memories"] = [
+                f"[{m.memory_type}] {m.content}" for m in chat_retrieved_memories if m.is_active
+            ]
+            request.memory_context = existing_ctx
+
         response = await run_chat_turn(deps, request)
 
         if response.answer:
@@ -266,11 +378,54 @@ async def chat_turn_task(ctx: dict, request_payload: dict) -> dict:
         else:
             assistant_message = "Processed your request."
 
+        action_proposal_dict = response.action_proposal.model_dump(mode="json") if response.action_proposal else None
+
+        # U2/R4: Check if conversation warrants updating the rolling summary.
+        # Include both current turn's user message and the generated assistant response
+        # so that advancing the summary cursor to the assistant message never drops exchanges.
+        effective_summary = request.summary
+        try:
+            from chat.memory import summarize_conversation
+            from contracts.models import ChatMessage
+
+            history_msgs = [
+                m if isinstance(m, ChatMessage) else ChatMessage.model_validate(m) for m in (request.history or [])
+            ]
+            all_turn_msgs = list(history_msgs) + [
+                ChatMessage(role="user", content=request.message),
+                ChatMessage(role="assistant", content=assistant_message),
+            ]
+            if len(all_turn_msgs) >= 6:
+                new_summary = await summarize_conversation(
+                    llm=deps.llm,
+                    messages=all_turn_msgs,
+                    previous_summary=request.summary,
+                )
+                if new_summary and new_summary.strip() and new_summary.strip() != (request.summary or "").strip():
+                    effective_summary = new_summary.strip()
+        except Exception as summ_err:
+            logger.warning("Conversation summarization during chat turn failed: %s", summ_err)
+
         await callback.complete_chat(
             map_id=request.map_id,
             assistant_message=assistant_message,
-            summary=request.summary,
+            summary=effective_summary,
+            action_proposal=action_proposal_dict,
+            cited_node_ids=response.cited_node_ids,
+            source_refs=response.source_refs,
         )
+        # S3-L3: Fire-and-forget background memory extraction after chat turn.
+        if chat_user_id:
+            fire_and_forget_memory_extraction(
+                llm=deps.llm,
+                callback_base_url=request.callback_base_url,
+                callback_token=request.callback_token,
+                user_id=chat_user_id,
+                map_id=request.map_id,
+                user_inputs=[request.message],
+                interaction_summary=assistant_message[:300] if assistant_message else "",
+                existing_memories=chat_retrieved_memories,
+            )
         return response.model_dump(mode="json")
     except Exception as exc:  # noqa: BLE001 - catch-all for terminal failure reporting
         logger.exception("job %s: unhandled exception during chat turn", job_id)
@@ -292,7 +447,17 @@ async def chat_turn_task(ctx: dict, request_payload: dict) -> dict:
         await callback.aclose()
 
 
-async def _run(request: GenerationRequest, namespace: str, deps: GenerationDeps) -> GenerationResult:
+@trace_span("regenerate_full", run_type="chain")
+async def _run_regenerate_full_prep(deps: GenerationDeps, namespace: str) -> str:
+    return await reconstruct_seed_from_namespace(deps, namespace=namespace)
+
+
+async def _run(
+    request: GenerationRequest,
+    namespace: str,
+    deps: GenerationDeps,
+    long_term_memories: list[str] | None = None,
+) -> GenerationResult:
     seed_assets = []
     rejected_files: list[RejectedFile] = []
 
@@ -310,7 +475,7 @@ async def _run(request: GenerationRequest, namespace: str, deps: GenerationDeps)
         is_regeneration = False
 
     elif request.job_type == JobType.REGENERATE_FULL:
-        seed_text = await reconstruct_seed_from_namespace(deps, namespace=namespace)
+        seed_text = await _run_regenerate_full_prep(deps, namespace=namespace)
         is_regeneration = True
 
     elif request.job_type == JobType.REGENERATE_NODE:
@@ -331,6 +496,7 @@ async def _run(request: GenerationRequest, namespace: str, deps: GenerationDeps)
             "is_regeneration": is_regeneration,
             "purpose": request.purpose,
             "seed_has_files": bool(request.files or request.seed_has_files),
+            "long_term_memories": long_term_memories or [],
         },
         max_retries=deps.settings.generation.max_generation_retries,
     )
@@ -376,3 +542,23 @@ async def _send_terminal(callback: JobCallbackClient, result: GenerationResult) 
         # generate_mindmap() calls _send_terminal exactly once per branch,
         # so this should be unreachable in practice.
         logger.error("job %s: attempted a second terminal callback", result.job_id)
+    except Exception as exc:
+        logger.error("job %s: failed to deliver terminal callback: %s", result.job_id, exc)
+        if result.status == "completed":
+            try:
+                fail_result = GenerationResult(
+                    job_id=result.job_id,
+                    map_id=result.map_id,
+                    status="failed",
+                    error=GenerationError(
+                        stage="callback",
+                        error_type="CallbackDeliveryError",
+                        message=f"Generation finished but delivery failed: {exc}",
+                        retryable=True,
+                    ),
+                )
+                await callback.fail(fail_result)
+            except Exception as inner_exc:
+                logger.critical(
+                    "job %s: both complete and fail callbacks failed to reach backend: %s", result.job_id, inner_exc
+                )

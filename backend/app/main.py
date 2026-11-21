@@ -32,15 +32,27 @@ load_dotenv(find_dotenv())
 # Backend configuration and database
 # Backward-compatible exports
 from auth.schemas import SignupRequest, UserCredentials  # noqa: F401
+from chat.routes import router as chat_router
 from core.config import settings as app_settings
 from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from maps.routes import router as maps_router
+from memories.routes import (
+    internal_router as internal_memory_router,
+)
+from memories.routes import (
+    memories_plural_router,
+)
+from memories.routes import (
+    router as agent_memory_router,
+)
+from memory.routes import router as memory_router
 
 # API routers
+from routes.admin import router as admin_router
 from routes.auth import router as auth_router
-from routes.internal import chat_callback_router
+from routes.internal import chat_callback_router, config_router
 from routes.internal import router as internal_router
 from routes.users import router as users_router
 from services.generator import MindMapGenerator
@@ -85,9 +97,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as exc:
         logger.info("Decoupled worker mode active (in-process LLM provider skipped: %s)", exc)
 
-    service = MindMapBackendService(pool, generator)  # type: ignore[arg-type]
-
     redis_pool = await create_redis_pool()
+    service = MindMapBackendService(pool, generator, redis_pool=redis_pool)  # type: ignore[arg-type]
 
     app.state.pool = pool
     app.state.redis_pool = redis_pool
@@ -165,7 +176,19 @@ app.include_router(users_router, include_in_schema=False)
 app.include_router(maps_router)
 app.include_router(internal_router)
 app.include_router(chat_callback_router)
+app.include_router(config_router)
+app.include_router(config_router, prefix="/api")
+app.include_router(internal_memory_router)
+app.include_router(internal_memory_router, prefix="/api")
 app.include_router(snapshots_router)
+app.include_router(chat_router, prefix="/api")
+app.include_router(memory_router, prefix="/api")
+app.include_router(agent_memory_router, prefix="/api")
+app.include_router(agent_memory_router)
+app.include_router(memories_plural_router, prefix="/api")
+app.include_router(memories_plural_router)
+app.include_router(admin_router, prefix="/api")
+app.include_router(admin_router, include_in_schema=False)
 
 
 @app.get("/", include_in_schema=False)

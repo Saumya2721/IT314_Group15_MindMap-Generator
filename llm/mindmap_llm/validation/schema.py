@@ -188,6 +188,45 @@ def _compute_tree_depth(nodes: list[_DraftNode], edges: list[_DraftEdge]) -> int
     return max_depth
 
 
+def score_draft(
+    draft: DraftMindMap,
+    *,
+    target_node_range: tuple[int, int] = (10, 25),
+    target_max_depth: int = 3,
+) -> float:
+    """Calculate a composite content quality score for a draft (higher is better)."""
+    score = 100.0
+    n_count = len(draft.nodes)
+    min_n, max_n = target_node_range
+    if n_count < min_n:
+        score -= (min_n - n_count) * 10.0
+    elif n_count > max_n:
+        score -= (n_count - max_n) * 2.0
+
+    depth = _compute_tree_depth(draft.nodes, draft.edges)
+    if depth < 2 and n_count >= 6:
+        score -= 35.0  # Severe penalty for degenerate flat star graphs
+    if depth > target_max_depth:
+        score -= (depth - target_max_depth) * 8.0
+
+    # Reward descriptive edge relationships
+    labeled = sum(1 for e in draft.edges if e.label and e.label.strip())
+    if draft.edges:
+        score += (labeled / len(draft.edges)) * 15.0
+
+    # Reward non-leaf branch descriptions
+    children_count: dict[str, int] = {n.id: 0 for n in draft.nodes}
+    for e in draft.edges:
+        if e.source in children_count:
+            children_count[e.source] += 1
+    branch_nodes = [n for n in draft.nodes if children_count.get(n.id, 0) > 0]
+    if branch_nodes:
+        described = sum(1 for n in branch_nodes if n.description and n.description.strip())
+        score += (described / len(branch_nodes)) * 15.0
+
+    return score
+
+
 def run_quality_checks(
     draft: DraftMindMap,
     *,
@@ -196,7 +235,7 @@ def run_quality_checks(
     supporting_context: list[Any] | None = None,
 ) -> QualityReport:
     """Evaluate content quality beyond syntax: node counts, tree depth,
-    branch descriptions, and citation validity.
+    branch fan-out, edge labels, branch descriptions, and citation validity.
     """
     warnings: list[str] = []
     min_nodes, max_nodes = target_node_range
@@ -212,12 +251,37 @@ def run_quality_checks(
     elif actual_nodes > max_nodes:
         warnings.append(f"Mind map node count ({actual_nodes}) exceeds target maximum ({max_nodes}).")
 
-    # 2. Tree depth check
+    # 2. Tree depth check (blocks pass if completely flat on a non-trivial map)
     actual_depth = _compute_tree_depth(draft.nodes, draft.edges)
-    if actual_depth > target_max_depth:
+    if actual_depth < 2 and actual_nodes >= 8:
+        warnings.append(
+            f"Tree depth ({actual_depth}) is too shallow for {actual_nodes} nodes. Group sub-concepts hierarchically under branches."
+        )
+        passed = False
+    elif actual_depth > target_max_depth:
         warnings.append(f"Tree depth ({actual_depth}) exceeds target depth ({target_max_depth}).")
 
-    # 3. Branch description check (non-leaf nodes should have explanations)
+    # 3. First-level fan-out check (prevent flat 20-node fan-out from root)
+    in_degrees: dict[str, int] = {n.id: 0 for n in draft.nodes}
+    for e in draft.edges:
+        if e.target in in_degrees:
+            in_degrees[e.target] += 1
+    roots = [nid for nid, count in in_degrees.items() if count == 0]
+    if roots:
+        root_id = roots[0]
+        root_branches = [e for e in draft.edges if e.source == root_id]
+        if len(root_branches) > 8:
+            warnings.append(
+                f"Root concept has {len(root_branches)} direct branches (max recommended is 8). Group related branches together."
+            )
+
+    # 4. Edge label check
+    if draft.edges:
+        labeled_count = sum(1 for e in draft.edges if e.label and e.label.strip())
+        if labeled_count == 0 and len(draft.edges) >= 4:
+            warnings.append("Mind map edges are missing relationship labels. Add descriptive verbs or prepositions.")
+
+    # 5. Branch description check (non-leaf nodes should have explanations)
     children_count = {n.id: 0 for n in draft.nodes}
     for e in draft.edges:
         if e.source in children_count:
@@ -227,7 +291,7 @@ def run_quality_checks(
         if children_count[n.id] > 0 and (not n.description or not n.description.strip()):
             warnings.append(f"Branch node '{n.label}' (id: {n.id}) is missing a required 2-3 sentence description.")
 
-    # 4. Citation coverage and validity check
+    # 6. Citation coverage and validity check
     context_len = len(supporting_context or [])
     has_citations = False
     for n in draft.nodes:
@@ -244,6 +308,7 @@ def run_quality_checks(
 
     if supporting_context and not has_citations and actual_nodes > 1:
         warnings.append("Supporting context was provided but no nodes include citation sources ('ctx:<n>').")
+        passed = False
 
     return QualityReport(warnings=warnings, passed=passed)
 
@@ -309,7 +374,7 @@ def resolve_to_records(
             id=uuid4(),
             source_node_id=id_map[e.source],
             target_node_id=id_map[e.target],
-            label=e.label,
+            label=e.label.strip() if e.label and e.label.strip() else "relates to",
         )
         for e in draft.edges
     ]
@@ -477,7 +542,7 @@ def resolve_branch_to_records(
             id=uuid4(),
             source_node_id=id_map[e.source],
             target_node_id=id_map[e.target],
-            label=e.label,
+            label=e.label.strip() if e.label and e.label.strip() else "relates to",
         )
         for e in draft.edges
     ]

@@ -1,5 +1,7 @@
 """Authentication routes. Business logic and schemas are isolated in auth/."""
 
+from urllib.parse import urlencode, urlparse
+
 from auth.schemas import (
     ForgotPasswordRequest,
     GoogleCallbackRequest,
@@ -9,9 +11,11 @@ from auth.schemas import (
     UserCredentials,
 )
 from auth.service import AuthService
+from core.config import settings
 from core.security import clear_auth_cookies, set_auth_cookies
 from core.supabase import get_current_user
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi.responses import RedirectResponse
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -37,15 +41,60 @@ def login(user: UserCredentials, response: Response):
 
 @router.get("/google", status_code=200)
 def google_login(
+    response: Response,
     redirect_to: str | None = Query(None, description="Custom redirect URL after Google sign-in"),
 ):
-    auth_url = AuthService.get_google_auth_url(redirect_to=redirect_to)
-    return {"google_auth_url": auth_url}
+    auth_data = AuthService.get_google_auth_url(redirect_to=redirect_to)
+    if auth_data.get("code_verifier"):
+        response.set_cookie(
+            key="oauth_code_verifier",
+            value=auth_data["code_verifier"],
+            httponly=True,
+            secure=settings.COOKIE_SECURE,
+            samesite="lax",
+            max_age=600,
+        )
+    return auth_data
+
+
+@router.get("/callback", status_code=307)
+def google_callback_get(
+    code: str | None = Query(None),
+    error: str | None = Query(None),
+    error_description: str | None = Query(None),
+):
+    """Fallback redirect to frontend callback page if Google OAuth lands on backend directly."""
+    query_params: dict[str, str] = {}
+    if code:
+        query_params["code"] = code
+    if error:
+        query_params["error"] = error
+    if error_description:
+        query_params["error_description"] = error_description
+
+    query = f"?{urlencode(query_params)}" if query_params else ""
+    target_url = f"{settings.FRONTEND_URL}/auth/callback{query}"
+
+    # Validate target URL to satisfy CodeQL py/url-redirection check and prevent open redirection
+    target_clean = target_url.replace("\\", "/")
+    parsed = urlparse(target_clean)
+    allowed_hosts = {
+        urlparse(settings.FRONTEND_URL).netloc,
+        "localhost:3000",
+        "127.0.0.1:3000",
+        "localhost:5173",
+        "127.0.0.1:5173",
+    }
+    if parsed.netloc in allowed_hosts and parsed.scheme in ("http", "https"):
+        return RedirectResponse(url=target_url)
+    return RedirectResponse(url=f"{settings.FRONTEND_URL}/auth/callback")
 
 
 @router.post("/google/callback", status_code=200)
-def google_callback(body: GoogleCallbackRequest, response: Response):
-    session_data = AuthService.exchange_code_for_session(code=body.code)
+def google_callback(body: GoogleCallbackRequest, request: Request, response: Response):
+    code_verifier = body.code_verifier or request.cookies.get("oauth_code_verifier")
+    session_data = AuthService.exchange_code_for_session(code=body.code, code_verifier=code_verifier)
+    response.delete_cookie(key="oauth_code_verifier")
     # Set standard HttpOnly cookies upon successful Google OAuth callback
     set_auth_cookies(
         response=response,

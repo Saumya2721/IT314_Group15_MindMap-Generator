@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass, replace
 from string import Template
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from orchestration.policy import SeedMode
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from contracts.models import NodeDraft
@@ -176,7 +179,32 @@ $example
 )
 
 
-def build_generation_system_prompt(targets: SizeTargets, mode: SeedMode) -> str:
+def build_generation_system_prompt(
+    targets: SizeTargets,
+    mode: SeedMode,
+    prompt_manager: Any = None,
+) -> str:
+    if prompt_manager is not None and hasattr(prompt_manager, "get_template"):
+        custom_tmpl = prompt_manager.get_template("generation_system")
+        if isinstance(custom_tmpl, str) and custom_tmpl.strip():
+            try:
+                return Template(custom_tmpl).safe_substitute(
+                    level=targets.level,
+                    min_nodes=targets.min_nodes,
+                    max_nodes=targets.max_nodes,
+                    min_branches=targets.min_branches,
+                    max_branches=targets.max_branches,
+                    min_depth=targets.min_depth,
+                    max_depth=targets.max_depth,
+                    mode_rule=_MODE_RULES[mode],
+                    example=json.dumps(_EXAMPLE_MAP, ensure_ascii=False),
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to render custom generation_system template: %s, falling back to default",
+                    exc,
+                )
+
     return _SYSTEM_TEMPLATE.substitute(
         level=targets.level,
         min_nodes=targets.min_nodes,
@@ -197,6 +225,85 @@ GENERATION_SYSTEM_PROMPT = build_generation_system_prompt(
     "document",
 )
 
+MAX_PROMPT_SEED_CHARS = 2500
+
+
+def _extract_lead_excerpt(text: str, max_chars: int = 2000) -> str:
+    """Extract a high-signal overview or abstract from document text.
+
+    Instead of naively taking the first N characters (which often contain copyright
+    disclaimers, author emails, or arXiv banners), this detects explicit Abstract,
+    Executive Summary, or Overview sections. If none are found, it strips preprint
+    metadata before taking the lead text.
+    """
+    # 1. Search for an explicit Abstract or Executive Summary section
+    abstract_match = re.search(
+        r"(?:^|\n)(?:#+\s*)?(?:Abstract|Executive Summary|Overview)[:\s\n]+(.*?)(?=\n(?:#+\s*|\d+\.\s+|[A-Z\s]{4,}\n|\Z))",
+        text,
+        re.IGNORECASE | re.DOTALL,
+    )
+    if abstract_match:
+        abstract_text = abstract_match.group(1).strip()
+        if len(abstract_text) >= 80:
+            return f"Abstract: {abstract_text[:max_chars].strip()}"
+
+    # 2. Fallback: strip boilerplate preprint, license, or affiliation headers
+    cleaned = re.sub(
+        r"^(?:arXiv:\S+|doi:\S+|Copyright\s+.*?\n|Preprint.*?\n|\s*\[.*?\])+",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    ).strip()
+
+    excerpt = cleaned[:max_chars].strip()
+    last_space = excerpt.rfind(" ")
+    if last_space > 1200:
+        excerpt = excerpt[:last_space]
+    return excerpt
+
+
+def format_seed_content(
+    seed_text: str,
+    *,
+    mode: SeedMode = "document",
+    max_chars: int = MAX_PROMPT_SEED_CHARS,
+) -> str:
+    """Format seed content for generation prompts.
+
+    For short text (<= max_chars), the seed is included verbatim.
+    For large documents (e.g. multi-page PDFs, books, articles), we decouple the
+    prompt from the raw full-text corpus to respect model context/token limits:
+      1. Extracts the structural outline (headings / TOC) to guide branch hierarchy.
+      2. Includes a targeted overview / abstract excerpt via `_extract_lead_excerpt`.
+      3. Directs the LLM to ground specific concepts, equations, and details in the
+         retrieved Supporting Context chunks populated from the vector store.
+    """
+    clean_seed = seed_text.strip()
+    if len(clean_seed) <= max_chars:
+        return clean_seed
+
+    headings = extract_headings_from_text(clean_seed)
+    lead_excerpt = _extract_lead_excerpt(clean_seed, max_chars=min(2000, max_chars))
+
+    parts: list[str] = []
+    if headings:
+        # Include top headings for macro hierarchy (up to 25)
+        display_headings = headings[:25]
+        parts.append("Document Structural Outline (use for macro branch hierarchy):")
+        parts.extend(f"- {h}" for h in display_headings)
+        if len(headings) > 25:
+            parts.append(f"- ... and {len(headings) - 25} more sub-sections")
+        parts.append("")
+
+    parts.append("Document Overview (Opening Excerpt):")
+    parts.append(lead_excerpt)
+    parts.append(
+        "\n[Note: The complete document is indexed into the vector store. "
+        "Use the structural outline above to determine major branches, and ground specific concepts, "
+        "details, and relationships in the retrieved Supporting Context below.]"
+    )
+    return "\n".join(parts)
+
 
 def build_generation_user_prompt(
     *,
@@ -210,13 +317,14 @@ def build_generation_user_prompt(
     mode: SeedMode = "document",
 ) -> str:
     heading = "Topic and ideas:" if mode == "topic" else "Seed:"
+    formatted_seed = format_seed_content(seed_text, mode=mode)
     parts = [
         f"Detail level: {detail_level}",
         f"Mode: {mode}",
         f"Target: {target_node_range[0]}–{target_node_range[1]} nodes, max {target_max_depth} levels deep.",
         "",
         heading,
-        seed_text.strip(),
+        formatted_seed,
     ]
 
     if regeneration_instruction:
@@ -340,6 +448,15 @@ def extract_headings_from_text(text: str) -> list[str]:
     for match in pattern.finditer(text):
         hashes, title = match.groups()
         headings.append(f"{hashes} {title.strip()}")
+
+    if not headings:
+        # Fallback to numbered sections like "1 Introduction", "1.1 Background"
+        num_pattern = re.compile(r"^(\d+(?:\.\d+)*)\s+([A-Z][A-Za-z0-9\s\-_]{2,60})$", re.MULTILINE)
+        for match in num_pattern.finditer(text):
+            num, title = match.groups()
+            depth = min(num.count(".") + 1, 3)
+            headings.append(f"{'#' * depth} {num} {title.strip()}")
+
     return headings
 
 
@@ -350,11 +467,12 @@ def build_outline_user_prompt(
     headings: list[str] | None = None,
     previous_validation_errors: list[str] | None = None,
 ) -> str:
+    formatted_seed = format_seed_content(seed_text, mode="document")
     parts = [
         "Generate a high-level structural outline (Pass 1) for a mind map based on the following content.",
         "",
         "## Source Content",
-        seed_text.strip()[:8000],
+        formatted_seed,
     ]
     if headings:
         parts += [
@@ -381,7 +499,11 @@ def build_outline_user_prompt(
     return "\n".join(parts)
 
 
-def build_regenerate_node_system_prompt() -> str:
+def build_regenerate_node_system_prompt(prompt_manager: Any = None) -> str:
+    if prompt_manager is not None and hasattr(prompt_manager, "get_template"):
+        tmpl = prompt_manager.get_template("regenerate_node_system")
+        if isinstance(tmpl, str) and tmpl.strip():
+            return tmpl
     return _REGENERATE_NODE_SYSTEM_TEMPLATE
 
 
@@ -392,6 +514,7 @@ def build_regenerate_node_user_prompt(
     comment: str | None,
     ancestor_labels: list[str],
     breadcrumb_path: str,
+    parent_edges: list[dict[str, Any]] | None = None,
     branch_context_nodes: list[NodeDraft] | None = None,
     supporting_context: list[RetrievedChunk] | None = None,
     previous_validation_errors: list[str] | None = None,
@@ -405,6 +528,17 @@ def build_regenerate_node_user_prompt(
             "",
             "[READ-ONLY CONTEXT] Ancestors (do not generate or modify these):",
             *[f"- {a}" for a in ancestor_labels],
+        ]
+
+    if parent_edges and len(parent_edges) > 1:
+        parts += [
+            "",
+            "[READ-ONLY CONTEXT] Multi-Parent Incoming Connections:",
+            *[
+                f"- From parent {e.get('source_node_id', 'unknown')}"
+                + (f" with label '{e.get('label')}'" if e.get("label") else "")
+                for e in parent_edges
+            ],
         ]
 
     parts += [
@@ -483,3 +617,8 @@ def extract_json_object(text: str) -> dict:
         return json.loads(match.group(0))
     except json.JSONDecodeError as exc:
         raise JSONExtractionError(f"Model output was not valid JSON: {exc}") from exc
+
+
+# Aliases for unified shared branch expansion prompt functions (S3-A3)
+build_branch_expansion_system_prompt = build_regenerate_node_system_prompt
+build_branch_expansion_user_prompt = build_regenerate_node_user_prompt

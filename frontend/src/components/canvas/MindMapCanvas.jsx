@@ -50,6 +50,16 @@ function useExportableFlowApi(flowApiRef) {
       },
       getViewport: () => rf.getViewport(),
       setViewport: (viewport) => rf.setViewport(viewport),
+      setCenter: (x, y, options) => {
+        if (typeof rf.setCenter === 'function') {
+          return rf.setCenter(x, y, options)
+        }
+        const currentVp = rf.getViewport()
+        const zoom = options?.zoom ?? currentVp.zoom ?? 1
+        const cx = window.innerWidth / 2 - x * zoom
+        const cy = window.innerHeight / 2 - y * zoom
+        rf.setViewport({ x: cx, y: cy, zoom })
+      },
     }
   }, [rf, flowApiRef])
 }
@@ -75,6 +85,7 @@ function FlowCanvas({
   onDeleteNode,
   onAddChild,
   onAddSibling,
+  onEdgeClick,
 }) {
   const [localSelectedNode, setLocalSelectedNode] = useState(null)
   const lastInvalidRef = useRef(null)
@@ -306,6 +317,7 @@ function FlowCanvas({
         onReconnect={handleReconnect}
         onConnectEnd={handleConnectEnd}
         onNodeClick={handleNodeClick}
+        onEdgeClick={onEdgeClick}
         onPaneClick={handlePaneClick}
         onNodeDoubleClick={(event, node) => onStartEditing && onStartEditing(node.id)}
         fitView
@@ -365,6 +377,7 @@ export function MindMapCanvas(props) {
         onDeleteNode={props.onDeleteNode}
         onAddChild={props.onAddChild}
         onAddSibling={props.onAddSibling}
+        onEdgeClick={props.onEdgeClick}
       />
     </ReactFlowProvider>
   )

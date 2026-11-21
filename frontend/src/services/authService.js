@@ -122,6 +122,13 @@ export const authService = {
   async loginWithGoogle() {
     const res = await apiClient.get('/auth/google')
     if (res.ok && res.data?.google_auth_url) {
+      if (res.data.code_verifier) {
+        try {
+          sessionStorage.setItem('mindweave_oauth_code_verifier', res.data.code_verifier)
+        } catch (e) {
+          console.warn('Could not store code verifier in sessionStorage:', e)
+        }
+      }
       window.location.href = res.data.google_auth_url
       return { success: true }
     }
@@ -137,7 +144,20 @@ export const authService = {
    * Endpoint: POST /auth/google/callback
    */
   async exchangeGoogleCode(code) {
-    const res = await apiClient.post('/auth/google/callback', { code })
+    let codeVerifier = null
+    try {
+      codeVerifier = sessionStorage.getItem('mindweave_oauth_code_verifier')
+      sessionStorage.removeItem('mindweave_oauth_code_verifier')
+    } catch (e) {
+      console.warn('Could not read code verifier from sessionStorage:', e)
+    }
+
+    const payload = { code }
+    if (codeVerifier) {
+      payload.code_verifier = codeVerifier
+    }
+
+    const res = await apiClient.post('/auth/google/callback', payload)
     if (!res.ok) {
       return {
         success: false,

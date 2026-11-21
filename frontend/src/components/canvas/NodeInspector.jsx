@@ -1,5 +1,148 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import './NodeInspector.css'
+
+// S2-FE8: Source attribution config — badge label, icon, colour, and tooltip
+const SOURCE_CONFIG = {
+  seed: {
+    label: 'From Seed',
+    icon: 'eco',
+    color: '#2d6a4f',
+    bg: '#d8f3dc',
+    tooltip: 'This concept was derived directly from your original seed topic or prompt.',
+  },
+  seed_material: {
+    label: 'From Seed',
+    icon: 'eco',
+    color: '#2d6a4f',
+    bg: '#d8f3dc',
+    tooltip: 'This concept was derived directly from your original seed topic or prompt.',
+  },
+  web_research: {
+    label: 'Web Research',
+    icon: 'travel_explore',
+    color: '#1a5276',
+    bg: '#d6eaf8',
+    tooltip: 'This concept was grounded using live web search results.',
+  },
+  arxiv: {
+    label: 'arXiv Paper',
+    icon: 'menu_book',
+    color: '#6c3483',
+    bg: '#e8daef',
+    tooltip: 'This concept was synthesised from a peer-reviewed arXiv publication.',
+  },
+  wikipedia: {
+    label: 'Wikipedia',
+    icon: 'article',
+    color: '#1e7145',
+    bg: '#d9ead3',
+    tooltip:
+      'This concept was grounded using Wikipedia article content available under CC BY-SA 4.0.',
+  },
+  context_citation: {
+    label: 'Context Citation',
+    icon: 'bookmark',
+    color: '#475569',
+    bg: '#f1f5f9',
+    tooltip: 'This concept was grounded directly from a retrieved context citation.',
+  },
+  general: {
+    label: 'General Knowledge',
+    icon: 'lightbulb',
+    color: '#7d6608',
+    bg: '#fef9e7',
+    tooltip: "This concept is based on the model's general knowledge without a specific source.",
+  },
+}
+
+function isArxivUrl(urlString) {
+  try {
+    const parsed = new URL(urlString)
+    return parsed.hostname === 'arxiv.org' || parsed.hostname.endsWith('.arxiv.org')
+  } catch {
+    return false
+  }
+}
+
+function isWikipediaUrl(urlString) {
+  try {
+    const parsed = new URL(urlString)
+    return (
+      parsed.hostname === 'en.wikipedia.org' ||
+      parsed.hostname === 'wikipedia.org' ||
+      parsed.hostname.endsWith('.wikipedia.org')
+    )
+  } catch {
+    return false
+  }
+}
+
+/**
+ * S2-FE8: SourceAttributionBadge
+ * Renders a coloured pill badge showing how a node was derived,
+ * with a tooltip and an optional clickable external link.
+ */
+function SourceAttributionBadge({ sourceType, sourceUrl, sourceLabel }) {
+  const [tooltipVisible, setTooltipVisible] = useState(false)
+  const timeoutRef = useRef(null)
+
+  if (!sourceType && !sourceLabel && !sourceUrl) return null
+
+  const key = sourceType && SOURCE_CONFIG[sourceType] ? sourceType : 'general'
+  const cfg = SOURCE_CONFIG[key]
+  const displayLabel = sourceLabel || cfg.label
+
+  const handleMouseEnter = () => {
+    timeoutRef.current = setTimeout(() => setTooltipVisible(true), 300)
+  }
+  const handleMouseLeave = () => {
+    clearTimeout(timeoutRef.current)
+    setTooltipVisible(false)
+  }
+
+  return (
+    <div className="source-attribution-wrap">
+      <div
+        className="source-badge"
+        style={{ backgroundColor: cfg.bg, color: cfg.color, borderColor: `${cfg.color}33` }}
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={handleMouseLeave}
+        onFocus={handleMouseEnter}
+        onBlur={handleMouseLeave}
+        tabIndex={0}
+        role="img"
+        aria-label={`Source: ${displayLabel}. ${cfg.tooltip}`}
+      >
+        <span className="material-symbols-outlined source-badge-icon">{cfg.icon}</span>
+        <span className="source-badge-label">{displayLabel}</span>
+        {sourceUrl && (
+          <a
+            href={sourceUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="source-badge-link"
+            style={{ color: cfg.color }}
+            onClick={(e) => e.stopPropagation()}
+            aria-label={`Open source: ${sourceUrl}`}
+            title={sourceUrl}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: '12px' }}>
+              open_in_new
+            </span>
+          </a>
+        )}
+      </div>
+      {tooltipVisible && (
+        <div className="source-tooltip" role="tooltip">
+          {cfg.tooltip}
+          {sourceUrl && (
+            <span className="source-tooltip-url"> — {sourceUrl.replace(/^https?:\/\//, '')}</span>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
 
 export function NodeInspector({
   selectedNode,
@@ -9,6 +152,7 @@ export function NodeInspector({
   onAddChild,
   onAddSibling,
   onDeleteNode,
+  onStartAddEdge,
   comments = [],
   onAddComment,
   onResolveComment,
@@ -36,6 +180,90 @@ export function NodeInspector({
   const nodeType = selectedNode.nodeType || selectedNode.type || 'concept'
   const isRoot = nodeType === 'root' || nodeType === 'rootNode'
   const category = selectedNode.category || (isRoot ? 'Central Theme' : 'Concept')
+
+  // S2-FE8 / N6: Parse source attribution and list of grounded citations
+  const rawSources = selectedNode.node_data?.sources || selectedNode.sources || []
+  const sourcesList = Array.isArray(rawSources)
+    ? rawSources
+    : typeof rawSources === 'object' && rawSources !== null
+      ? [rawSources]
+      : []
+
+  const parseSourceEntry = (src) => {
+    if (!src) return null
+    if (typeof src === 'object') {
+      const type =
+        src.kind ||
+        src.source_type ||
+        src.type ||
+        (src.url?.includes('arxiv')
+          ? 'arxiv'
+          : isWikipediaUrl(src.url || '')
+            ? 'wikipedia'
+            : src.url
+              ? 'web_research'
+              : 'general')
+      return {
+        type: type === 'seed' ? 'seed_material' : type,
+        title: src.title || src.label || src.url || 'Source',
+        url: src.url || null,
+      }
+    }
+    if (typeof src === 'string') {
+      const trimmed = src.trim()
+      if (trimmed === 'seed') {
+        return { type: 'seed_material', title: 'Uploaded Seed Material', url: null }
+      }
+      if (trimmed === 'general') {
+        return { type: 'general', title: 'General Knowledge', url: null }
+      }
+      if (trimmed.startsWith('ctx:')) {
+        return { type: 'context_citation', title: `Context Citation (${trimmed})`, url: null }
+      }
+      // Check for "Title (URL)" pattern emitted by worker, tolerating parentheses inside URLs
+      const match = trimmed.match(/^(.*?)\s*\((https?:\/\/\S+)\)$/)
+      if (match) {
+        const title = match[1].trim()
+        const url = match[2].trim()
+        const type = isArxivUrl(url) ? 'arxiv' : isWikipediaUrl(url) ? 'wikipedia' : 'web_research'
+        return { type, title: title || url, url }
+      }
+      if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+        const type = isArxivUrl(trimmed)
+          ? 'arxiv'
+          : isWikipediaUrl(trimmed)
+            ? 'wikipedia'
+            : 'web_research'
+        return { type, title: trimmed, url: trimmed }
+      }
+      return { type: 'general', title: trimmed, url: null }
+    }
+    return null
+  }
+
+  const parsedSources = sourcesList.map(parseSourceEntry).filter(Boolean)
+  const firstParsed = parsedSources[0]
+
+  const primarySourceType =
+    selectedNode.source_type ||
+    selectedNode.sourceType ||
+    selectedNode.node_data?.source_type ||
+    firstParsed?.type ||
+    null
+
+  const primarySourceUrl =
+    selectedNode.source_url ||
+    selectedNode.sourceUrl ||
+    selectedNode.node_data?.source_url ||
+    firstParsed?.url ||
+    null
+
+  const primarySourceLabel =
+    selectedNode.source_label ||
+    selectedNode.sourceLabel ||
+    (firstParsed?.type ? SOURCE_CONFIG[firstParsed.type]?.label : null) ||
+    firstParsed?.title ||
+    null
 
   // Filter comments
   const filteredComments = (comments || []).filter((c) => {
@@ -93,8 +321,16 @@ export function NodeInspector({
         </button>
       </div>
 
-      {/* Category / Type Badge */}
-      <div style={{ marginBottom: '14px' }}>
+      {/* Category / Type Badge & Source Attribution Badge */}
+      <div
+        style={{
+          marginBottom: '14px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px',
+          flexWrap: 'wrap',
+        }}
+      >
         <span
           style={{
             display: 'inline-block',
@@ -111,6 +347,11 @@ export function NodeInspector({
         >
           {category}
         </span>
+        <SourceAttributionBadge
+          sourceType={primarySourceType}
+          sourceUrl={primarySourceUrl}
+          sourceLabel={primarySourceLabel}
+        />
       </div>
 
       {/* Editable Node Title */}
@@ -168,6 +409,71 @@ export function NodeInspector({
         />
       </div>
 
+      {/* S2-FE8 / N6: Detailed Source Citations List */}
+      {parsedSources.length > 0 && (
+        <div className="inspector-field" style={{ marginTop: '14px' }}>
+          <label
+            className="inspector-field-label"
+            style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+          >
+            <span
+              className="material-symbols-outlined"
+              style={{ fontSize: '14px', color: 'var(--primary, #155E63)' }}
+            >
+              auto_stories
+            </span>
+            Grounded Sources ({parsedSources.length})
+          </label>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '6px' }}>
+            {parsedSources.map((parsed, idx) => (
+              <div
+                key={idx}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '6px 8px',
+                  borderRadius: '4px',
+                  background: 'var(--surface-container-low, #f2f5f4)',
+                  border: '1px solid var(--structural-border, #e1e3e0)',
+                  fontSize: '12px',
+                }}
+              >
+                <span
+                  style={{
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    maxWidth: '210px',
+                  }}
+                  title={parsed.title}
+                >
+                  {parsed.title}
+                </span>
+                {parsed.url && (
+                  <a
+                    href={parsed.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{
+                      color: '#1a5276',
+                      display: 'flex',
+                      alignItems: 'center',
+                      marginLeft: '6px',
+                    }}
+                    title={`Open ${parsed.url}`}
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>
+                      open_in_new
+                    </span>
+                  </a>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Quick Actions (Add Child, Add Sibling, Delete) */}
       <div style={{ marginTop: '16px' }}>
         <label className="inspector-field-label">Node Actions</label>
@@ -191,6 +497,27 @@ export function NodeInspector({
               subdirectory_arrow_right
             </span>
             <span>Add Child Concept (Tab)</span>
+          </button>
+
+          {/* Add Edge (Connect to another node) */}
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => onStartAddEdge?.(selectedNode.id)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '6px',
+              fontSize: '12.5px',
+              padding: '7px 12px',
+              width: '100%',
+            }}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>
+              add_link
+            </span>
+            <span>Add Edge (Connect To…)</span>
           </button>
 
           {/* Add Sibling Node (allowed for non-root nodes) */}

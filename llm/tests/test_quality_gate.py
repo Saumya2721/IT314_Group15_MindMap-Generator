@@ -216,3 +216,31 @@ async def test_validate_node_accepts_draft_with_warnings_when_retries_exhausted(
     assert len(res["edges"]) == 2
     assert len(res["quality_warnings"]) > 0
     assert any("below target minimum" in w for w in res["quality_warnings"])
+
+
+@pytest.mark.asyncio
+async def test_f6_retrieval_quality_warnings_accumulated_through_gate():
+    """F6: Existing retrieval quality warnings are accumulated and preserved rather than overwritten."""
+    mock_deps = MagicMock()
+    mock_deps.settings.generation.max_generation_retries = 2
+    mock_deps.settings.generation.enable_dynamic_prompts = True
+    mock_deps.callback.progress = AsyncMock()
+
+    nodes = make_nodes(mock_deps)
+
+    retrieval_notice = (
+        "Notice: Web search yielded no external results; generated mind map based strictly on topic query."
+    )
+    state = {
+        "draft_payload": VALID_DRAFT_PAYLOAD,
+        "retry_count": 2,
+        "_max_retries": 2,
+        "target_node_range": (10, 25),
+        "target_max_depth": 3,
+        "retrieved_chunks": [],
+        "quality_warnings": [retrieval_notice],
+    }
+
+    res = await nodes["validate"](state)
+    assert retrieval_notice in res["quality_warnings"]
+    assert any("below target minimum" in w for w in res["quality_warnings"])

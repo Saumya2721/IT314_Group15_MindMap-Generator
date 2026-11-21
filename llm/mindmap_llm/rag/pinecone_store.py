@@ -53,6 +53,10 @@ class VectorChunk:
     generation_job_id: UUID | None = None
     source_title: str | None = None
     source_url: str | None = None
+    # S3-T1 / fixes #184: license + attribution carried alongside tool-sourced chunks
+    # (e.g. CC BY-SA for Wikipedia articles) so consumers can surface clean attribution.
+    license: str | None = None
+    attribution: str | None = None
     id: str = field(default_factory=lambda: str(uuid4()))
     section_path: str | None = None
     heading_level: int | None = None
@@ -72,6 +76,9 @@ class RetrievedChunkRecord:
     source_title: str | None
     source_url: str | None
     score: float  # Pinecone's own similarity score (pre-rerank)
+    # S3-T1 / fixes #184: license + attribution carried alongside tool-sourced chunks.
+    license: str | None = None
+    attribution: str | None = None
     section_path: str | None = None
     heading_level: int | None = None
     page_number: int | None = None
@@ -153,6 +160,8 @@ class PineconeVectorStore:
                 "generation_job_id": str(c.generation_job_id),
                 "source_title": c.source_title or "",
                 "source_url": c.source_url or "",
+                "license": c.license or "",
+                "attribution": c.attribution or "",
             }
             if c.section_path:
                 metadata["section_path"] = c.section_path
@@ -208,6 +217,9 @@ class PineconeVectorStore:
                 source_title=match["metadata"].get("source_title") or None,
                 source_url=match["metadata"].get("source_url") or None,
                 score=match["score"],
+                # S3-T1 / fixes #184: license and attribution metadata.
+                license=match["metadata"].get("license") or None,
+                attribution=match["metadata"].get("attribution") or None,
                 section_path=match["metadata"].get("section_path") or None,
                 heading_level=match["metadata"].get("heading_level"),
                 page_number=match["metadata"].get("page_number"),
@@ -245,6 +257,9 @@ class PineconeVectorStore:
                 source_title=match["metadata"].get("source_title") or None,
                 source_url=match["metadata"].get("source_url") or None,
                 score=match["score"],
+                # S3-T1 / fixes #184: license and attribution metadata.
+                license=match["metadata"].get("license") or None,
+                attribution=match["metadata"].get("attribution") or None,
                 section_path=match["metadata"].get("section_path") or None,
                 heading_level=match["metadata"].get("heading_level"),
                 page_number=match["metadata"].get("page_number"),

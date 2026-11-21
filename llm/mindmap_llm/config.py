@@ -45,6 +45,13 @@ def _get_float(name: str, default: float) -> float:
     return float(val) if val is not None else default
 
 
+def _get_research_engine() -> str:
+    val = os.environ.get("RESEARCH_ENGINE", "subgraph").strip().lower()
+    if val not in {"subgraph", "inline"}:
+        return "subgraph"
+    return val
+
+
 @dataclass(frozen=True)
 class ArqConfig:
     redis_url: str = field(default_factory=lambda: os.environ.get("REDIS_URL", "redis://localhost:6379"))
@@ -52,6 +59,9 @@ class ArqConfig:
     # Must exceed the slowest realistic generation (detailed mode budget
     # is 180s) with real headroom for retries inside the graph.
     job_timeout_s: int = field(default_factory=lambda: _get_int("ARQ_JOB_TIMEOUT_S", 300))
+    # Connection timeout in seconds (must accommodate cloud / TLS latency like Upstash)
+    conn_timeout: int = field(default_factory=lambda: _get_int("ARQ_REDIS_CONN_TIMEOUT", 15))
+    conn_retries: int = field(default_factory=lambda: _get_int("ARQ_REDIS_CONN_RETRIES", 10))
 
 
 @dataclass(frozen=True)
@@ -81,7 +91,7 @@ class DecisionModelConfig:
     pipeline still works without it (NFR-07: graceful degradation).
     """
 
-    enabled: bool = field(default_factory=lambda: _get_bool("DECISION_MODEL_ENABLED", True))
+    enabled: bool = field(default_factory=lambda: _get_bool("DECISION_MODEL_ENABLED", False))
     provider: str = field(default_factory=lambda: os.environ.get("DECISION_MODEL_PROVIDER", "jev"))
     api_key: str = field(default_factory=lambda: os.environ.get("TYPESAFE_API_KEY", ""))
     api_base: str = field(default_factory=lambda: os.environ.get("TYPESAFE_API_BASE", "https://api.typesafe.ai/v1"))
@@ -125,9 +135,41 @@ class ToolConfig:
     web_search_provider: str = field(default_factory=lambda: os.environ.get("SEARCH_PROVIDER", "tavily"))
     web_search_api_key: str = field(default_factory=lambda: os.environ.get("SEARCH_API_KEY", ""))
     arxiv_api_base: str = field(
-        default_factory=lambda: os.environ.get("ARXIV_API_BASE", "http://export.arxiv.org/api/query")
+        default_factory=lambda: os.environ.get("ARXIV_API_BASE", "https://export.arxiv.org/api/query")
     )
     tool_timeout_s: float = field(default_factory=lambda: _get_float("TOOL_TIMEOUT_S", 15.0))
+    # S3-L1: Per-tool timeouts
+    web_search_timeout_s: float = field(default_factory=lambda: _get_float("TOOL_WEB_SEARCH_TIMEOUT_S", 15.0))
+    arxiv_search_timeout_s: float = field(default_factory=lambda: _get_float("TOOL_ARXIV_TIMEOUT_S", 20.0))
+    web_reader_timeout_s: float = field(default_factory=lambda: _get_float("TOOL_WEB_READER_TIMEOUT_S", 10.0))
+    # S3-T1 / fixes #184: Wikipedia research tool (CC BY-SA attribution, section hierarchy)
+    wikipedia_api_base: str = field(
+        default_factory=lambda: os.environ.get("WIKIPEDIA_API_BASE", "https://en.wikipedia.org/api/rest_v1")
+    )
+    wikipedia_timeout_s: float = field(default_factory=lambda: _get_float("TOOL_WIKIPEDIA_TIMEOUT_S", 10.0))
+    wikipedia_max_sections: int = field(default_factory=lambda: _get_int("TOOL_WIKIPEDIA_MAX_SECTIONS", 30))
+    wikipedia_enabled: bool = field(default_factory=lambda: _get_bool("TOOL_WIKIPEDIA_ENABLED", True))
+    scholar_timeout_s: float = field(default_factory=lambda: _get_float("TOOL_SCHOLAR_TIMEOUT_S", 15.0))
+    # S3-L1: Enable/disable flags loaded from config
+    web_search_enabled: bool = field(default_factory=lambda: _get_bool("TOOL_WEB_SEARCH_ENABLED", True))
+    arxiv_search_enabled: bool = field(default_factory=lambda: _get_bool("TOOL_ARXIV_SEARCH_ENABLED", True))
+    web_reader_enabled: bool = field(default_factory=lambda: _get_bool("TOOL_WEB_READER_ENABLED", True))
+    scholar_enabled: bool = field(default_factory=lambda: _get_bool("TOOL_SCHOLAR_ENABLED", True))
+    scholar_api_base: str = field(
+        default_factory=lambda: os.environ.get(
+            "SCHOLAR_API_BASE", "https://api.semanticscholar.org/graph/v1/paper/search"
+        )
+    )
+    scholar_api_key: str = field(default_factory=lambda: os.environ.get("SCHOLAR_API_KEY", ""))
+    # S3-L1: Per-user quota configuration (enforced via Redis limiter)
+    user_quota_calls: int = field(default_factory=lambda: _get_int("TOOL_USER_QUOTA_CALLS", 30))
+    user_quota_window_s: int = field(default_factory=lambda: _get_int("TOOL_USER_QUOTA_WINDOW_S", 60))
+    # S3-L1 & S3-A2: Overall research time budget and subgraph settings
+    research_time_budget_s: float = field(default_factory=lambda: _get_float("RESEARCH_TIME_BUDGET_S", 10.0))
+    research_engine: str = field(default_factory=lambda: _get_research_engine())
+    research_subgraph_timeout_s: float = field(default_factory=lambda: _get_float("RESEARCH_SUBGRAPH_TIMEOUT_S", 10.0))
+    research_max_rounds: int = field(default_factory=lambda: _get_int("RESEARCH_MAX_ROUNDS", 2))
+    research_cache_ttl_s: int = field(default_factory=lambda: _get_int("RESEARCH_CACHE_TTL_S", 3600))
 
 
 @dataclass(frozen=True)
@@ -145,13 +187,65 @@ class GenerationConfig:
     detailed_latency_budget_s: float = field(default_factory=lambda: _get_float("DETAILED_LATENCY_BUDGET_S", 180.0))
     enable_dynamic_prompts: bool = field(default_factory=lambda: _get_bool("ENABLE_DYNAMIC_PROMPTS", True))
     thin_seed_word_threshold: int = field(default_factory=lambda: _get_int("THIN_SEED_WORD_THRESHOLD", 250))
-    research_queries_per_tool: int = field(default_factory=lambda: _get_int("RESEARCH_QUERIES_PER_TOOL", 4))
+    research_queries_per_tool: int = field(default_factory=lambda: _get_int("RESEARCH_QUERIES_PER_TOOL", 3))
     max_search_queries_per_tool: int = field(default_factory=lambda: _get_int("MAX_SEARCH_QUERIES_PER_TOOL", 3))
-    seed_dedup_overlap_threshold: float = field(default_factory=lambda: _get_float("SEED_DEDUP_OVERLAP_THRESHOLD", 0.6))
+    seed_dedup_overlap_threshold: float = field(default_factory=lambda: _get_float("SEED_DEDUP_OVERLAP_THRESHOLD", 0.7))
     enable_two_pass: bool = field(default_factory=lambda: _get_bool("ENABLE_TWO_PASS", False))
     branch_expansion_concurrency: int = field(default_factory=lambda: _get_int("BRANCH_EXPANSION_CONCURRENCY", 3))
     min_outline_branches: int = field(default_factory=lambda: _get_int("MIN_OUTLINE_BRANCHES", 4))
     max_outline_branches: int = field(default_factory=lambda: _get_int("MAX_OUTLINE_BRANCHES", 8))
+
+
+@dataclass(frozen=True)
+class LangSmithConfig:
+    """
+    LangSmith tracing configuration.
+
+    Supports both current LANGSMITH_* variables and legacy LANGCHAIN_* aliases.
+    When tracing_enabled is False, instrumentation is a complete no-op.
+    """
+
+    tracing_enabled: bool = field(
+        default_factory=lambda: _get_bool("LANGSMITH_TRACING", False) or _get_bool("LANGCHAIN_TRACING_V2", False)
+    )
+    api_key: str = field(
+        default_factory=lambda: os.environ.get("LANGSMITH_API_KEY") or os.environ.get("LANGCHAIN_API_KEY", "")
+    )
+    endpoint: str = field(
+        default_factory=lambda: (
+            os.environ.get("LANGSMITH_ENDPOINT")
+            or os.environ.get("LANGCHAIN_ENDPOINT")
+            or "https://api.smith.langchain.com"
+        )
+    )
+    project: str = field(
+        default_factory=lambda: (
+            os.environ.get("LANGSMITH_AGENT_ID")
+            or os.environ.get("LANGSMITH_PROJECT")
+            or os.environ.get("LANGCHAIN_PROJECT")
+            or "mindweave-dev"
+        )
+    )
+    environment: str = field(default_factory=lambda: os.environ.get("LANGSMITH_AGENT_ENVIRONMENT", "local"))
+
+
+@dataclass(frozen=True)
+class VisionConfig:
+    """Multimodal vision model configuration for image ingestion."""
+
+    extractor: str = field(default_factory=lambda: os.environ.get("IMAGE_EXTRACTOR", "gemini").lower())
+    gemini_api_key: str = field(
+        default_factory=lambda: os.environ.get("GEMINI_API_KEY", "") or os.environ.get("GOOGLE_API_KEY", "")
+    )
+    gemini_model: str = field(default_factory=lambda: os.environ.get("GEMINI_VISION_MODEL", "gemini-2.0-flash"))
+    openrouter_api_key: str = field(default_factory=lambda: os.environ.get("OPENROUTER_API_KEY", ""))
+    openrouter_model: str = field(
+        default_factory=lambda: os.environ.get("OPENROUTER_VISION_MODEL", "google/gemini-2.0-flash-001")
+    )
+    openrouter_api_base: str = field(
+        default_factory=lambda: os.environ.get("OPENROUTER_API_BASE", "https://openrouter.ai/api/v1")
+    )
+    timeout_s: float = field(default_factory=lambda: _get_float("VISION_TIMEOUT_S", 20.0))
 
 
 @dataclass(frozen=True)
@@ -163,6 +257,8 @@ class Settings:
     pinecone: PineconeConfig = field(default_factory=PineconeConfig)
     tools: ToolConfig = field(default_factory=ToolConfig)
     generation: GenerationConfig = field(default_factory=GenerationConfig)
+    langsmith: LangSmithConfig = field(default_factory=LangSmithConfig)
+    vision: VisionConfig = field(default_factory=VisionConfig)
 
 
 @lru_cache(maxsize=1)

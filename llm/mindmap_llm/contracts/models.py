@@ -46,12 +46,18 @@ class SeedAssetType(StrEnum):
     PDF = "pdf"
     IMAGE = "image"
     TEXT = "text"
+    DOCX = "docx"  # S3-BE7: Office Word document
+    PPTX = "pptx"  # S3-BE7: Office PowerPoint presentation
+    URL = "url"  # S3-BE7: URL-seeded content
 
 
 class ChunkSource(StrEnum):
     UPLOADED_SEED = "uploaded_seed"
     WEB_SEARCH = "web_search"
     ARXIV = "arxiv"
+    WIKIPEDIA = "wikipedia"  # S3-BE7: Wikipedia article chunk
+    SCHOLAR = "scholar"  # S3-BE7: Google Scholar / academic chunk
+    PAGE = "page"  # S3-BE7: Generic web page chunk
 
 
 # ---------------------------------------------------------------------
@@ -78,7 +84,16 @@ class EdgeDraft(BaseModel):
 
 class BranchContext(BaseModel):
     nodes: list[NodeDraft] = Field(default_factory=list)
+    branch_nodes: list[NodeDraft] = Field(default_factory=list)
     edges: list[EdgeDraft] = Field(default_factory=list)
+    branch_edges: list[EdgeDraft] = Field(default_factory=list)
+    target_node_id: UUID | None = None
+    target_node_label: str | None = None
+    target_node_description: str | None = None
+    descendant_ids: list[str] = Field(default_factory=list)
+    ancestor_labels: list[str] = Field(default_factory=list)
+    parent_edge: dict[str, Any] | None = None
+    parent_edges: list[dict[str, Any]] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------
@@ -127,6 +142,7 @@ class GenerationRequest(BaseModel):
     detail_level: DetailLevel | None = None  # None => worker infers it
     purpose: str | None = None
     seed_has_files: bool = False
+    user_id: UUID | str | None = None
 
     # Internal callback auth — see callback/client.py. Not a user secret;
     # scoped to this one job by the backend when it enqueues.
@@ -136,25 +152,45 @@ class GenerationRequest(BaseModel):
     # Short-term memory context (US-15 / S2-BE4): rolling summary + recent message turns
     memory_context: dict[str, Any] | None = None
 
+    # S3-BE7: Optional URL seed — validated public address, no private/loopback IPs
+    seed_url: str | None = None
+
     @property
     def effective_branch_nodes(self) -> list[NodeDraft]:
         if self.branch_context:
-            if isinstance(self.branch_context, BranchContext) and self.branch_context.nodes:
-                return self.branch_context.nodes
-            elif isinstance(self.branch_context, dict) and "nodes" in self.branch_context:
-                raw_nodes = self.branch_context.get("nodes", [])
-                return [NodeDraft.model_validate(n) if isinstance(n, dict) else n for n in raw_nodes]
+            if isinstance(self.branch_context, BranchContext):
+                nodes = self.branch_context.nodes or self.branch_context.branch_nodes
+                if nodes:
+                    return nodes
+            elif isinstance(self.branch_context, dict):
+                raw_nodes = self.branch_context.get("nodes") or self.branch_context.get("branch_nodes") or []
+                if raw_nodes:
+                    return [NodeDraft.model_validate(n) if isinstance(n, dict) else n for n in raw_nodes]
         return self.branch_nodes
 
     @property
     def effective_branch_edges(self) -> list[EdgeDraft]:
         if self.branch_context:
-            if isinstance(self.branch_context, BranchContext) and self.branch_context.edges:
-                return self.branch_context.edges
-            elif isinstance(self.branch_context, dict) and "edges" in self.branch_context:
-                raw_edges = self.branch_context.get("edges", [])
-                return [EdgeDraft.model_validate(e) if isinstance(e, dict) else e for e in raw_edges]
+            if isinstance(self.branch_context, BranchContext):
+                edges = self.branch_context.edges or self.branch_context.branch_edges
+                if edges:
+                    return edges
+            elif isinstance(self.branch_context, dict):
+                raw_edges = self.branch_context.get("edges") or self.branch_context.get("branch_edges") or []
+                if raw_edges:
+                    return [EdgeDraft.model_validate(e) if isinstance(e, dict) else e for e in raw_edges]
         return self.branch_edges
+
+    @property
+    def effective_ancestor_labels(self) -> list[str]:
+        if self.ancestor_labels:
+            return self.ancestor_labels
+        if self.branch_context:
+            if isinstance(self.branch_context, BranchContext) and self.branch_context.ancestor_labels:
+                return self.branch_context.ancestor_labels
+            elif isinstance(self.branch_context, dict):
+                return self.branch_context.get("ancestor_labels") or []
+        return []
 
     @property
     def effective_comment(self) -> str | None:
@@ -305,6 +341,40 @@ class SummarizeResult(BaseModel):
     tokens_estimated: int = 0
 
 
+class CreateNodeParam(BaseModel):
+    id: UUID | str | None = Field(default=None, description="Provisional identifier or UUID")
+    label: str
+    description: str | None = None
+    pos_x: float = 0.0
+    pos_y: float = 0.0
+
+
+class CreateEdgeParam(BaseModel):
+    id: UUID | str | None = Field(default=None, description="Optional edge UUID")
+    source_node_id: UUID | str
+    target_node_id: UUID | str
+    label: str | None = None
+
+
+class GraphEditParameters(BaseModel):
+    """Typed parameters for edit_proposal graph delta actions."""
+
+    update_nodes: list[dict[str, Any]] = Field(
+        default_factory=list, description="Nodes to modify: [{id, label, description}]"
+    )
+    create_nodes: list[CreateNodeParam | dict[str, Any]] = Field(
+        default_factory=list, description="New nodes to add: [{id, label, description}]"
+    )
+    delete_nodes: list[str] = Field(default_factory=list, description="IDs of nodes to remove")
+    update_edges: list[dict[str, Any]] = Field(
+        default_factory=list, description="Edges to update: [{id, source_node_id, target_node_id, label}]"
+    )
+    create_edges: list[CreateEdgeParam | dict[str, Any]] = Field(
+        default_factory=list, description="New edges to add: [{id, source_node_id, target_node_id, label}]"
+    )
+    delete_edges: list[str] = Field(default_factory=list, description="IDs of edges to remove")
+
+
 class ActionProposal(BaseModel):
     """A proposed change to the map — NEVER applied directly.
 
@@ -315,7 +385,7 @@ class ActionProposal(BaseModel):
     action_type: ChatIntent | str
     target_node_ids: list[UUID] = Field(default_factory=list)
     target_node_id: UUID | None = None
-    parameters: dict[str, Any] = Field(default_factory=dict)
+    parameters: GraphEditParameters | dict[str, Any] = Field(default_factory=dict)
     explanation: str = ""
     instruction: str | None = None
     description: str | None = None
@@ -365,5 +435,8 @@ class ChatCompleteCallback(BaseModel):
     job_id: UUID
     assistant_message: str
     summary: str | None = None
+    action_proposal: dict[str, Any] | None = None
+    cited_node_ids: list[UUID] = Field(default_factory=list)
+    source_refs: list[str] = Field(default_factory=list)
     status: str = "completed"
     error: str | None = None

@@ -29,7 +29,7 @@ async def create_db_pool(dsn: str | None = None, min_size: int = 1, max_size: in
 
         await conn.set_type_codec(
             "jsonb",
-            encoder=lambda v: json.dumps(v),
+            encoder=lambda v: v if isinstance(v, str) else json.dumps(v),
             decoder=lambda v: json.loads(v) if v else None,
             schema="pg_catalog",
             format="text",

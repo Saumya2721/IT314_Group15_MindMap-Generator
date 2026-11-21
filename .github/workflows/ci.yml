@@ -76,6 +76,9 @@ jobs:
     defaults:
       run:
         working-directory: llm
+    env:
+      LANGSMITH_TRACING: "false"
+      ENABLE_TWO_PASS: "false"
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5

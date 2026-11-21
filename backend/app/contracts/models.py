@@ -26,12 +26,32 @@ class SeedAssetType(StrEnum):
     PDF = "pdf"
     IMAGE = "image"
     TEXT = "text"
+    DOCX = "docx"  # S3-BE7: Office Word document
+    PPTX = "pptx"  # S3-BE7: Office PowerPoint presentation
+    URL = "url"  # S3-BE7: URL-seeded content
 
 
 class ChunkSource(StrEnum):
     UPLOADED_SEED = "uploaded_seed"
     WEB_SEARCH = "web_search"
     ARXIV = "arxiv"
+    WIKIPEDIA = "wikipedia"  # S3-BE7: Wikipedia article chunk
+    SCHOLAR = "scholar"  # S3-BE7: Google Scholar / academic chunk
+    PAGE = "page"  # S3-BE7: Generic web page chunk
+
+
+class BranchContext(BaseModel):
+    nodes: list[dict[str, Any]] = Field(default_factory=list)
+    branch_nodes: list[dict[str, Any]] = Field(default_factory=list)
+    edges: list[dict[str, Any]] = Field(default_factory=list)
+    branch_edges: list[dict[str, Any]] = Field(default_factory=list)
+    target_node_id: UUID | None = None
+    target_node_label: str | None = None
+    target_node_description: str | None = None
+    descendant_ids: list[str] = Field(default_factory=list)
+    ancestor_labels: list[str] = Field(default_factory=list)
+    parent_edge: dict[str, Any] | None = None
+    parent_edges: list[dict[str, Any]] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------
@@ -72,7 +92,8 @@ class GenerationRequest(BaseModel):
 
     # Node-level regeneration (US-06 / S2-BE2 / S2-BE7):
     target_node_id: UUID | None = None
-    branch_context: dict[str, Any] | None = None
+    ancestor_labels: list[str] = Field(default_factory=list)
+    branch_context: BranchContext | dict[str, Any] | None = None
     instruction: str | None = None
 
     # Internal callback auth — see callback/client.py. Not a user secret;
@@ -82,6 +103,29 @@ class GenerationRequest(BaseModel):
 
     # Short-term memory context (US-15 / S2-BE4): rolling summary + recent message turns
     memory_context: dict[str, Any] | None = None
+
+    # S3-BE7: Optional URL seed — validated public address, no private/loopback IPs
+    seed_url: str | None = None
+
+    @property
+    def effective_branch_nodes(self) -> list[dict[str, Any]]:
+        if self.branch_context:
+            bc = self.branch_context
+            if isinstance(bc, dict):
+                return bc.get("branch_nodes") or bc.get("nodes") or []
+            return getattr(bc, "branch_nodes", None) or getattr(bc, "nodes", None) or []
+        return []
+
+    @property
+    def effective_ancestor_labels(self) -> list[str]:
+        if self.ancestor_labels:
+            return self.ancestor_labels
+        if self.branch_context:
+            bc = self.branch_context
+            if isinstance(bc, dict):
+                return bc.get("ancestor_labels") or []
+            return getattr(bc, "ancestor_labels", []) or []
+        return []
 
 
 # ---------------------------------------------------------------------
@@ -103,11 +147,48 @@ class RegenerateNodeRequest(BaseModel):
     memory_context: dict[str, Any] | None = None
 
 
+class CreateNodeParam(BaseModel):
+    id: UUID | str | None = Field(default=None, description="Provisional identifier or UUID")
+    label: str
+    description: str | None = None
+    pos_x: float = 0.0
+    pos_y: float = 0.0
+
+
+class CreateEdgeParam(BaseModel):
+    id: UUID | str | None = Field(default=None, description="Optional edge UUID")
+    source_node_id: UUID | str
+    target_node_id: UUID | str
+    label: str | None = None
+
+
+class GraphEditParameters(BaseModel):
+    """Typed parameters for edit_proposal graph delta actions."""
+
+    update_nodes: list[dict[str, Any]] = Field(
+        default_factory=list, description="Nodes to modify: [{id, label, description}]"
+    )
+    create_nodes: list[CreateNodeParam | dict[str, Any]] = Field(
+        default_factory=list, description="New nodes to add: [{id, label, description}]"
+    )
+    delete_nodes: list[str] = Field(default_factory=list, description="IDs of nodes to remove")
+    update_edges: list[dict[str, Any]] = Field(
+        default_factory=list, description="Edges to update: [{id, source_node_id, target_node_id, label}]"
+    )
+    create_edges: list[CreateEdgeParam | dict[str, Any]] = Field(
+        default_factory=list, description="New edges to add: [{id, source_node_id, target_node_id, label}]"
+    )
+    delete_edges: list[str] = Field(default_factory=list, description="IDs of edges to remove")
+
+
 class ActionProposal(BaseModel):
     """Structured action proposal suggested by the assistant (e.g. regenerate or edit)."""
 
-    action_type: str  # "regenerate_map", "regenerate_node", "edit_node", "general_answer"
+    action_type: str  # "regenerate_map", "regenerate_node", "edit_node", "edit_proposal", "general_answer"
     target_node_id: UUID | None = None
+    target_node_ids: list[UUID] = Field(default_factory=list)
+    parameters: GraphEditParameters | dict[str, Any] = Field(default_factory=dict)
+    explanation: str = ""
     instruction: str | None = None
     description: str | None = None
 
@@ -121,8 +202,11 @@ class ChatTurnRequest(BaseModel):
     message: str
     thread_id: UUID | None = None
     target_node_id: UUID | None = None
-    context_window: list[dict[str, Any]] = Field(default_factory=list)
+    history: list[dict[str, Any]] = Field(default_factory=list)
+    summary: str | None = None
     rolling_summary: str | None = None
+    map_snapshot: dict[str, Any] = Field(default_factory=dict)
+    context_window: list[dict[str, Any]] = Field(default_factory=list)
     callback_base_url: str
     callback_token: str
     memory_context: dict[str, Any] | None = None

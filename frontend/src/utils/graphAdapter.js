@@ -160,6 +160,8 @@ export function adaptBackendGraphToFlow(rawNodes = [], rawEdges = [], options = 
         backgroundColor: tint,
         textColor: n.text_color || '#181D1A',
         category: n.node_data?.category || (isRoot ? 'Core Focus' : isBranch ? 'Branch' : 'Topic'),
+        sources: n.node_data?.sources || n.sources || [],
+        node_data: n.node_data || {},
         nodeData: n.node_data || {},
         incomingEdges: parentsMap.get(id) || [],
         outgoingEdges: childrenMap.get(id) || [],

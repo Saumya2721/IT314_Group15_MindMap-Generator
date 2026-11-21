@@ -1,4 +1,4 @@
-import { useReducer, useCallback } from 'react'
+import { useReducer, useCallback, useRef, useState } from 'react'
 import { mindMapService } from '../../services/mindMapService'
 
 export const INITIAL_EXPORT_HISTORY_STATE = {
@@ -144,12 +144,21 @@ export function useExportHistory({
     [mapId],
   )
 
+  const isRestoringRef = useRef(false)
+  const [isRestoring, setIsRestoring] = useState(false)
+
   const restoreSnapshot = useCallback(
     async (targetMapId = mapId, snapshotId) => {
-      if (!targetMapId || !snapshotId) return null
+      if (!targetMapId || !snapshotId || isRestoringRef.current) return null
+      isRestoringRef.current = true
+      setIsRestoring(true)
       try {
         const res = await mindMapService.restoreSnapshot(targetMapId, snapshotId)
-        const restoredGraph = res.snapshot_data || { nodes: [], edges: [] }
+        const restoredGraph = {
+          ...(res.snapshot_data || { nodes: [], edges: [] }),
+          version: res.new_version ?? res.version,
+          new_version: res.new_version ?? res.version,
+        }
         if (onRestoreGraph) {
           onRestoreGraph(restoredGraph)
         }
@@ -160,6 +169,9 @@ export function useExportHistory({
           payload: err?.message || 'Failed to restore snapshot',
         })
         throw err
+      } finally {
+        isRestoringRef.current = false
+        setIsRestoring(false)
       }
     },
     [mapId, onRestoreGraph],
@@ -199,6 +211,7 @@ export function useExportHistory({
     loadSnapshots,
     restoreSnapshot,
     deleteSnapshot,
+    isRestoring,
   }
 }
 

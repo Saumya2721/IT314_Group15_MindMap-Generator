@@ -89,7 +89,8 @@ def build_chat_qa_system_prompt(map_snapshot: MapSnapshot) -> str:
         "## Instructions\n\n"
         "- Only state facts that appear in the map or reference material below.\n"
         "- Do NOT invent nodes, relationships, or facts that are not present.\n"
-        "- When you refer to a node, include its ID in the form [node:<uuid>].\n"
+        "- When you refer to a node, ALWAYS write its human-readable title/label in bold (e.g. **Policy Gradient**) and append its tag [node:<uuid>] immediately after so the interface can link directly to it.\n"
+        "- Never refer to a node using just a raw hexadecimal UUID in conversational prose without its title.\n"
         "- When you cite a reference passage, include its number, e.g. [1].\n"
         "- Keep answers concise and grounded.\n"
     )
@@ -154,17 +155,28 @@ def build_proposal_system_prompt(map_snapshot: MapSnapshot) -> str:
         "{\n"
         '  "action_type": "<edit_proposal|regen_whole|regen_node>",\n'
         '  "target_node_ids": ["<uuid>", ...],\n'
-        '  "parameters": {},\n'
+        '  "parameters": {\n'
+        '    "update_nodes": [{"id": "<uuid>", "label": "New label", "description": "optional"}],\n'
+        '    "create_nodes": [{"id": "<new-uuid>", "label": "New node", "description": "optional"}],\n'
+        '    "delete_nodes": ["<uuid-to-delete>"],\n'
+        '    "update_edges": [{"id": "<edge-uuid>", "label": "updated relation"}],\n'
+        '    "create_edges": [{"source_node_id": "<parent-uuid>", "target_node_id": "<child-uuid>", "label": "relation"}],\n'
+        '    "delete_edges": ["<edge-uuid-to-delete>"]\n'
+        "  },\n"
         '  "explanation": "<human-readable description of the proposed change>",\n'
+        '  "instruction": "<instruction string if regen_whole or regen_node, else null>",\n'
         '  "needs_clarification": false,\n'
         '  "clarification_question": null\n'
         "}\n\n"
         "Rules:\n"
-        "- target_node_ids MUST only contain IDs from the Available Nodes list above.\n"
-        "- If the user's request is ambiguous, set needs_clarification=true and "
-        "provide a clarification_question.\n"
+        "- When action_type is 'edit_proposal': 'parameters' MUST contain one or more delta arrays (update_nodes, create_nodes, delete_nodes, create_edges, delete_edges).\n"
+        "- For create_nodes: assign an id (UUID or provisional key like 'new-1') so create_edges can link to it.\n"
+        "- For create_edges: source_node_id and target_node_id are required; edge id is optional and assigned by the server if omitted.\n"
+        "- When action_type is 'regen_node': target_node_ids MUST contain exactly the one node to regenerate, 'instruction' describes the focus, and 'parameters' is {}.\n"
+        "- When action_type is 'regen_whole': 'instruction' describes the regeneration, target_node_ids is empty, and 'parameters' is {}.\n"
+        "- Existing node IDs in target_node_ids, update_nodes, delete_nodes, and edge endpoints MUST belong to the Available Nodes list above.\n"
+        "- If the user's request is ambiguous, set needs_clarification=true and provide a clarification_question.\n"
         "- If you cannot determine which node is meant, set needs_clarification=true.\n"
-        "- NEVER invent node IDs that are not in the list.\n"
         "- Do not output any text outside the JSON object.\n"
     )
 

@@ -11,6 +11,44 @@ import CreateMapPage from './pages/CreateMapPage'
 import GeneratingPage from './pages/GeneratingPage'
 import EditorPage from './pages/EditorPage'
 import MemoryPage from './pages/memory/MemoryPage'
+import AdminPage from './pages/admin/AdminPage'
+
+export function AdminRoute({ children }) {
+  const { user, isInitializing } = useAuth()
+  const location = useLocation()
+
+  if (isInitializing) {
+    return (
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          height: '100vh',
+          backgroundColor: 'var(--surface)',
+        }}
+      >
+        <span
+          className="material-symbols-outlined step-spin-icon"
+          style={{ fontSize: '32px', color: 'var(--primary)' }}
+        >
+          sync
+        </span>
+      </div>
+    )
+  }
+
+  if (!user) {
+    return <Navigate to="/login" state={{ from: location }} replace />
+  }
+
+  if (user.role !== 'admin') {
+    return <Navigate to="/dashboard" replace />
+  }
+
+  return children
+}
 
 function ProtectedRoute({ children }) {
   const { user, isInitializing } = useAuth()
@@ -128,6 +166,15 @@ export default function App() {
                 <ProtectedRoute>
                   <MemoryPage />
                 </ProtectedRoute>
+              }
+            />
+            {/* S3-FE1: Role-guarded Admin Management & Analytics Panel */}
+            <Route
+              path="/admin"
+              element={
+                <AdminRoute>
+                  <AdminPage />
+                </AdminRoute>
               }
             />
             <Route path="*" element={<Navigate to="/dashboard" replace />} />

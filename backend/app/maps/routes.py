@@ -10,6 +10,7 @@ import hashlib
 import json
 import logging
 import secrets
+from collections import deque
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
@@ -61,7 +62,7 @@ from services.export_service import (
 )
 from services.queue import enqueue_generation_job, get_redis_pool
 from services.runner import limiter
-from uploads.service import delete_map_storage_files, read_uploads, store_files
+from uploads.service import delete_map_storage_files, read_uploads, store_files, validate_seed_url
 
 from db.connection import transaction
 from db.repository import (
@@ -91,7 +92,6 @@ from db.repository import (
     list_map_nodes,
     list_map_snapshots,
     list_node_comments,
-    restore_map_snapshot,
     search_maps,
     update_map_edge,
     update_map_node,
@@ -232,18 +232,30 @@ async def list_maps(
 ):
     pool = pool_of(request)
     if q and q.strip():
-        rows = await search_maps(pool, uid, q, limit)
+        rows = await search_maps(pool, uid, q, limit=limit, offset=offset, sort=sort)
     else:
+        sort_map = {
+            "updated_at_desc": "m.updated_at DESC",
+            "updated_at_asc": "m.updated_at ASC",
+            "created_at_desc": "m.created_at DESC",
+            "created_at_asc": "m.created_at ASC",
+            "title_asc": "m.title ASC",
+            "title_desc": "m.title DESC",
+        }
+        order_clause = sort_map.get(sort, "m.updated_at DESC")
         rows = await pool.fetch(
-            """SELECT m.id, m.title, m.is_public, m.created_at, m.updated_at,
+            f"""SELECT m.id, m.title, m.is_public, m.created_at, m.updated_at,
                       (SELECT count(*)::int FROM public.nodes n WHERE n.map_id = m.id) AS node_count,
                       (SELECT j.status FROM public.generation_jobs j WHERE j.map_id = m.id ORDER BY j.created_at DESC LIMIT 1) AS latest_job_status,
                       (SELECT j.progress_percent::int FROM public.generation_jobs j WHERE j.map_id = m.id ORDER BY j.created_at DESC LIMIT 1) AS latest_job_progress,
                       (SELECT j.id FROM public.generation_jobs j WHERE j.map_id = m.id ORDER BY j.created_at DESC LIMIT 1) AS latest_job_id
                FROM public.mind_maps m
                WHERE m.user_id = $1
-               ORDER BY m.updated_at DESC""",
+               ORDER BY {order_clause}
+               LIMIT $2 OFFSET $3""",
             uid,
+            limit,
+            offset,
         )
     return [dict(r) for r in rows]
 
@@ -277,21 +289,6 @@ async def update_map(
     if not is_owner:
         raise HTTPException(404, "Map not found")
 
-    occ_token = if_match or (str(body.version) if body.version is not None else None)
-    if occ_token is not None:
-        curr = await pool.fetchrow("SELECT updated_at FROM public.mind_maps WHERE id = $1", map_id)
-        if curr and curr["updated_at"]:
-            expected_dt = _parse_version_token(occ_token)
-            if expected_dt is not None:
-                curr_dt = curr["updated_at"]
-                if isinstance(curr_dt, str):
-                    curr_dt = _parse_version_token(curr_dt)
-                if curr_dt and abs((curr_dt - expected_dt).total_seconds()) > 0.001:
-                    raise HTTPException(
-                        status_code=409,
-                        detail="Map has been modified by another operation. Please reload.",
-                    )
-
     updates = []
     args: list[Any] = [map_id]
     if body.title is not None and body.title.strip():
@@ -318,12 +315,29 @@ async def update_map(
 
     updates.append("updated_at = now()")
     sql = f"UPDATE public.mind_maps SET {', '.join(updates)} WHERE id = $1 RETURNING id, title, is_public, created_at, updated_at"
-    try:
-        row = await pool.fetchrow(sql, *args)
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Database update failed: {e}")
+
+    # Atomic OCC check and row update under transaction
+    async with transaction(pool) as conn:
+        occ_token = if_match or (str(body.version) if body.version is not None else None)
+        if occ_token is not None:
+            curr = await conn.fetchrow("SELECT updated_at FROM public.mind_maps WHERE id = $1 FOR UPDATE", map_id)
+            if curr and curr["updated_at"]:
+                expected_dt = _parse_version_token(occ_token)
+                if expected_dt is not None:
+                    curr_dt = curr["updated_at"]
+                    if isinstance(curr_dt, str):
+                        curr_dt = _parse_version_token(curr_dt)
+                    if curr_dt and abs((curr_dt - expected_dt).total_seconds()) > 0.001:
+                        raise HTTPException(
+                            status_code=409,
+                            detail="Map has been modified by another operation. Please reload.",
+                        )
+        try:
+            row = await conn.fetchrow(sql, *args)
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Database update failed: {e}")
 
     if not row:
         raise HTTPException(404, "Map not found")
@@ -374,7 +388,7 @@ async def export_map(
     if not is_owner:
         raise HTTPException(status_code=404, detail="Map not found")
 
-    limiter.check(uid)
+    await limiter.check(uid, api="export", redis=get_redis_pool(request))
 
     map_row = await pool.fetchrow("SELECT title FROM public.mind_maps WHERE id = $1", map_id)
     raw_title = (map_row["title"] if map_row and map_row["title"] else "mindmap").strip()
@@ -423,7 +437,7 @@ async def quick_generate(
     if not (body.topic or "").strip() and not (body.ideas or "").strip():
         raise HTTPException(422, "Provide a topic or some ideas.")
 
-    limiter.check(uid)
+    await limiter.check(uid, api="generation", redis=redis_pool)
 
     map_id = body.map_id
     if map_id:
@@ -537,6 +551,7 @@ async def generate(
     detail_level: DetailLevel | None = Form(None),
     file: UploadFile | str | None = File(None, description="Upload a single PDF or image"),
     files: list[UploadFile | str] | UploadFile | str | None = File(None, description="Or upload multiple files"),
+    seed_url: str | None = Form(None, description="Optional public URL to use as generation seed (S3-BE7)"),
     uid: UUID = Depends(current_user_id),
 ):
     pool = pool_of(request)
@@ -547,6 +562,13 @@ async def generate(
     topic = (topic or "").strip() or None
     ideas = (ideas or "").strip() or None
     combined_files = []
+
+    # S3-BE7: normalise and validate the optional URL seed
+    seed_url = (seed_url or "").strip() or None
+    if seed_url:
+        url_ok, url_err = validate_seed_url(seed_url)
+        if not url_ok:
+            raise HTTPException(422, url_err)
 
     def _is_file(obj: Any) -> bool:
         return (
@@ -567,8 +589,8 @@ async def generate(
             combined_files.append(files)
 
     has_files = bool(combined_files)
-    if not (topic or ideas or has_files):
-        raise HTTPException(422, "Provide a topic, some ideas, or at least one file.")
+    if not (topic or ideas or has_files or seed_url):
+        raise HTTPException(422, "Provide a topic, some ideas, a file, or a seed URL.")
     if topic and len(topic) > 500:
         raise HTTPException(422, "Topic is too long (max 500 characters).")
     if ideas and len(ideas) > 20000:
@@ -579,7 +601,7 @@ async def generate(
     if await has_active_job(pool, map_id):
         raise HTTPException(409, "Generation already in progress for this map.")
 
-    limiter.check(uid)
+    await limiter.check(uid, api="generation", redis=get_redis_pool(request))
 
     job_id = uuid4()
     callback_token = secrets.token_urlsafe(32)
@@ -629,9 +651,11 @@ async def generate(
             topic=topic,
             ideas=ideas,
             files=file_refs,
+            seed_has_files=bool(file_refs),
             detail_level=detail_level.value if detail_level else None,
             callback_base_url=settings.BACKEND_INTERNAL_URL,
             callback_token=callback_token,
+            seed_url=seed_url,
         )
         enqueued_id = await enqueue_generation_job(redis_pool, gen_req.model_dump(mode="json"))
         if not enqueued_id:
@@ -719,13 +743,17 @@ async def regenerate(
     if not has_seed:
         raise HTTPException(409, "This map has no original seed to regenerate from. Run generate first.")
 
-    limiter.check(uid)
+    await limiter.check(uid, api="generation", redis=get_redis_pool(request))
+
+    redis_pool = get_redis_pool(request)
+    if not redis_pool:
+        raise HTTPException(503, "Generation queue service is unavailable. Redis connection is required.")
 
     job_id = uuid4()
     callback_token = secrets.token_urlsafe(32)
     token_hash = hashlib.sha256(callback_token.encode("utf-8")).hexdigest()
 
-    # Step 1: Create chat thread & user turn, then create the job record in DB upfront
+    # Step 1: Create chat thread & user turn, then create the job record and safety snapshot in DB upfront
     summary_msg = f"Regenerate mind map with instruction: '{body.instruction.strip()}'"
     async with transaction(pool) as conn:
         thread_id = await get_or_create_chat_thread(conn, map_id, uid)
@@ -746,15 +774,22 @@ async def regenerate(
         )
 
     try:
-        redis_pool = get_redis_pool(request)
-        if not redis_pool:
-            raise HTTPException(503, "Generation queue service is unavailable. Redis connection is required.")
-
+        has_file_val = await pool.fetchval(
+            """
+            SELECT 1 FROM public.seed_assets a
+            JOIN public.generation_jobs j ON j.id = a.generation_job_id
+            WHERE j.map_id = $1 AND a.asset_type IN ('pdf', 'image')
+            LIMIT 1
+            """,
+            map_id,
+        )
+        has_file_seed = bool(has_file_val)
         gen_req = GenerationRequest(
             job_id=job_id,
             map_id=map_id,
             job_type=JobType.REGENERATE_FULL,
             regeneration_instruction=body.instruction.strip(),
+            seed_has_files=bool(has_file_seed),
             detail_level=body.detail_level.value if body.detail_level else None,
             callback_base_url=settings.BACKEND_INTERNAL_URL,
             callback_token=callback_token,
@@ -850,33 +885,67 @@ async def regenerate_node(
         else:
             instruction = f"Refine and expand the mind map branch for node '{target_node['label']}'"
 
-    # Take pre-regeneration safety snapshot
-    snapshot_id = await create_map_snapshot(
-        pool,
-        map_id=map_id,
-        target_node_id=node_id,
-        reason=f"Pre-regeneration snapshot for node '{target_node['label']}' ({node_id})",
-    )
+    await limiter.check(uid, api="generation", redis=get_redis_pool(request))
+
+    redis_pool = get_redis_pool(request)
+    if not redis_pool:
+        raise HTTPException(503, "Generation queue service is unavailable. Redis connection is required.")
 
     # Compute branch context
     edges_rows = await list_map_edges(pool, map_id)
     edges_data = [dict(e) for e in edges_rows]
+    nodes_rows = await list_map_nodes(pool, map_id)
+    nodes_map = {str(n["id"]): dict(n) for n in nodes_rows}
+
     descendant_ids = get_node_descendant_ids(edges_data, node_id)
-    parent_edge = next((e for e in edges_data if (e.get("target_node_id") or e.get("target")) == node_id), None)
+    branch_node_ids = {str(node_id)} | {str(d) for d in descendant_ids}
+
+    branch_nodes = [nodes_map[nid] for nid in branch_node_ids if nid in nodes_map]
+    branch_edges = [
+        e
+        for e in edges_data
+        if str(e.get("source_node_id") or e.get("source")) in branch_node_ids
+        and str(e.get("target_node_id") or e.get("target")) in branch_node_ids
+    ]
+
+    # Compute ancestor labels across all incoming parent paths in multi-parent DAG
+    ancestor_labels: list[str] = []
+    ancestor_queue = deque([str(node_id)])
+    visited_ancestors = {str(node_id)}
+    while ancestor_queue:
+        curr = ancestor_queue.popleft()
+        for e in edges_data:
+            tgt = str(e.get("target_node_id") or e.get("target"))
+            src = str(e.get("source_node_id") or e.get("source"))
+            if tgt == curr and src and src not in visited_ancestors:
+                visited_ancestors.add(src)
+                ancestor_queue.append(src)
+                if src in nodes_map and nodes_map[src].get("label"):
+                    ancestor_labels.append(nodes_map[src]["label"])
+    ancestor_labels.reverse()
+
+    incoming_parent_edges = [
+        {
+            "source_node_id": str(e.get("source_node_id") or e.get("source")),
+            "target_node_id": str(e.get("target_node_id") or e.get("target")),
+            "label": e.get("label"),
+        }
+        for e in edges_data
+        if str(e.get("target_node_id") or e.get("target")) == str(node_id)
+    ]
     branch_context = {
         "target_node_id": str(node_id),
         "target_node_label": target_node["label"],
         "target_node_description": target_node.get("description"),
         "descendant_ids": [str(d) for d in descendant_ids],
-        "parent_edge": {
-            "source_node_id": str(parent_edge["source_node_id"]),
-            "label": parent_edge.get("label"),
-        }
-        if parent_edge
-        else None,
+        "nodes": branch_nodes,
+        "branch_nodes": branch_nodes,
+        "edges": branch_edges,
+        "branch_edges": branch_edges,
+        "ancestor_labels": ancestor_labels,
+        "parent_edges": incoming_parent_edges,
+        "parent_edge": incoming_parent_edges[0] if incoming_parent_edges else None,
     }
-
-    limiter.check(uid)
 
     job_id = uuid4()
     callback_token = secrets.token_urlsafe(32)
@@ -895,19 +964,35 @@ async def regenerate_node(
             triggered_by_message_id=msg_id,
             callback_token_hash=token_hash,
         )
+        # Take pre-regeneration safety snapshot inside the transaction
+        snapshot_id = await create_map_snapshot(
+            conn,
+            map_id=map_id,
+            target_node_id=node_id,
+            trigger_job_id=job_id,
+            reason=f"Pre-regeneration snapshot for node '{target_node['label']}' ({node_id})",
+        )
 
     try:
-        redis_pool = get_redis_pool(request)
-        if not redis_pool:
-            raise HTTPException(503, "Generation queue service is unavailable. Redis connection is required.")
-
+        has_file_val = await pool.fetchval(
+            """
+            SELECT 1 FROM public.seed_assets a
+            JOIN public.generation_jobs j ON j.id = a.generation_job_id
+            WHERE j.map_id = $1 AND a.asset_type IN ('pdf', 'image')
+            LIMIT 1
+            """,
+            map_id,
+        )
+        has_file_seed = bool(has_file_val)
         gen_req = GenerationRequest(
             job_id=job_id,
             map_id=map_id,
             job_type=JobType.REGENERATE_NODE,
             target_node_id=node_id,
+            ancestor_labels=ancestor_labels,
             branch_context=branch_context,
             regeneration_instruction=instruction,
+            seed_has_files=bool(has_file_seed),
             detail_level=req_body.detail_level,
             callback_base_url=settings.BACKEND_INTERNAL_URL,
             callback_token=callback_token,
@@ -1039,6 +1124,7 @@ async def get_chat(map_id: UUID, request: Request, uid: UUID = Depends(current_u
 
 # ------------------------------------------------------------------ Node CRUD
 @router.post("/maps/{map_id}/nodes", status_code=201)
+@router.post("/api/maps/{map_id}/nodes", status_code=201, include_in_schema=False)
 async def create_node_route(
     map_id: UUID,
     body: NodeCreate,
@@ -1054,8 +1140,22 @@ async def create_node_route(
     edge_id = uuid4() if body.parent_node_id else None
 
     async with transaction(pool) as conn:
-        if body.parent_node_id:
-            parent_node = await get_node_by_id(conn, map_id, body.parent_node_id)
+        existing_nodes = await list_map_nodes(conn, map_id)
+        parent_id = body.parent_node_id
+
+        # M6 & DR-02: Prevent creating a disconnected second root when nodes already exist
+        if existing_nodes and not parent_id:
+            from maps.graph_validator import find_root_node_id
+
+            edges_rows = await list_map_edges(conn, map_id)
+            edges_data = [dict(e) for e in edges_rows]
+            nodes_data = [dict(n) for n in existing_nodes]
+            root_id = find_root_node_id(nodes_data, edges_data)
+            # U5/R5: Guard against IndexError if existing_nodes is empty
+            parent_id = root_id if root_id else (UUID(str(existing_nodes[0]["id"])) if existing_nodes else None)
+
+        if parent_id:
+            parent_node = await get_node_by_id(conn, map_id, parent_id)
             if not parent_node:
                 raise HTTPException(404, "Parent node not found on this map")
 
@@ -1076,12 +1176,12 @@ async def create_node_route(
         )
 
         created_edge = None
-        if body.parent_node_id and edge_id:
+        if parent_id:
             created_edge = await create_map_edge(
                 conn,
-                edge_id=edge_id,
+                edge_id=edge_id or uuid4(),
                 map_id=map_id,
-                source_node_id=body.parent_node_id,
+                source_node_id=parent_id,
                 target_node_id=node_id,
                 label=body.edge_label.strip() if body.edge_label else None,
             )
@@ -1309,6 +1409,39 @@ async def update_edge_route(
     if not updates:
         return dict(existing)
 
+    is_endpoint_update = ("source_node_id" in updates and updates["source_node_id"] is not None) or (
+        "target_node_id" in updates and updates["target_node_id"] is not None
+    )
+
+    if is_endpoint_update:
+        new_src = (
+            UUID(str(updates["source_node_id"]))
+            if "source_node_id" in updates and updates["source_node_id"] is not None
+            else UUID(str(existing.get("source_node_id")))
+        )
+        new_tgt = (
+            UUID(str(updates["target_node_id"]))
+            if "target_node_id" in updates and updates["target_node_id"] is not None
+            else UUID(str(existing.get("target_node_id")))
+        )
+
+        if new_src == new_tgt:
+            raise HTTPException(400, "Self-loops are not allowed (source and target nodes must differ)")
+
+        if "source_node_id" in updates and updates["source_node_id"] is not None:
+            src = await get_node_by_id(pool, map_id, new_src)
+            if not src:
+                raise HTTPException(422, "Source node does not belong to this map")
+        if "target_node_id" in updates and updates["target_node_id"] is not None:
+            tgt = await get_node_by_id(pool, map_id, new_tgt)
+            if not tgt:
+                raise HTTPException(422, "Target node does not belong to this map")
+
+        all_edges_rows = await list_map_edges(pool, map_id)
+        other_edges = [dict(e) for e in all_edges_rows if str(e["id"]) != str(edge_id)]
+        if check_edge_creates_cycle(other_edges, new_src, new_tgt):
+            raise HTTPException(400, "Updating this edge would create a cycle in the mind map hierarchy")
+
     async with transaction(pool) as conn:
         updated = await update_map_edge(conn, map_id, edge_id, updates)
         new_version = await check_and_bump_map_version(conn, map_id)
@@ -1357,6 +1490,18 @@ async def batch_update_graph(
     if not is_owner:
         raise HTTPException(404, "Map not found")
 
+    # F2 & F9: Validate edge endpoints BEFORE version bump
+    if body.nodes is not None and body.edges is not None:
+        incoming_node_ids = {n.id for n in body.nodes if n.id}
+        for e in body.edges:
+            if e.source_node_id == e.target_node_id:
+                raise HTTPException(422, "Self-loops are not allowed")
+            if e.source_node_id not in incoming_node_ids or e.target_node_id not in incoming_node_ids:
+                raise HTTPException(
+                    422,
+                    f"Edge endpoints ({e.source_node_id} -> {e.target_node_id}) must belong to this map.",
+                )
+
     async with transaction(pool) as conn:
         try:
             new_version = await check_and_bump_map_version(conn, map_id, expected_version=body.expected_version)
@@ -1375,39 +1520,136 @@ async def batch_update_graph(
             )
 
         if body.nodes is not None and body.edges is not None:
-            await conn.execute("DELETE FROM public.edges WHERE map_id = $1", map_id)
-            await conn.execute("DELETE FROM public.nodes WHERE map_id = $1", map_id)
+            # Safe non-destructive delta reconciliation:
+            # Preserves existing node IDs, node_comments foreign key cascades, and node versions.
+            existing_node_rows = await conn.fetch("SELECT id FROM public.nodes WHERE map_id = $1", map_id)
+            existing_node_ids = {r["id"] for r in existing_node_rows}
+            incoming_node_map = {n.id: n for n in body.nodes if n.id}
 
-            for n in body.nodes:
-                nid = n.id or uuid4()
-                await create_map_node(
-                    conn,
-                    node_id=nid,
-                    map_id=map_id,
-                    label=n.label.strip(),
-                    description=n.description.strip() if n.description else None,
-                    pos_x=n.pos_x,
-                    pos_y=n.pos_y,
-                    background_color=n.background_color,
-                    text_color=n.text_color,
-                    width=n.width,
-                    height=n.height,
-                    node_type=n.node_type,
-                    node_data=n.node_data,
+            # 1. Prune nodes not in incoming payload
+            nodes_to_delete = existing_node_ids - set(incoming_node_map.keys())
+            if nodes_to_delete:
+                await conn.execute(
+                    "DELETE FROM public.nodes WHERE map_id = $1 AND id = ANY($2::uuid[])",
+                    map_id,
+                    list(nodes_to_delete),
                 )
+
+            # 2. Update existing nodes in place
+            for nid, n in incoming_node_map.items():
+                if nid in existing_node_ids:
+                    updates: dict[str, Any] = {
+                        "label": n.label.strip(),
+                        "description": n.description.strip() if n.description else None,
+                        "pos_x": n.pos_x,
+                        "pos_y": n.pos_y,
+                        "background_color": n.background_color,
+                        "text_color": n.text_color,
+                        "width": n.width,
+                        "height": n.height,
+                        "node_type": n.node_type,
+                    }
+                    if n.node_data is not None:
+                        updates["node_data"] = n.node_data
+                    await update_map_node(conn, map_id, nid, updates)
+
+            # 3. Create newly added nodes
+            for n in body.nodes:
+                if not n.id or n.id not in existing_node_ids:
+                    nid = n.id or uuid4()
+                    await create_map_node(
+                        conn,
+                        node_id=nid,
+                        map_id=map_id,
+                        label=n.label.strip(),
+                        description=n.description.strip() if n.description else None,
+                        pos_x=n.pos_x,
+                        pos_y=n.pos_y,
+                        background_color=n.background_color,
+                        text_color=n.text_color,
+                        width=n.width,
+                        height=n.height,
+                        node_type=n.node_type,
+                        node_data=n.node_data,
+                    )
+
+            # 4. Reconcile edges non-destructively
+            existing_edge_rows = await conn.fetch(
+                "SELECT id, source_node_id, target_node_id FROM public.edges WHERE map_id = $1",
+                map_id,
+            )
+            existing_edge_ids = {r["id"] for r in existing_edge_rows if r.get("id") is not None}
+            existing_pair_to_id = {
+                (r["source_node_id"], r["target_node_id"]): r.get("id")
+                for r in existing_edge_rows
+                if "source_node_id" in r and "target_node_id" in r and r.get("id") is not None
+            }
+            incoming_edge_map = {}
+            for e in body.edges:
+                eid = e.id or existing_pair_to_id.get((e.source_node_id, e.target_node_id))
+                if eid:
+                    incoming_edge_map[eid] = e
+
+            edges_to_delete = existing_edge_ids - set(incoming_edge_map.keys())
+            if edges_to_delete:
+                await conn.execute(
+                    "DELETE FROM public.edges WHERE map_id = $1 AND id = ANY($2::uuid[])",
+                    map_id,
+                    list(edges_to_delete),
+                )
+
+            for eid, e in incoming_edge_map.items():
+                if eid in existing_edge_ids:
+                    edge_updates: dict[str, Any] = {}
+                    if e.source_node_id is not None:
+                        edge_updates["source_node_id"] = e.source_node_id
+                    if e.target_node_id is not None:
+                        edge_updates["target_node_id"] = e.target_node_id
+                    if e.label is not None:
+                        edge_updates["label"] = e.label.strip()
+                    if e.edge_data is not None:
+                        edge_updates["edge_data"] = e.edge_data
+                    if edge_updates:
+                        await update_map_edge(conn, map_id, eid, edge_updates)
 
             for e in body.edges:
-                eid = e.id or uuid4()
-                await create_map_edge(
-                    conn,
-                    edge_id=eid,
-                    map_id=map_id,
-                    source_node_id=e.source_node_id,
-                    target_node_id=e.target_node_id,
-                    label=e.label.strip() if e.label else None,
-                    edge_data=e.edge_data,
-                )
+                eid = e.id or existing_pair_to_id.get((e.source_node_id, e.target_node_id))
+                if not eid or eid not in existing_edge_ids:
+                    new_eid = eid or uuid4()
+                    await create_map_edge(
+                        conn,
+                        edge_id=new_eid,
+                        map_id=map_id,
+                        source_node_id=e.source_node_id,
+                        target_node_id=e.target_node_id,
+                        label=e.label.strip() if e.label else None,
+                        edge_data=e.edge_data,
+                    )
         else:
+            # Unconditional same-map referential check on delta edge endpoints
+            endpoints_to_check = set()
+            for ce in body.create_edges:
+                endpoints_to_check.add(ce.source_node_id)
+                endpoints_to_check.add(ce.target_node_id)
+            for ue in body.update_edges:
+                if ue.source_node_id:
+                    endpoints_to_check.add(ue.source_node_id)
+                if ue.target_node_id:
+                    endpoints_to_check.add(ue.target_node_id)
+
+            if endpoints_to_check:
+                created_node_ids = {cn.id for cn in body.create_nodes if cn.id}
+                need_verify = endpoints_to_check - created_node_ids
+                if need_verify:
+                    verified_rows = await conn.fetch(
+                        "SELECT id FROM public.nodes WHERE map_id = $1 AND id = ANY($2::uuid[])",
+                        map_id,
+                        list(need_verify),
+                    )
+                    verified_ids = {r["id"] for r in verified_rows}
+                    if not need_verify.issubset(verified_ids):
+                        raise HTTPException(422, "Edge endpoints must belong to the same mind map")
+
             if body.delete_edge_ids:
                 await conn.execute(
                     "DELETE FROM public.edges WHERE map_id = $1 AND id = ANY($2::uuid[])",
@@ -1463,6 +1705,11 @@ async def batch_update_graph(
                     await update_map_edge(conn, map_id, e_upd.id, eu_dict)
 
         nodes_rows = await list_map_nodes(conn, map_id)
+        if not nodes_rows:
+            raise HTTPException(
+                status_code=422,
+                detail="Batch graph update rejected: applying it would leave the mind map with zero nodes.",
+            )
         edges_rows = await list_map_edges(conn, map_id)
 
         if body.validate_graph:
@@ -1622,10 +1869,18 @@ async def update_comment_endpoint(
         raise HTTPException(404, "Comment not found")
     if existing["node_id"] != node_id:
         raise HTTPException(404, "Comment does not belong to this node")
-    if existing["user_id"] != uid:
+    if body.content is not None and existing["user_id"] != uid:
+        raise HTTPException(403, "You do not have permission to edit this comment")
+    if existing["user_id"] != uid and not is_owner:
         raise HTTPException(403, "You do not have permission to edit this comment")
 
-    updated = await update_node_comment(pool, map_id, comment_id, body.content)
+    updated = await update_node_comment(
+        pool,
+        map_id,
+        comment_id,
+        content=body.content,
+        status=body.status,
+    )
     if not updated:
         raise HTTPException(404, "Comment not found")
     return CommentResponse(**updated)
@@ -1723,6 +1978,11 @@ async def get_node_branch_endpoint(
     "/maps/{map_id}/snapshots",
     status_code=201,
 )
+@router.post(
+    "/api/maps/{map_id}/snapshots",
+    status_code=201,
+    include_in_schema=False,
+)
 async def create_snapshot_endpoint(
     map_id: UUID,
     request: Request,
@@ -1744,6 +2004,11 @@ async def create_snapshot_endpoint(
     "/maps/{map_id}/snapshots",
     response_model=list[SnapshotResponse],
 )
+@router.get(
+    "/api/maps/{map_id}/snapshots",
+    response_model=list[SnapshotResponse],
+    include_in_schema=False,
+)
 async def list_snapshots_endpoint(
     map_id: UUID,
     request: Request,
@@ -1759,11 +2024,40 @@ async def list_snapshots_endpoint(
     result = []
     for s in snapshots:
         d = dict(s)
-        if "snapshot_data" in d and ("nodes_count" not in d or d["nodes_count"] == 0):
-            snap_data = d.get("snapshot_data") or {}
-            if isinstance(snap_data, dict):
-                d.setdefault("nodes_count", len(snap_data.get("nodes", [])))
-                d.setdefault("edges_count", len(snap_data.get("edges", [])))
+        raw_nodes = d.get("nodes_snapshot")
+        raw_edges = d.get("edges_snapshot")
+        if raw_nodes is None and isinstance(d.get("snapshot_data"), dict):
+            raw_nodes = d["snapshot_data"].get("nodes")
+            raw_edges = d["snapshot_data"].get("edges")
+        if raw_nodes is None and isinstance(d.get("graph"), dict):
+            raw_nodes = d["graph"].get("nodes")
+            raw_edges = d["graph"].get("edges")
+
+        if isinstance(raw_nodes, str):
+            try:
+                raw_nodes = json.loads(raw_nodes)
+            except Exception:
+                raw_nodes = []
+        if isinstance(raw_edges, str):
+            try:
+                raw_edges = json.loads(raw_edges)
+            except Exception:
+                raw_edges = []
+
+        raw_nodes = raw_nodes or []
+        raw_edges = raw_edges or []
+
+        d["snapshot_data"] = {
+            "nodes": raw_nodes,
+            "edges": raw_edges,
+        }
+        nc = d.get("nodes_count")
+        d["nodes_count"] = nc if (nc is not None and isinstance(nc, int) and nc > 0) else len(raw_nodes)
+        ec = d.get("edges_count")
+        d["edges_count"] = ec if (ec is not None and isinstance(ec, int) and ec > 0) else len(raw_edges)
+        d["version_number"] = d.get("version_number") or d.get("version_no") or 1
+        d["trigger_source"] = d.get("trigger_source") or d.get("reason") or "manual"
+        d["reason"] = d.get("reason") or d.get("trigger_source") or "Manual snapshot"
         result.append(SnapshotResponse(**d))
     return result
 
@@ -1771,6 +2065,11 @@ async def list_snapshots_endpoint(
 @router.get(
     "/maps/{map_id}/snapshots/{snapshot_id}",
     response_model=SnapshotDetailResponse,
+)
+@router.get(
+    "/api/maps/{map_id}/snapshots/{snapshot_id}",
+    response_model=SnapshotDetailResponse,
+    include_in_schema=False,
 )
 async def get_snapshot_endpoint(
     map_id: UUID,
@@ -1793,11 +2092,23 @@ async def get_snapshot_endpoint(
     if not raw_nodes and isinstance(snapshot.get("snapshot_data"), dict):
         raw_nodes = snapshot["snapshot_data"].get("nodes")
         raw_edges = snapshot["snapshot_data"].get("edges")
+    if not raw_nodes and isinstance(snapshot.get("graph"), dict):
+        raw_nodes = snapshot["graph"].get("nodes")
+        raw_edges = snapshot["graph"].get("edges")
 
     if isinstance(raw_nodes, str):
-        raw_nodes = json.loads(raw_nodes)
+        try:
+            raw_nodes = json.loads(raw_nodes)
+        except Exception:
+            raw_nodes = []
     if isinstance(raw_edges, str):
-        raw_edges = json.loads(raw_edges)
+        try:
+            raw_edges = json.loads(raw_edges)
+        except Exception:
+            raw_edges = []
+
+    raw_nodes = raw_nodes or []
+    raw_edges = raw_edges or []
 
     return {
         "id": snapshot["id"],
@@ -1805,52 +2116,26 @@ async def get_snapshot_endpoint(
         "trigger_job_id": snapshot.get("trigger_job_id"),
         "target_node_id": snapshot.get("target_node_id"),
         "reason": snapshot.get("reason") or "Manual snapshot",
-        "nodes_count": len(raw_nodes or []),
-        "edges_count": len(raw_edges or []),
+        "trigger_source": snapshot.get("trigger_source") or snapshot.get("reason") or "manual",
+        "nodes_count": len(raw_nodes),
+        "edges_count": len(raw_edges),
         "created_at": snapshot["created_at"],
-        "nodes_snapshot": raw_nodes or [],
-        "edges_snapshot": raw_edges or [],
-        "snapshot_data": snapshot.get("snapshot_data") or {"nodes": raw_nodes or [], "edges": raw_edges or []},
-        "version_number": snapshot.get("version_number"),
+        "nodes_snapshot": raw_nodes,
+        "edges_snapshot": raw_edges,
+        "snapshot_data": {"nodes": raw_nodes, "edges": raw_edges},
+        "version_number": snapshot.get("version_number") or snapshot.get("version_no") or 1,
         "label": snapshot.get("label"),
     }
 
 
 @router.post(
-    "/maps/{map_id}/snapshots/{snapshot_id}/restore",
-    status_code=200,
-)
-async def restore_snapshot_endpoint(
-    map_id: UUID,
-    snapshot_id: UUID,
-    request: Request,
-    uid: UUID = Depends(current_user_id),
-):
-    """Restore map state from an immutable snapshot, taking a safety snapshot first."""
-    pool = pool_of(request)
-    is_owner = await assert_map_owner(pool, map_id, uid)
-    if not is_owner:
-        raise HTTPException(404, "Map not found")
-
-    async with transaction(pool) as conn:
-        try:
-            result = await restore_map_snapshot(conn, map_id=map_id, snapshot_id=snapshot_id)
-        except ValueError as exc:
-            raise HTTPException(404, str(exc))
-
-    if isinstance(result, dict) and "snapshot_data" not in result:
-        snapshot = await get_map_snapshot(pool, map_id, snapshot_id)
-        if snapshot:
-            r_nodes = snapshot.get("nodes_snapshot") or []
-            r_edges = snapshot.get("edges_snapshot") or []
-            result["snapshot_data"] = {"nodes": r_nodes, "edges": r_edges}
-
-    return result
-
-
-@router.post(
     "/snapshots/{snapshot_id}/restore",
     status_code=200,
+)
+@router.post(
+    "/api/snapshots/{snapshot_id}/restore",
+    status_code=200,
+    include_in_schema=False,
 )
 async def restore_snapshot_direct(
     snapshot_id: UUID,
@@ -1858,22 +2143,32 @@ async def restore_snapshot_direct(
     uid: UUID = Depends(current_user_id),
 ):
     """Direct alias for restoring a snapshot, looking up map_id automatically."""
+    from snapshots.service import restore_snapshot_by_version_or_id
+
     pool = pool_of(request)
     map_row = await pool.fetchrow("SELECT map_id FROM public.map_snapshots WHERE id = $1", snapshot_id)
     if not map_row:
         raise HTTPException(404, "Snapshot not found")
     map_id = map_row["map_id"]
-    return await restore_snapshot_endpoint(
+    result = await restore_snapshot_by_version_or_id(
+        pool=pool,
         map_id=map_id,
-        snapshot_id=snapshot_id,
-        request=request,
-        uid=uid,
+        identifier=str(snapshot_id),
+        user_id=uid,
     )
+    if not result:
+        raise HTTPException(404, f"Snapshot '{snapshot_id}' not found for map '{map_id}' or unauthorized.")
+    return result
 
 
 @router.delete(
     "/maps/{map_id}/snapshots/{snapshot_id}",
     status_code=200,
+)
+@router.delete(
+    "/api/maps/{map_id}/snapshots/{snapshot_id}",
+    status_code=200,
+    include_in_schema=False,
 )
 async def delete_snapshot_endpoint(
     map_id: UUID,

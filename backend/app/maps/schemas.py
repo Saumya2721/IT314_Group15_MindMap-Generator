@@ -13,7 +13,7 @@ from typing import Any
 from uuid import UUID
 
 from contracts.models import DetailLevel
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class NodeCreate(BaseModel):
@@ -106,6 +106,8 @@ class BatchEdgeItem(BaseModel):
 
 class BatchEdgeUpdateItem(BaseModel):
     id: UUID = Field(..., description="UUID of edge to update")
+    source_node_id: UUID | None = Field(None, description="Reconnected source node UUID")
+    target_node_id: UUID | None = Field(None, description="Reconnected target node UUID")
     label: str | None = Field(None, max_length=100)
     edge_data: dict[str, Any] | None = None
 
@@ -204,14 +206,27 @@ class CommentCreate(BaseModel):
 
 
 class CommentUpdate(BaseModel):
-    content: str = Field(..., min_length=1, max_length=5000, description="Updated comment text")
+    content: str | None = Field(default=None, min_length=1, max_length=5000, description="Updated comment text")
+    status: str | None = Field(default=None, description="'open' | 'resolved'")
 
     @field_validator("content")
     @classmethod
-    def validate_content(cls, v: str) -> str:
+    def validate_content(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
         s = v.strip()
         if not s:
             raise ValueError("Comment content cannot be empty or pure whitespace")
+        return s
+
+    @field_validator("status")
+    @classmethod
+    def validate_status(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        s = v.strip().lower()
+        if s not in ("open", "resolved"):
+            raise ValueError("Status must be 'open' or 'resolved'")
         return s
 
 
@@ -222,8 +237,18 @@ class CommentResponse(BaseModel):
     user_id: UUID
     content: str
     status: str = "open"
+    resolved: bool = False
     created_at: datetime
     updated_at: datetime
+
+    @model_validator(mode="before")
+    @classmethod
+    def compute_resolved(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            status_val = data.get("status", "open")
+            if "resolved" not in data or data["resolved"] is None:
+                data["resolved"] = status_val == "resolved"
+        return data
 
 
 class NodeRegenerateRequest(BaseModel):
@@ -253,6 +278,7 @@ class SnapshotResponse(BaseModel):
     label: str | None = None
     trigger_source: str | None = None
     snapshot_data: dict[str, Any] | None = None
+    created_by: UUID | None = None
 
 
 class SnapshotDetailResponse(SnapshotResponse):

@@ -172,6 +172,10 @@ class FakeCallbackClient:
         map_id,
         assistant_message: str,
         summary: str | None = None,
+        action_proposal: dict | None = None,
+        cited_node_ids: list | None = None,
+        source_refs: list | None = None,
+        **kwargs,
     ) -> None:
         if self._terminal_sent:
             raise CallbackAlreadySent("complete_chat() called twice")
@@ -183,6 +187,9 @@ class FakeCallbackClient:
             job_id=uuid.uuid4(),
             assistant_message=assistant_message,
             summary=summary,
+            action_proposal=action_proposal,
+            cited_node_ids=cited_node_ids or [],
+            source_refs=source_refs or [],
             status="completed",
         )
 

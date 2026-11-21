@@ -106,6 +106,19 @@ export function AppHeader() {
                     {user?.email || 'curator@mindweave.craft'}
                   </div>
                 </div>
+                {user?.role === 'admin' && (
+                  <Link
+                    to="/admin"
+                    className="dropdown-logout-btn"
+                    style={{ textDecoration: 'none', color: 'inherit' }}
+                    onClick={() => setDropdownOpen(false)}
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>
+                      shield_person
+                    </span>
+                    <span>Admin Panel</span>
+                  </Link>
+                )}
                 <button type="button" className="dropdown-logout-btn" onClick={handleLogout}>
                   <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>
                     logout

@@ -1,3 +1,4 @@
+import json
 from typing import Any
 
 from chat.schemas import ActionConfirm, MessageCreate
@@ -67,19 +68,45 @@ def get_paginated_history(
         db.table("chat_messages")
         .select("*")
         .eq("thread_id", thread_id)
-        .order("created_at", desc=False)
+        .order("created_at", desc=True)
         .range(offset, offset + limit - 1)
         .execute()
     )
 
     records = _as_dict_list(response.data)
+    records.reverse()
     for item in records:
         item["map_id"] = map_id
         item["user_id"] = user_id
-        if "is_confirmed" not in item:
-            item["is_confirmed"] = False
-        if "proposed_action" not in item:
-            item["proposed_action"] = None
+        pa = item.get("proposed_action")
+        while isinstance(pa, str):
+            try:
+                pa = json.loads(pa)
+            except Exception:
+                pa = None
+                break
+        item["proposed_action"] = pa if isinstance(pa, dict) else None
+
+        meta = item.get("metadata") or {}
+        while isinstance(meta, str):
+            try:
+                meta = json.loads(meta)
+            except Exception:
+                meta = {}
+                break
+        item["metadata"] = meta if isinstance(meta, dict) else {}
+
+        raw_conf = item.get("is_confirmed")
+        exec_status = meta.get("execution_status") if isinstance(meta, dict) else None
+        if item["proposed_action"] is not None:
+            if raw_conf is True:
+                item["is_confirmed"] = True
+            elif exec_status == "dismissed":
+                item["is_confirmed"] = False
+            else:
+                item["is_confirmed"] = None
+        else:
+            item["is_confirmed"] = bool(raw_conf) if raw_conf is not None else False
     return records
 
 

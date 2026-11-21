@@ -18,11 +18,13 @@ closure over GenerationDeps. CHANGED in the worker restructure:
 from __future__ import annotations
 
 import logging
+import os
 import re
 from collections.abc import Callable
 from typing import Literal, cast
 
 from contracts.models import ChunkSource
+from orchestration.context_budget import ContextBudgetManager
 from orchestration.deps import GenerationDeps
 from orchestration.expansion import execute_two_pass_generation, expand_branch
 from orchestration.policy import SeedMode, plan_research
@@ -34,16 +36,22 @@ from orchestration.prompts import (
     build_generation_user_prompt,
     estimate_tokens,
     extract_json_object,
+    format_seed_content,
     size_targets,
 )
 from orchestration.state import GenerationState
 from providers.base import Message
 from rag.ingestion import ingest_seed_text, ingest_tool_result
 from rag.retrieval import RetrievedChunk, rerank_context, retrieve_context
+from research.cache import ResearchCache
+from research.subgraph import run_research_subgraph
 from seed.normalizer import NoUsableSeedContent
 from tools.base import ToolError
+from tools.policy import ResearchTimeBudget
 from tools.research_planner import execute_research_queries, plan_research_queries
+from tracing import annotate_current_span, trace_span
 from validation.schema import (
+    DraftMindMap,
     ValidationFailure,
     resolve_branch_to_records,
     resolve_to_records,
@@ -63,40 +71,66 @@ class NoPriorSeedError(NoUsableSeedContent):
     pass
 
 
+def _chunk_source_for_tool(tool_name: str) -> ChunkSource:
+    """Map a research tool name to its chunk source (S3-T1 / fixes #184)."""
+    if tool_name == "web_search":
+        return ChunkSource.WEB_SEARCH
+    if tool_name == "arxiv_search":
+        return ChunkSource.ARXIV
+    return ChunkSource.WIKIPEDIA
+
+
+def _extract_shingles(words: list[str], n: int) -> list[str]:
+    """Extract consecutive n-gram word shingles."""
+    if len(words) < n:
+        return words
+    return [" ".join(words[i : i + n]) for i in range(len(words) - n + 1)]
+
+
 def _deduplicate_against_seed(
     chunks: list[RetrievedChunk],
     *,
     seed_text: str,
-    threshold: float = 0.6,
+    threshold: float = 0.7,
+    shingle_size: int = 1,
 ) -> list[RetrievedChunk]:
     """Remove retrieved chunks whose substantive content is already substantially
     present in the seed text, preventing redundant context from consuming the token budget.
+    Supports unigram word overlap (shingle_size=1) and n-gram shingle containment (shingle_size >= 2).
     """
     clean_seed = seed_text.lower().strip()
     if not clean_seed:
         return chunks
 
     # Content tokens of length >= 3 to avoid stop-word skew
-    seed_words = set(re.findall(r"\b[a-z0-9]{3,}\b", clean_seed))
-    if not seed_words:
+    raw_seed_words = re.findall(r"\b[a-z0-9]{3,}\b", clean_seed)
+    if not raw_seed_words:
         return chunks
+
+    seed_items = set(_extract_shingles(raw_seed_words, shingle_size)) if shingle_size > 1 else set(raw_seed_words)
 
     surviving: list[RetrievedChunk] = []
     for chunk in chunks:
-        chunk_words = re.findall(r"\b[a-z0-9]{3,}\b", chunk.record.chunk_text.lower())
-        if not chunk_words:
+        raw_chunk_words = re.findall(r"\b[a-z0-9]{3,}\b", chunk.record.chunk_text.lower())
+        if not raw_chunk_words:
             surviving.append(chunk)
             continue
 
-        overlap_count = sum(1 for w in chunk_words if w in seed_words)
-        overlap_ratio = overlap_count / len(chunk_words)
+        chunk_items = _extract_shingles(raw_chunk_words, shingle_size) if shingle_size > 1 else raw_chunk_words
+        if not chunk_items:
+            surviving.append(chunk)
+            continue
+
+        overlap_count = sum(1 for item in chunk_items if item in seed_items)
+        overlap_ratio = overlap_count / len(chunk_items)
 
         if overlap_ratio >= threshold:
             logger.info(
-                "Deduplicating chunk %s (overlap=%.2f >= threshold=%.2f with seed)",
+                "Deduplicating chunk %s (overlap=%.2f >= threshold=%.2f with seed, shingle_size=%d)",
                 chunk.record.id,
                 overlap_ratio,
                 threshold,
+                shingle_size,
             )
             continue
         surviving.append(chunk)
@@ -147,7 +181,7 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
             resolved_detail = cast(Literal["overview", "balanced", "detailed"], result.label)
             logger.info("Inferred detail_level=%s (confidence=%.2f)", resolved_detail, result.confidence)
 
-        routing: dict[str, bool] = {"web_search": False, "arxiv_search": False}
+        routing: dict[str, bool] = {"web_search": False, "arxiv_search": False, "wikipedia": False}
 
         if not enable_dynamic:
             # Legacy Sprint 1 routing and sizing
@@ -165,6 +199,14 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
                     labels=["yes", "no"],
                 )
                 routing["arxiv_search"] = r.label == "yes"
+
+            if "wikipedia" in deps.tools:
+                r = await deps.decision_model.classify(
+                    state=query_text[:4000],
+                    question="Would a Wikipedia article on this topic improve grounding of the mind map's content?",
+                    labels=["yes", "no"],
+                )
+                routing["wikipedia"] = r.label == "yes"
 
             await deps.callback.progress(20)
             return {"resolved_detail_level": resolved_detail, "routing_decision": routing}
@@ -202,6 +244,15 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
                 )
                 routing["arxiv_search"] = r.label == "yes"
 
+        if "wikipedia" in available_tools:
+            if plan.wikipedia is not None:
+                routing["wikipedia"] = plan.wikipedia
+            else:
+                routing["wikipedia"] = routing.get("web_search", True)
+
+        if "scholar" in available_tools:
+            routing["scholar"] = routing.get("arxiv_search", False) or routing.get("web_search", False)
+
         targets = size_targets(
             resolved_detail,
             seed_tokens=estimate_tokens(state["seed_text"]),
@@ -223,79 +274,141 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
         query = state["seed_text"][:2000]
         tool_call_log: list[dict] = []
         enable_dynamic = deps.settings.generation.enable_dynamic_prompts
+        wikipedia_sections: list[str] = []
 
-        active_tools = [
-            t
-            for t in ("web_search", "arxiv_search")
-            if state["routing_decision"].get(t) and deps.tools.get(t) is not None
-        ]
+        research_warnings: list[str] = list(state.get("research_warnings", []))
+        research_engine = getattr(deps.settings.tools, "research_engine", "subgraph").lower()
+        engine_mode = os.environ.get("RESEARCH_ENGINE", research_engine).lower()
 
-        if not active_tools:
-            pass
-        elif not enable_dynamic:
-            # Legacy Sprint 1 single-query behavior
-            for tool_name in active_tools:
-                tool = deps.tools[tool_name]
-                try:
-                    results = await tool.invoke(query=query)
-                except ToolError as exc:
-                    logger.warning("Tool %s failed, continuing without it: %s", tool_name, exc)
-                    tool_call_log.append({"tool": tool_name, "status": "failed", "error": str(exc)})
-                    continue
-                except Exception as exc:
-                    logger.warning(
-                        "Tool %s raised unexpected error, continuing without it: %s",
-                        tool_name,
-                        exc,
-                        exc_info=True,
-                    )
-                    tool_call_log.append({"tool": tool_name, "status": "failed", "error": str(exc)})
-                    continue
-
-                source = ChunkSource.WEB_SEARCH if tool_name == "web_search" else ChunkSource.ARXIV
-                for r in results:
-                    await ingest_tool_result(
-                        vector_store=deps.vector_store,
-                        namespace=state["namespace"],
-                        generation_job_id=state["job_id"],
-                        text=r.content,
-                        source=source,
-                        source_title=r.source_title,
-                        source_url=r.source_url,
-                        embedding_provider=deps.embedding_provider,
-                    )
-                tool_call_log.append({"tool": tool_name, "status": "ok", "result_count": len(results)})
-        else:
-            # S2-L16: Multi-query research planner with parallel execution & quota protection
-            sub_queries = await plan_research_queries(
-                llm=deps.llm,
-                seed_text=state["seed_text"],
-                n_queries=deps.settings.generation.research_queries_per_tool,
-            )
-            logger.info("Planned %d research sub-queries: %s", len(sub_queries), sub_queries)
-
-            for tool_name in active_tools:
-                tool = deps.tools[tool_name]
-                results = await execute_research_queries(
-                    tool=tool,
-                    queries=sub_queries,
-                    max_queries=deps.settings.generation.max_search_queries_per_tool,
+        if engine_mode == "subgraph" and enable_dynamic:
+            # S3-A2: Bounded Multi-Step Research Agent Subgraph with Redis caching and canonical dedup
+            subgraph_tools = [
+                t
+                for t in ("web_search", "wikipedia", "scholar", "arxiv_search")
+                if state.get("routing_decision", {}).get(t, True) and deps.tools.get(t) is not None
+            ]
+            if subgraph_tools:
+                cache = ResearchCache(
+                    redis_client=getattr(deps, "redis_client", None),
+                    ttl_s=deps.settings.tools.research_cache_ttl_s,
                 )
+                deduped_sources, r_warnings, degraded, logs = await run_research_subgraph(
+                    deps,
+                    seed_text=state["seed_text"],
+                    namespace=state["namespace"],
+                    job_id=state["job_id"],
+                    user_id=state.get("user_id"),
+                    active_tools=subgraph_tools,
+                    cache=cache,
+                    timeout_s=deps.settings.tools.research_subgraph_timeout_s,
+                    max_rounds=deps.settings.tools.research_max_rounds,
+                )
+                tool_call_log.extend(logs)
+                if r_warnings:
+                    research_warnings.extend(r_warnings)
 
-                source = ChunkSource.WEB_SEARCH if tool_name == "web_search" else ChunkSource.ARXIV
-                for r in results:
+                for src in deduped_sources:
+                    if src.tool == "wikipedia":
+                        chunk_source = ChunkSource.WIKIPEDIA
+                    elif src.tool in ("scholar", "arxiv_search", "arxiv"):
+                        chunk_source = ChunkSource.SCHOLAR
+                    else:
+                        chunk_source = ChunkSource.WEB_SEARCH
+
                     await ingest_tool_result(
                         vector_store=deps.vector_store,
                         namespace=state["namespace"],
                         generation_job_id=state["job_id"],
-                        text=r.content,
-                        source=source,
-                        source_title=r.source_title,
-                        source_url=r.source_url,
+                        text=src.content,
+                        source=chunk_source,
+                        source_title=src.source_title,
+                        source_url=src.source_url,
                         embedding_provider=deps.embedding_provider,
                     )
-                status = "ok" if results else "failed"
-                tool_call_log.append({"tool": tool_name, "status": status, "result_count": len(results)})
+        else:
+            # Inline retrieval engine (fallback mode when RESEARCH_ENGINE=inline or dynamic disabled)
+            active_tools = [
+                t
+                for t in ("web_search", "arxiv_search", "wikipedia")
+                if state["routing_decision"].get(t) and deps.tools.get(t) is not None
+            ]
+
+            if not active_tools:
+                pass
+            elif not enable_dynamic:
+                # Legacy Sprint 1 single-query behavior
+                for tool_name in active_tools:
+                    tool = deps.tools[tool_name]
+                    try:
+                        results = await tool.invoke(query=query)
+                    except ToolError as exc:
+                        logger.warning("Tool %s failed, continuing without it: %s", tool_name, exc)
+                        tool_call_log.append({"tool": tool_name, "status": "failed", "error": str(exc)})
+                        continue
+                    except Exception as exc:
+                        logger.warning(
+                            "Tool %s raised unexpected error, continuing without it: %s",
+                            tool_name,
+                            exc,
+                            exc_info=True,
+                        )
+                        tool_call_log.append({"tool": tool_name, "status": "failed", "error": str(exc)})
+                        continue
+
+                    source = _chunk_source_for_tool(tool_name)
+                    for r in results:
+                        await ingest_tool_result(
+                            vector_store=deps.vector_store,
+                            namespace=state["namespace"],
+                            generation_job_id=state["job_id"],
+                            text=r.content,
+                            source=source,
+                            source_title=r.source_title,
+                            source_url=r.source_url,
+                            license=r.license,
+                            attribution=r.attribution,
+                            embedding_provider=deps.embedding_provider,
+                        )
+                        if tool_name == "wikipedia":
+                            wikipedia_sections.extend(s for s in (r.sections or []) if s and s.strip())
+                tool_call_log.append({"tool": tool_name, "status": "ok", "result_count": len(results)})
+            else:
+                # S2-L16 / S3-L1: Multi-query research planner with parallel execution, quota protection & research time budget (S3-A2)
+                sub_queries = await plan_research_queries(
+                    llm=deps.llm,
+                    seed_text=state["seed_text"],
+                    n_queries=deps.settings.generation.research_queries_per_tool,
+                )
+                logger.info("Planned %d research sub-queries: %s", len(sub_queries), sub_queries)
+                research_budget = ResearchTimeBudget(deps.settings.tools.research_time_budget_s)
+
+                for tool_name in active_tools:
+                    tool = deps.tools[tool_name]
+                    results = await execute_research_queries(
+                        tool=tool,
+                        queries=sub_queries,
+                        max_queries=deps.settings.generation.max_search_queries_per_tool,
+                        budget=research_budget,
+                    )
+
+                    source = _chunk_source_for_tool(tool_name)
+                    for r in results:
+                        await ingest_tool_result(
+                            vector_store=deps.vector_store,
+                            namespace=state["namespace"],
+                            generation_job_id=state["job_id"],
+                            text=r.content,
+                            source=source,
+                            source_title=r.source_title,
+                            source_url=r.source_url,
+                            license=r.license,
+                            attribution=r.attribution,
+                            embedding_provider=deps.embedding_provider,
+                        )
+                        if tool_name == "wikipedia":
+                            wikipedia_sections.extend(s for s in (r.sections or []) if s and s.strip())
+                    status = "ok" if results else "failed"
+                    tool_call_log.append({"tool": tool_name, "status": status, "result_count": len(results)})
 
         candidates = await retrieve_context(
             vector_store=deps.vector_store,
@@ -326,11 +439,12 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
             keep_top_k=keep_top_k,
         )
 
-        # Deduplication against seed
+        # Deduplication against seed (deduplicates against what is actually placed into the prompt)
         if enable_dynamic:
+            prompt_seed = format_seed_content(state["seed_text"], mode=state.get("mode", "document"))
             surviving_chunks = _deduplicate_against_seed(
                 reranked,
-                seed_text=state["seed_text"],
+                seed_text=prompt_seed,
                 threshold=deps.settings.generation.seed_dedup_overlap_threshold,
             )
         else:
@@ -355,14 +469,30 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
             est_tokens,
         )
 
+        web_search_failed = any(
+            call.get("tool") == "web_search" and (call.get("status") == "failed" or call.get("result_count", 0) == 0)
+            for call in tool_call_log
+        )
+        retrieval_warnings = []
+        if web_search_failed:
+            retrieval_warnings.append(
+                "Live web search was active but produced no results; map generated from seed and internal model knowledge."
+            )
+
         await deps.callback.progress(40)
         return {
             "retrieved_chunks": surviving_chunks,
             "tool_call_log": tool_call_log,
             "prompt_items_log": prompt_items_log,
             "seed_length": seed_len,
+            "quality_warnings": list(state.get("quality_warnings", [])) + retrieval_warnings + research_warnings,
+            "research_warnings": research_warnings,
+            # S3-T1 / fixes #184: Wikipedia section hierarchy for the Pass-1 outline
+            # generator when the seed is a topic (see generate_node below).
+            "wikipedia_sections": wikipedia_sections,
         }
 
+    @trace_span("generate_node", run_type="chain")
     async def generate_node(state: GenerationState) -> dict:
         use_two_pass = state.get("two_pass_enabled", deps.settings.generation.enable_two_pass)
         if use_two_pass:
@@ -383,6 +513,9 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
                     max_branches=deps.settings.generation.max_outline_branches,
                     target_node_range=target_node_range,
                     target_max_depth=target_max_depth,
+                    # S3-T1 / fixes #184: Wikipedia section tree guides the
+                    # Pass-1 outline for topic-only seeds.
+                    section_headings=state.get("wikipedia_sections") or None,
                 )
                 await deps.callback.progress(70)
                 return {
@@ -402,53 +535,98 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
         retrieved_chunks = state.get("retrieved_chunks", [])
         enable_dynamic = deps.settings.generation.enable_dynamic_prompts
 
+        manager = ContextBudgetManager(
+            provider=deps.settings.llm.provider,
+            model=deps.settings.llm.model,
+            max_output_tokens=deps.settings.llm.max_output_tokens,
+        )
+        mode: SeedMode = state.get("mode", "document")
+        prompt_mgr = getattr(deps, "prompt_manager", None)
         if not enable_dynamic:
             system_prompt = GENERATION_SYSTEM_PROMPT
-            prompt = build_generation_user_prompt(
-                seed_text=state["seed_text"],
-                detail_level=state["resolved_detail_level"],
-                target_node_range=(10, 25),
-                target_max_depth=3,
-                supporting_context=retrieved_chunks,
-                regeneration_instruction=state.get("regeneration_instruction"),
-                previous_validation_errors=state.get("validation_errors") or None,
-            )
+            if prompt_mgr is not None and hasattr(prompt_mgr, "get_template"):
+                tmpl = prompt_mgr.get_template("generation_system")
+                if isinstance(tmpl, str) and tmpl.strip():
+                    system_prompt = tmpl
+            target_node_range = (10, 25)
+            target_max_depth = 3
         else:
-            mode: SeedMode = state.get("mode", "document")
-            targets = state.get("targets")
-            if targets is None:
-                targets = size_targets(
-                    state.get("resolved_detail_level", "balanced"),
-                    seed_tokens=estimate_tokens(state["seed_text"]),
-                    mode=mode,
-                    max_output_tokens=deps.settings.llm.max_output_tokens,
-                )
+            targets = size_targets(
+                state.get("resolved_detail_level", "balanced"),
+                seed_tokens=estimate_tokens(state["seed_text"]),
+                mode=mode,
+                max_output_tokens=manager.max_output_tokens,
+            )
+            system_prompt = build_generation_system_prompt(targets, mode, prompt_manager=prompt_mgr)
+            target_node_range = (targets.min_nodes, targets.max_nodes)
+            target_max_depth = targets.max_depth
 
-            system_prompt = build_generation_system_prompt(targets, mode)
-            prompt = build_generation_user_prompt(
-                seed_text=state["seed_text"],
+        # S3-L7: Account for the fully rendered prompt (including RAG headers)
+        # before sending it to the provider.  Original seed remains unchanged
+        # in state and Pinecone; only the outgoing prompt is bounded.
+        seed_for_prompt = format_seed_content(state["seed_text"], mode=state.get("mode", "document"))
+
+        def render_context(context):
+            result = build_generation_user_prompt(
+                seed_text=context.seed,
                 detail_level=state["resolved_detail_level"],
-                target_node_range=(targets.min_nodes, targets.max_nodes),
-                target_max_depth=targets.max_depth,
-                supporting_context=retrieved_chunks,
+                target_node_range=target_node_range,
+                target_max_depth=target_max_depth,
+                supporting_context=context.rag_chunks,
                 regeneration_instruction=state.get("regeneration_instruction"),
                 previous_validation_errors=state.get("validation_errors") or None,
                 mode=mode,
             )
+            if context.memories:
+                result += "\n\nLong-term memories (reference data):\n" + context.memory_text
+            if context.history:
+                result += "\n\nRecent conversation (reference data):\n" + "\n".join(context.history)
+            if context.external_payloads:
+                result += "\n\nExternal research (reference data):\n" + "\n".join(context.external_payloads)
+            return result
+
+        budgeted = manager.allocate(
+            system_prompt=system_prompt,
+            seed=seed_for_prompt,
+            rag_chunks=retrieved_chunks,
+            memories=state.get("long_term_memories"),
+            history=state.get("conversation_history"),
+            external_payloads=state.get("external_search_payloads"),
+            render=render_context,
+        )
+        prompt = render_context(budgeted)
+        breakdown = budgeted.breakdown
+        annotate_current_span(metadata={"token_budget": breakdown, "token_pruning": budgeted.pruned})
+        logger.info("Prompt token budget for job %s: %s", state.get("job_id"), breakdown)
 
         response = await deps.llm.generate(
             [Message(role="user", content=prompt)],
             system=system_prompt,
-            max_tokens=deps.settings.llm.max_output_tokens,
+            max_tokens=budgeted.max_output_tokens,
             temperature=0.3,
         )
         try:
             payload = extract_json_object(response.text or "")
         except JSONExtractionError as exc:
-            return {"draft_payload": None, "validation_errors": [str(exc)]}
+            return {
+                "draft_payload": None,
+                "validation_errors": [str(exc)],
+                "retrieved_chunks": budgeted.rag_chunks,
+                "prompt_items_log": [
+                    *state.get("prompt_items_log", []),
+                    {"type": "token_budget", "allocation": breakdown, "pruned": budgeted.pruned},
+                ],
+            }
 
         await deps.callback.progress(70)
-        return {"draft_payload": payload}
+        return {
+            "draft_payload": payload,
+            "retrieved_chunks": budgeted.rag_chunks,
+            "prompt_items_log": [
+                *state.get("prompt_items_log", []),
+                {"type": "token_budget", "allocation": breakdown, "pruned": budgeted.pruned},
+            ],
+        }
 
     async def validate_node(state: GenerationState) -> dict:
         if state.get("two_pass_complete"):
@@ -512,35 +690,57 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
             supporting_context=supporting_chunks,
         )
 
+        from validation.schema import score_draft
+
+        target_node_range = state.get("target_node_range", (10, 25))
+        target_max_depth = state.get("target_max_depth", 3)
+        curr_score = score_draft(draft, target_node_range=target_node_range, target_max_depth=target_max_depth)
+        prev_best = state.get("best_valid_draft")
+        prev_score = (
+            score_draft(prev_best, target_node_range=target_node_range, target_max_depth=target_max_depth)
+            if prev_best
+            else -999.0
+        )
+        best_draft = draft if curr_score >= prev_score else prev_best
+
+        # F6: Accumulate retrieval warnings and draft quality gate warnings
+        existing_warnings = list(state.get("quality_warnings") or [])
+        gate_warnings = list(report.warnings or [])
+        combined_warnings = list(dict.fromkeys(existing_warnings + gate_warnings))
+
         # If quality failed and retries remain: retry with feedback
         if not report.passed and retry_count < max_retries:
             logger.info(
-                "Quality gate failed (retry %d/%d): %s",
+                "Quality gate failed (retry %d/%d, score=%.1f): %s",
                 retry_count + 1,
                 max_retries,
+                curr_score,
                 report.warnings,
             )
             return {
-                "best_valid_draft": draft,
-                "quality_warnings": report.warnings,
-                "validation_errors": report.warnings,
+                "best_valid_draft": best_draft,
+                "quality_warnings": combined_warnings,
+                "validation_errors": gate_warnings,
                 "retry_count": retry_count + 1,
             }
 
-        # Soft gate: accept draft (either it passed or retries were exhausted)
+        # Soft gate: accept highest scoring draft (either it passed or retries were exhausted)
+        chosen_draft = draft if report.passed else (best_draft or draft)
+        assert isinstance(chosen_draft, DraftMindMap)
         if not report.passed:
             logger.warning(
-                "Accepting draft despite quality gate warnings after %d retries: %s",
+                "Accepting best scoring draft (score=%.1f) despite quality gate warnings after %d retries: %s",
+                max(curr_score, prev_score),
                 retry_count,
                 report.warnings,
             )
 
-        nodes, edges = resolve_to_records(draft, supporting_context=supporting_chunks)
+        nodes, edges = resolve_to_records(chosen_draft, supporting_context=supporting_chunks)
         await deps.callback.progress(85)
         return {
             "nodes": nodes,
             "edges": edges,
-            "quality_warnings": report.warnings,
+            "quality_warnings": combined_warnings,
             "validation_errors": [],
         }
 
@@ -571,6 +771,7 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
         await deps.callback.progress(40)
         return {"retrieved_chunks": reranked, "breadcrumb_path": breadcrumb}
 
+    @trace_span("generate_branch_node", run_type="chain")
     async def generate_branch_node(state: GenerationState) -> dict:
         selected_node = state.get("selected_node")
         if selected_node is None:
@@ -593,6 +794,7 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
             ancestor_labels=ancestor_labels,
             breadcrumb_path=breadcrumb,
             comment=comment,
+            parent_edges=state.get("parent_edges"),
             branch_context_nodes=branch_nodes,
             allowed_node_ids=allowed_ids,
             existing_chunks=retrieved_chunks,
@@ -680,6 +882,7 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
     }
 
 
+@trace_span("reconstruct_seed_from_namespace", run_type="chain")
 async def reconstruct_seed_from_namespace(deps: GenerationDeps, *, namespace: str) -> str:
     """Regeneration's replacement for the old load_regeneration_context:
     pulls every uploaded_seed chunk back out of Pinecone (no re-upload,
@@ -721,6 +924,9 @@ async def reconstruct_seed_from_namespace(deps: GenerationDeps, *, namespace: st
                 else:
                     reconstructed.append(remainder)
         else:
-            reconstructed.append("\n\n" + current)
+            if chunk.section_path and chunk.section_path != "Root" and not current.startswith("#"):
+                reconstructed.append(f"\n\n## {chunk.section_path}\n\n" + current)
+            else:
+                reconstructed.append("\n\n" + current)
         previous_chunk = chunk
     return "".join(reconstructed)

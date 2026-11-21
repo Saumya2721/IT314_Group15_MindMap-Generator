@@ -23,6 +23,7 @@ from db.connection import transaction
 from db.models import EdgeRecord, NodeRecord, SeedAssetType
 from db.repository import (
     get_chat_messages,
+    get_chat_thread_summary,
     get_or_create_chat_thread,
     insert_chat_message,
     insert_seed_asset,
@@ -42,8 +43,15 @@ async def verify_callback_auth(
     request: Request,
     authorization: str | None = None,
     creds: HTTPAuthorizationCredentials | None = None,
+    allow_owner_user_token: bool = False,
 ) -> dict:
-    """Validate worker's callback token or map owner's access token."""
+    """Validate worker's callback token.
+
+    If allow_owner_user_token is True (read-only endpoints like GET /status),
+    an authenticated map owner's user token is also accepted.
+    For state-mutating callbacks (complete, fail, progress), only the worker's
+    callback token hash is permitted.
+    """
     raw_token: str | None = None
 
     if creds and creds.credentials and creds.credentials.strip():
@@ -87,31 +95,32 @@ async def verify_callback_auth(
     if expected_hash and secrets.compare_digest(token_hash, expected_hash):
         return dict(row)
 
-    # Allow authenticated user who owns the map to check job status / callbacks
-    try:
-        from core.supabase import anon_client
+    # Allow authenticated user who owns the map to check job status ONLY if explicitly allowed
+    if allow_owner_user_token:
+        try:
+            from core.supabase import anon_client
 
-        client = anon_client()
-        res = client.auth.get_user(raw_token)
-        if res and res.user and res.user.id:
-            owner_uid = UUID(str(res.user.id))
-            is_owner = await pool.fetchval(
-                "SELECT 1 FROM public.mind_maps WHERE id = $1 AND user_id = $2",
-                row["map_id"],
-                owner_uid,
-            )
-            if is_owner:
-                return dict(row)
-            else:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="You do not have permission to access this mind map's job.",
+            client = anon_client()
+            res = client.auth.get_user(raw_token)
+            if res and res.user and res.user.id:
+                owner_uid = UUID(str(res.user.id))
+                is_owner = await pool.fetchval(
+                    "SELECT 1 FROM public.mind_maps WHERE id = $1 AND user_id = $2",
+                    row["map_id"],
+                    owner_uid,
                 )
-    except HTTPException as http_exc:
-        if http_exc.status_code == status.HTTP_403_FORBIDDEN:
-            raise
-    except Exception as exc:
-        logger.warning("Token verification failed for job %s: %s", job_id, exc)
+                if is_owner:
+                    return dict(row)
+                else:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="You do not have permission to access this mind map's job.",
+                    )
+        except HTTPException as http_exc:
+            if http_exc.status_code == status.HTTP_403_FORBIDDEN:
+                raise
+        except Exception as exc:
+            logger.warning("Token verification failed for job %s: %s", job_id, exc)
 
     logger.warning("Callback authentication failed for job %s: invalid token", job_id)
     raise HTTPException(
@@ -141,7 +150,7 @@ async def check_job_status(
     authorization: str | None = Header(None),
 ):
     """Worker pre-flight or user check to query whether job has already reached a terminal state."""
-    job_ctx = await verify_callback_auth(job_id, request, authorization, creds)
+    job_ctx = await verify_callback_auth(job_id, request, authorization, creds, allow_owner_user_token=True)
     st = job_ctx.get("status")
     return {
         "id": str(job_id),
@@ -195,7 +204,7 @@ async def report_complete(
     authorization: str | None = Header(None),
 ):
     """Worker reports successful generation outcome with final nodes, edges, and seeds."""
-    job_ctx = await verify_callback_auth(job_id, request, authorization, creds)
+    job_ctx = await verify_callback_auth(job_id, request, authorization, creds, allow_owner_user_token=False)
     pool = request.app.state.pool
 
     # Strict contract validation: assert identity and completion status
@@ -267,6 +276,11 @@ async def report_complete(
                 text_color=n.get("text_color"),
                 node_type=n.get("node_type", "default"),
                 source_job_id=job_id,
+                node_data={
+                    **(n.get("node_data") or {}),
+                    **({"sources": n["sources"]} if n.get("sources") else {}),
+                }
+                or None,
             )
             for n in nodes_raw
         ]
@@ -352,11 +366,16 @@ async def report_complete(
         map_owner = await conn.fetchval("SELECT user_id FROM public.mind_maps WHERE id = $1", map_id)
         if map_owner:
             thread_id = await get_or_create_chat_thread(conn, map_id, map_owner)
+            action_desc = "Regenerated branch" if str(job_type) == "regenerate_node" else "Generated mind map"
+            chat_msg = f"{action_desc} with {len(node_records)} nodes and {len(edge_records)} edges."
+            if result.quality_warnings:
+                chat_msg += f"\n\n*Notice: {'; '.join(result.quality_warnings)}*"
             await insert_chat_message(
                 conn,
                 thread_id,
                 "assistant",
-                f"Generated mind map with {len(node_records)} nodes and {len(edge_records)} edges.",
+                chat_msg,
+                metadata={"quality_warnings": result.quality_warnings} if result.quality_warnings else None,
             )
 
     logger.info(
@@ -383,7 +402,7 @@ async def report_fail(
     authorization: str | None = Header(None),
 ):
     """Worker reports terminal failure or rejection with strict lifecycle constraint handling."""
-    job_ctx = await verify_callback_auth(job_id, request, authorization, creds)
+    job_ctx = await verify_callback_auth(job_id, request, authorization, creds, allow_owner_user_token=False)
     pool = request.app.state.pool
 
     # Strict contract validation: assert identity and failed/rejected status
@@ -482,6 +501,9 @@ class ChatCompleteCallback(BaseModel):
     job_id: UUID
     assistant_message: str = Field(..., description="Assistant response to persist to chat history")
     summary: str | None = Field(default=None, description="Updated rolling summary from worker if threshold reached")
+    action_proposal: dict[str, Any] | None = Field(default=None, description="Proposed action structured dictionary")
+    cited_node_ids: list[UUID] = Field(default_factory=list, description="IDs of cited nodes")
+    source_refs: list[str] = Field(default_factory=list, description="Source references cited")
     status: str = Field(default="completed", description="Job status: completed or failed")
     error: str | None = None
 
@@ -495,7 +517,7 @@ async def report_chat_complete(
     authorization: str | None = Header(None),
 ):
     """Worker reports completion of chat response: persists assistant turn & updates rolling summary."""
-    job_ctx = await verify_callback_auth(job_id, request, authorization, creds)
+    job_ctx = await verify_callback_auth(job_id, request, authorization, creds, allow_owner_user_token=False)
     pool = request.app.state.pool
 
     if payload.job_id != job_id:
@@ -517,7 +539,9 @@ async def report_chat_complete(
                 """
                 UPDATE public.generation_jobs
                    SET status = 'failed',
+                       started_at = COALESCE(started_at, now()),
                        completed_at = now(),
+                       progress_percent = LEAST(progress_percent, 99),
                        error_message = $2
                  WHERE id = $1
                 """,
@@ -546,13 +570,35 @@ async def report_chat_complete(
         map_owner = await conn.fetchval("SELECT user_id FROM public.mind_maps WHERE id = $1", map_id)
         if map_owner:
             thread_id = await get_or_create_chat_thread(conn, map_id, map_owner)
-            # 2. Persist assistant turn
+            # 2. Persist assistant turn with proposed_action and citations metadata
+            msg_id = None
             if payload.assistant_message:
-                await insert_chat_message(conn, thread_id, "assistant", payload.assistant_message)
+                metadata = {}
+                if payload.cited_node_ids:
+                    metadata["cited_node_ids"] = [str(c) for c in payload.cited_node_ids]
+                if payload.source_refs:
+                    metadata["source_refs"] = payload.source_refs
 
-            # 3. Update rolling summary in chat_threads if provided or threshold reached
-            if payload.summary:
-                await update_chat_thread_summary(conn, map_id, payload.summary)
+                msg_id = await insert_chat_message(
+                    conn,
+                    thread_id,
+                    "assistant",
+                    payload.assistant_message,
+                    proposed_action=payload.action_proposal,
+                    metadata=metadata,
+                )
+
+            # 3. Update rolling summary in chat_threads if new summary was generated
+            existing_summary = await get_chat_thread_summary(conn, map_id)
+            if payload.summary and payload.summary.strip():
+                is_fresh_summary = payload.summary.strip() != (existing_summary or "").strip()
+                target_msg_id = msg_id if is_fresh_summary else None
+                await update_chat_thread_summary(
+                    conn,
+                    map_id,
+                    payload.summary.strip(),
+                    summary_through_message_id=target_msg_id,
+                )
             else:
                 all_msgs = await get_chat_messages(conn, map_id)
                 if len(all_msgs) >= 10:
@@ -560,15 +606,17 @@ async def report_chat_complete(
 
                     summarizer = RollingSummarizer()
                     new_summary = await summarizer.generate_summary(all_msgs)
-                    await update_chat_thread_summary(conn, map_id, new_summary)
+                    await update_chat_thread_summary(conn, map_id, new_summary, summary_through_message_id=msg_id)
 
         # 4. Update job status to completed
         await conn.execute(
             """
             UPDATE public.generation_jobs
                SET status = 'completed',
+                   started_at = COALESCE(started_at, now()),
                    completed_at = now(),
-                   progress_percent = 100
+                   progress_percent = 100,
+                   error_message = NULL
              WHERE id = $1
             """,
             job_id,
@@ -581,4 +629,47 @@ async def report_chat_complete(
         "receipt_id": str(job_id),
         "already_processed": False,
         "summary_updated": bool(payload.summary),
+    }
+
+
+# ---------------------------------------------------------------------
+# Internal Pipeline Configuration (S3-BE8)
+# ---------------------------------------------------------------------
+config_router = APIRouter(prefix="/internal/config", tags=["Internal Pipeline Config"])
+
+
+@config_router.get("", status_code=200)
+async def get_internal_pipeline_config() -> dict[str, Any]:
+    """Expose active LLM pipeline configuration and versioned prompt templates (S3-BE8).
+
+    Security Invariant: Never exposes API keys, credentials, or provider secrets.
+    Only exposes model identifiers, provider selections, hyperparameters, and prompt templates.
+    """
+    import os
+
+    return {
+        "version": "1.0.0",
+        "llm": {
+            "provider": os.environ.get("LLM_PROVIDER", "groq"),
+            "model": os.environ.get("LLM_MODEL", "llama-3.3-70b-versatile"),
+            "api_base": os.environ.get("LLM_API_BASE") or None,
+            "hyperparameters": {
+                "temperature": float(os.environ.get("LLM_TEMPERATURE", "0.2")),
+                "max_output_tokens": int(os.environ.get("LLM_MAX_OUTPUT_TOKENS", "8000")),
+                "request_timeout_s": float(os.environ.get("LLM_TIMEOUT_S", "90.0")),
+            },
+        },
+        "prompts": {
+            "version": "v1.0",
+            "templates": {
+                "generation_system": (
+                    "You are the synthesis engine of a mind-mapping tool. You turn raw user input "
+                    "(notes, transcripts, outlines, brain dumps) into structured mind maps as JSON.\n"
+                    "Size for this request ($level level): $min_nodes to $max_nodes nodes, "
+                    "$min_branches to $max_branches first-level branches, and $min_depth to $max_depth "
+                    "levels below the root.\n$mode_rule\nFORMAT EXAMPLE:\n$example"
+                ),
+            },
+        },
+        "refresh_interval_s": int(os.environ.get("CONFIG_REFRESH_INTERVAL_S", "60")),
     }

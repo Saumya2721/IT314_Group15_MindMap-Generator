@@ -7,10 +7,12 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import ipaddress
 import logging
 import os
 import re
 from typing import Any
+from urllib.parse import urlparse
 from uuid import UUID
 
 from core.supabase import admin
@@ -36,6 +38,21 @@ logger = logging.getLogger(__name__)
 BUCKET = "seed-assets"
 MAX_FILES = 5
 MAX_FILE_BYTES = 25 * 1024 * 1024  # 25 MB limit
+MAX_OFFICE_FILE_BYTES = 20 * 1024 * 1024  # 20 MB limit for DOCX/PPTX (S3-BE7)
+MAX_SEED_URL_LENGTH = 2000  # S3-BE7: max URL length
+
+# SSRF protection: private/loopback IP ranges that seed URLs must NOT resolve to (S3-BE7)
+_PRIVATE_NETS: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = [
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("169.254.0.0/16"),  # link-local
+    ipaddress.ip_network("0.0.0.0/8"),
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("fc00::/7"),  # unique-local IPv6
+    ipaddress.ip_network("fe80::/10"),  # link-local IPv6
+]
 
 
 async def create_signed_url(key: str, expires_in: int = 1800) -> str:
@@ -55,8 +72,12 @@ async def create_signed_url(key: str, expires_in: int = 1800) -> str:
         return ""
 
 
-def sniff_mime(data: bytes) -> str | None:
-    """Decide the type from the file's own magic bytes, never client-supplied headers."""
+def sniff_mime(data: bytes, filename: str = "") -> str | None:
+    """Decide the type from the file's own magic bytes, never client-supplied headers.
+
+    For ZIP-based Office formats (DOCX/PPTX) the magic bytes are identical
+    (PK\\x03\\x04), so the filename extension is used as the tiebreaker.
+    """
     if data.startswith(b"%PDF-"):
         return "application/pdf"
     if data.startswith(b"\x89PNG\r\n\x1a\n"):
@@ -65,6 +86,13 @@ def sniff_mime(data: bytes) -> str | None:
         return "image/jpeg"
     if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
         return "image/webp"
+    # S3-BE7: ZIP-based Office Open XML formats — same PK magic, distinguish by extension
+    if data[:4] == b"PK\x03\x04":
+        ext = os.path.splitext(filename.lower())[1]
+        if ext == ".docx":
+            return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        if ext == ".pptx":
+            return "application/vnd.openxmlformats-officedocument.presentationml.presentation"
     return None
 
 
@@ -86,16 +114,49 @@ async def read_uploads(files: list[UploadFile]) -> list[tuple[str, str, bytes]]:
     items = []
     for f in files:
         name = display_name(f.filename or "file")
-        data = await f.read(MAX_FILE_BYTES + 1)  # never load more than the limit
+        # S3-BE7: office docs have a tighter size cap; read up to the stricter limit first
+        is_office_ext = os.path.splitext(name.lower())[1] in (".docx", ".pptx")
+        read_limit = (MAX_OFFICE_FILE_BYTES if is_office_ext else MAX_FILE_BYTES) + 1
+        data = await f.read(read_limit)
         if not data:
             raise HTTPException(422, f"{name}: the file is empty.")
-        if len(data) > MAX_FILE_BYTES:
+        if is_office_ext and len(data) > MAX_OFFICE_FILE_BYTES:
+            raise HTTPException(413, f"{name}: file is larger than {MAX_OFFICE_FILE_BYTES // (1024 * 1024)} MB.")
+        if not is_office_ext and len(data) > MAX_FILE_BYTES:
             raise HTTPException(413, f"{name}: file is larger than {MAX_FILE_BYTES // (1024 * 1024)} MB.")
-        mime = sniff_mime(data)
+        mime = sniff_mime(data, filename=name)
         if mime is None:
-            raise HTTPException(415, f"{name}: unsupported or corrupted file. Use PDF, PNG, JPEG or WEBP.")
+            raise HTTPException(415, f"{name}: unsupported or corrupted file. Use PDF, PNG, JPEG, WEBP, DOCX or PPTX.")
         items.append((name, mime, data))
     return items
+
+
+def validate_seed_url(url: str) -> tuple[bool, str | None]:
+    """Validate that *url* is a safe, public HTTP/HTTPS address (SSRF protection).
+
+    Returns ``(True, None)`` when valid, or ``(False, reason)`` when invalid.
+    Rejects: non-http(s) schemes, loopback, link-local, and all RFC-1918
+    private address ranges, and URLs longer than MAX_SEED_URL_LENGTH.
+    """
+    if len(url) > MAX_SEED_URL_LENGTH:
+        return False, f"URL is too long (max {MAX_SEED_URL_LENGTH} characters)."
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        return False, "URL must start with http:// or https://."
+    hostname = (parsed.hostname or "").lower()
+    if not hostname:
+        return False, "URL must have a valid hostname."
+    if hostname in ("localhost", "0.0.0.0"):
+        return False, "URL must point to a public address, not localhost."
+    # Try to parse as IP — if it's an IP, check for private ranges
+    try:
+        addr = ipaddress.ip_address(hostname)
+        for net in _PRIVATE_NETS:
+            if addr in net:
+                return False, "URL must point to a public address, not a private or loopback IP."
+    except ValueError:
+        pass  # hostname is a domain name, not a bare IP — allow it
+    return True, None
 
 
 async def store_files(
@@ -217,6 +278,88 @@ async def delete_map_storage_files(
             return keys_list
         except Exception as exc:
             logger.warning("Failed to remove storage keys %s for map %s: %s", keys_list, map_id, exc)
+            raise RuntimeError(f"Storage deletion failed for keys {keys_list}: {exc}") from exc
+
+    return []
+
+
+async def delete_user_storage_files(
+    user_id: UUID,
+    pool: Any = None,
+) -> list[str]:
+    """Remove all Supabase Storage files associated with a user across all their maps.
+
+    Cleans up files recorded in the database (public.seed_assets) and any
+    files stored under the storage prefix `<user_id>/`.
+    """
+    keys_to_remove: set[str] = set()
+
+    # 1. Fetch explicitly recorded storage paths from DB if pool is available
+    if pool is not None:
+        try:
+            rows = await pool.fetch(
+                """
+                SELECT sa.storage_key
+                FROM public.seed_assets sa
+                JOIN public.generation_jobs gj ON sa.generation_job_id = gj.id
+                JOIN public.mind_maps m ON gj.map_id = m.id
+                WHERE m.user_id = $1 AND sa.storage_key IS NOT NULL
+                """,
+                user_id,
+            )
+            for r in rows:
+                key = r.get("storage_key") or r.get("storage_path")
+                if key:
+                    keys_to_remove.add(key)
+        except Exception as exc:
+            logger.warning("Could not query seed_assets for user %s: %s", user_id, exc)
+
+    # 2. Discover any objects under the folder prefix <user_id>/
+    try:
+        prefix = str(user_id)
+        top_items = await asyncio.to_thread(admin.storage.from_(BUCKET).list, prefix)
+        if isinstance(top_items, list):
+            for item in top_items:
+                name = item.get("name") if isinstance(item, dict) else getattr(item, "name", None)
+                if not name:
+                    continue
+                sub_path = f"{prefix}/{name}"
+                try:
+                    sub_items = await asyncio.to_thread(admin.storage.from_(BUCKET).list, sub_path)
+                    if isinstance(sub_items, list) and sub_items:
+                        for sub in sub_items:
+                            sub_name = sub.get("name") if isinstance(sub, dict) else getattr(sub, "name", None)
+                            if not sub_name:
+                                continue
+                            leaf_path = f"{sub_path}/{sub_name}"
+                            try:
+                                leaf_items = await asyncio.to_thread(admin.storage.from_(BUCKET).list, leaf_path)
+                                if isinstance(leaf_items, list) and leaf_items:
+                                    for leaf in leaf_items:
+                                        leaf_name = (
+                                            leaf.get("name") if isinstance(leaf, dict) else getattr(leaf, "name", None)
+                                        )
+                                        if leaf_name:
+                                            keys_to_remove.add(f"{leaf_path}/{leaf_name}")
+                                else:
+                                    keys_to_remove.add(leaf_path)
+                            except Exception:
+                                keys_to_remove.add(leaf_path)
+                    else:
+                        keys_to_remove.add(sub_path)
+                except Exception:
+                    keys_to_remove.add(sub_path)
+    except Exception as exc:
+        logger.warning("Could not list storage prefix %s: %s", user_id, exc)
+
+    if keys_to_remove:
+        keys_list = list(keys_to_remove)
+        try:
+            await asyncio.to_thread(admin.storage.from_(BUCKET).remove, keys_list)
+            logger.info("Successfully deleted %d storage files for user %s", len(keys_list), user_id)
+            return keys_list
+        except Exception as exc:
+            logger.warning("Failed to remove storage keys %s for user %s: %s", keys_list, user_id, exc)
             raise RuntimeError(f"Storage deletion failed for keys {keys_list}: {exc}") from exc
 
     return []

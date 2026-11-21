@@ -25,3 +25,4 @@ class RefreshTokenRequest(BaseModel):
 
 class GoogleCallbackRequest(BaseModel):
     code: str
+    code_verifier: str | None = None

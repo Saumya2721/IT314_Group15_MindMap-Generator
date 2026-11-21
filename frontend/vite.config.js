@@ -15,6 +15,15 @@ export default defineConfig({
       '/auth': {
         target: 'http://localhost:8000',
         changeOrigin: true,
+        bypass(req) {
+          // Serve index.html for SPA page navigations like /auth/callback
+          if (
+            req.url?.startsWith('/auth/callback') ||
+            req.headers?.accept?.includes('text/html')
+          ) {
+            return '/index.html';
+          }
+        },
       },
       '/me': {
         target: 'http://localhost:8000',

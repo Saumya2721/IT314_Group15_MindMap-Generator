@@ -1,17 +1,54 @@
 # The database and storage come from `supabase start`; the containers reach
 # it through host.docker.internal.
 services:
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   backend:
     build: ./backend
     env_file:
       - path: backend/.env
         required: false
     environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_URL: redis://redis:6379/0
       SUPABASE_URL: http://host.docker.internal:54321
       CORS_ORIGINS: http://localhost:5173
+      # U7/M4: Export converter service endpoint (see docs/export_service.md)
+      EXPORT_CONVERTER_URL: ${EXPORT_CONVERTER_URL:-http://localhost:3001/convert}
+      EXPORT_TIMEOUT_SECONDS: "15.0"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports: ["8000:8000"]
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  worker:
+    build: ./llm
+    env_file:
+      - path: llm/.env
+        required: false
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_URL: redis://redis:6379/0
+      SUPABASE_URL: http://host.docker.internal:54321
+      BACKEND_INTERNAL_URL: http://backend:8000
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_started
 
   frontend:
     build: ./frontend

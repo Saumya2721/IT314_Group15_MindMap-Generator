@@ -1,6 +1,17 @@
 import { useReducer, useCallback } from 'react'
 import { validateConnection, getDescendantNodeIds } from '../../utils/connectionGuards'
 
+export function generateUUID() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0
+    const v = c === 'x' ? r : (r & 0x3) | 0x8
+    return v.toString(16)
+  })
+}
+
 export const INITIAL_CANVAS_STATE = {
   nodes: [],
   edges: [],
@@ -206,16 +217,19 @@ export function canvasReducer(state, action) {
 
       const snap = { nodes: state.nodes, edges: state.edges }
       const isParentRoot = parentNode.node_type === 'root'
-      const childType = isParentRoot ? 'branch' : 'concept'
-      const childTint = isParentRoot ? '#C96B4B' : '#899B72'
-      const childCategory = isParentRoot ? 'Branch' : 'Topic'
+      const childType = action.payload.node_type || (isParentRoot ? 'branch' : 'concept')
+      const childTint =
+        action.payload.background_color ||
+        (childType === 'branch' ? '#C96B4B' : childType === 'root' ? '#2D5A47' : '#899B72')
+      const childCategory =
+        childType === 'branch' ? 'Branch' : childType === 'root' ? 'Root' : 'Topic'
       const pos = calculateChildPosition(parentNode, state.nodes, state.edges)
 
-      const childId = `node-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+      const childId = generateUUID()
       const newChildNode = {
         id: childId,
         label: action.payload.label || 'New Concept',
-        description: '',
+        description: action.payload.description || '',
         node_type: childType,
         background_color: childTint,
         category: childCategory,
@@ -224,10 +238,10 @@ export function canvasReducer(state, action) {
       }
 
       const newEdge = {
-        id: `edge-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        id: generateUUID(),
         source_node_id: parentId,
         target_node_id: childId,
-        label: '',
+        label: action.payload.edgeLabel || '',
       }
 
       return {
@@ -253,13 +267,13 @@ export function canvasReducer(state, action) {
       const incomingEdge = state.edges.find((e) => String(e.target_node_id || e.target) === refId)
       const pos = calculateSiblingPosition(refNode, state.nodes, state.edges)
 
-      const siblingId = `node-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+      const siblingId = generateUUID()
       const siblingNode = {
         id: siblingId,
         label: action.payload.label || 'New Concept',
-        description: '',
-        node_type: refNode.node_type || 'concept',
-        background_color: refNode.background_color || '#899B72',
+        description: action.payload.description || '',
+        node_type: action.payload.node_type || refNode.node_type || 'concept',
+        background_color: action.payload.background_color || refNode.background_color || '#899B72',
         category: refNode.category || 'Topic',
         pos_x: pos.x,
         pos_y: pos.y,
@@ -269,10 +283,10 @@ export function canvasReducer(state, action) {
       if (incomingEdge) {
         const parentId = String(incomingEdge.source_node_id || incomingEdge.source)
         newEdges.push({
-          id: `edge-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          id: generateUUID(),
           source_node_id: parentId,
           target_node_id: siblingId,
-          label: '',
+          label: action.payload.edgeLabel || '',
         })
       }
 
@@ -296,7 +310,7 @@ export function canvasReducer(state, action) {
 
       const snap = { nodes: state.nodes, edges: state.edges }
       const newEdge = {
-        id: connection.id || `edge-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        id: connection.id || generateUUID(),
         source_node_id: String(connection.source_node_id || connection.source),
         target_node_id: String(connection.target_node_id || connection.target),
         label: connection.label || '',
@@ -337,6 +351,51 @@ export function canvasReducer(state, action) {
         past: [...state.past, snap].slice(-50),
         future: [],
         edges: updatedEdges,
+      }
+    }
+
+    case 'UPDATE_EDGE': {
+      const { id, label, edge_data, relationship_label } = action.payload
+      const effectiveLabel = label !== undefined ? label : relationship_label
+      const effectiveRelLabel = relationship_label !== undefined ? relationship_label : label
+      const snap = { nodes: state.nodes, edges: state.edges }
+      return {
+        ...state,
+        past: [...state.past, snap].slice(-50),
+        future: [],
+        edges: state.edges.map((e) =>
+          String(e.id) === String(id)
+            ? {
+                ...e,
+                ...(effectiveLabel !== undefined ? { label: effectiveLabel } : {}),
+                ...(effectiveRelLabel !== undefined
+                  ? { relationship_label: effectiveRelLabel }
+                  : {}),
+                ...(edge_data !== undefined
+                  ? { edge_data: { ...(e.edge_data || {}), ...edge_data } }
+                  : {}),
+                data: {
+                  ...(e.data || {}),
+                  ...(edge_data || {}),
+                  ...(effectiveLabel !== undefined ? { label: effectiveLabel } : {}),
+                  ...(effectiveRelLabel !== undefined
+                    ? { relationship_label: effectiveRelLabel }
+                    : {}),
+                },
+              }
+            : e,
+        ),
+      }
+    }
+
+    case 'DELETE_EDGE': {
+      const id = String(action.payload)
+      const snap = { nodes: state.nodes, edges: state.edges }
+      return {
+        ...state,
+        past: [...state.past, snap].slice(-50),
+        future: [],
+        edges: state.edges.filter((e) => String(e.id) !== id),
       }
     }
 
@@ -468,16 +527,27 @@ export function useCanvasState({
     dispatch({ type: 'ADD_NODE', payload: node })
   }, [])
 
-  const addChildNode = useCallback((parentId, label) => {
-    dispatch({ type: 'ADD_CHILD_NODE', payload: { parentId, label } })
+  const addChildNode = useCallback((parentId, options = {}) => {
+    const payload =
+      typeof options === 'string' ? { parentId, label: options } : { parentId, ...options }
+    dispatch({ type: 'ADD_CHILD_NODE', payload })
   }, [])
 
-  const addSiblingNode = useCallback((refId, label) => {
-    dispatch({ type: 'ADD_SIBLING_NODE', payload: { refId, label } })
+  const addSiblingNode = useCallback((refId, options = {}) => {
+    const payload = typeof options === 'string' ? { refId, label: options } : { refId, ...options }
+    dispatch({ type: 'ADD_SIBLING_NODE', payload })
   }, [])
 
   const addEdge = useCallback((connection) => {
     dispatch({ type: 'ADD_EDGE', payload: connection })
+  }, [])
+
+  const updateEdge = useCallback((id, updates) => {
+    dispatch({ type: 'UPDATE_EDGE', payload: { id, ...updates } })
+  }, [])
+
+  const deleteEdge = useCallback((id) => {
+    dispatch({ type: 'DELETE_EDGE', payload: id })
   }, [])
 
   const reconnectEdge = useCallback((oldEdge, newConnection) => {
@@ -492,9 +562,16 @@ export function useCanvasState({
     dispatch({ type: 'DELETE_BRANCH', payload: id })
   }, [])
 
-  const selectNode = useCallback((node) => {
-    dispatch({ type: 'SELECT_NODE', payload: node })
-  }, [])
+  const selectNode = useCallback(
+    (nodeOrId) => {
+      let nodeObj = nodeOrId
+      if (typeof nodeOrId === 'string') {
+        nodeObj = state.nodes.find((n) => n.id === nodeOrId) || null
+      }
+      dispatch({ type: 'SELECT_NODE', payload: nodeObj })
+    },
+    [state.nodes],
+  )
 
   const clearSelectedNode = useCallback(() => {
     dispatch({ type: 'CLEAR_SELECTED_NODE' })
@@ -538,6 +615,8 @@ export function useCanvasState({
     addChildNode,
     addSiblingNode,
     addEdge,
+    updateEdge,
+    deleteEdge,
     reconnectEdge,
     deleteNode,
     deleteBranch,

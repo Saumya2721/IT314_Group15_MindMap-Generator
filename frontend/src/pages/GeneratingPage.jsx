@@ -39,6 +39,7 @@ export default function GeneratingPage({ initialPhase }) {
   // Graph state (nodes & edges directly from backend)
   const [graphNodes, setGraphNodes] = useState([])
   const [rawEdges, setRawEdges] = useState([])
+  const [mapVersion, setMapVersion] = useState(null)
 
   // Toast feedback
   const [toastMessage, setToastMessage] = useState('')
@@ -74,6 +75,9 @@ export default function GeneratingPage({ initialPhase }) {
         const graphData = await mindMapService.getMapGraph(routeMapId)
         setGraphNodes(graphData?.nodes || [])
         setRawEdges(graphData?.edges || [])
+        if (graphData?.version != null) {
+          setMapVersion(graphData.version)
+        }
         setPhase('editor')
       } catch (err) {
         console.error('Failed to load map graph:', err)
@@ -94,6 +98,9 @@ export default function GeneratingPage({ initialPhase }) {
       }
       setGraphNodes(graphData?.nodes || [])
       setRawEdges(graphData?.edges || [])
+      if (graphData?.version != null) {
+        setMapVersion(graphData.version)
+      }
       setPhase('editor')
       setIsLoadingMap(false)
       showToast('Topological synthesis complete. Workspace ready.')
@@ -179,6 +186,7 @@ export default function GeneratingPage({ initialPhase }) {
         initialTitle={mapTitle}
         initialNodes={graphNodes}
         initialEdges={rawEdges}
+        initialVersion={mapVersion}
         onTitleChange={setMapTitle}
         onBack={() => navigate('/dashboard')}
         onRegenerate={handleRegenerate}

@@ -138,7 +138,7 @@ def test_list_maps_whitespace_query_is_treated_as_no_search():
     try:
         resp = client.get("/api/maps", params={"q": "   "})
         assert resp.status_code == 200
-        assert captured["params"] == (UID,)
+        assert captured["params"] == (UID, 20, 0)
     finally:
         _restore_app_state(orig_pool, orig_override)
 
@@ -155,8 +155,8 @@ def test_list_maps_without_query_returns_all_owned_maps():
         resp = client.get("/api/maps")
         assert resp.status_code == 200
         assert len(resp.json()) == 1
-        # Full fetch with a single user_id parameter (no pattern)
-        assert mock_pool.fetch.call_args[0][1:] == (UID,)
+        # Full fetch with user_id, limit, and offset (M2 pagination)
+        assert mock_pool.fetch.call_args[0][1:] == (UID, 20, 0)
     finally:
         _restore_app_state(orig_pool, orig_override)
 

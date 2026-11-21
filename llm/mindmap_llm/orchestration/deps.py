@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from callback.client import JobCallbackClient
 from config import Settings
@@ -26,3 +27,6 @@ class GenerationDeps:
     tools: dict[str, Tool]
     settings: Settings
     callback: JobCallbackClient
+    redis_client: Any = None
+    prompt_manager: Any = None
+    dynamic_config: Any = None

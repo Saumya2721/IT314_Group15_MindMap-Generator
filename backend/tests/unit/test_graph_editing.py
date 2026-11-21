@@ -278,6 +278,7 @@ def test_node_crud_lifecycle(test_client_and_user):
     mock_conn.fetchrow = mock_pool.fetchrow
     mock_conn.fetchval = AsyncMock(return_value=2)
     mock_conn.execute = AsyncMock()
+    mock_conn.fetch = AsyncMock(return_value=[])
 
     mock_tx = MagicMock()
     mock_tx.__aenter__ = AsyncMock(return_value=mock_conn)
@@ -524,6 +525,7 @@ def test_create_node_with_parent_edge_route(test_client_and_user):
     mock_pool.fetch = AsyncMock(return_value=[])
 
     mock_conn = MagicMock()
+    mock_conn.fetch = AsyncMock(return_value=[])
     # Parent node lookup -> returns parent; then create node; then create edge
     mock_conn.fetchrow = AsyncMock(
         side_effect=[
@@ -675,9 +677,11 @@ def test_batch_graph_update_wholesale_full_sync(test_client_and_user):
     mock_conn.execute = AsyncMock()
     mock_conn.fetchrow = AsyncMock(return_value={"id": r_id, "map_id": map_id})
 
-    # When fetching nodes and edges after sync:
+    # When fetching existing nodes/edges for delta reconciliation and after sync:
     mock_conn.fetch = AsyncMock(
         side_effect=[
+            [{"id": r_id}],
+            [{"id": uuid4(), "source_node_id": r_id, "target_node_id": c_id}],
             [{"id": r_id, "label": "Root", "map_id": map_id}, {"id": c_id, "label": "Child", "map_id": map_id}],
             [{"source_node_id": r_id, "target_node_id": c_id, "map_id": map_id}],
         ]

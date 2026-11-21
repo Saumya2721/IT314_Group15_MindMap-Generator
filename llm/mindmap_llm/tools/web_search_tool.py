@@ -34,7 +34,7 @@ class TavilyWebSearchTool(Tool):
     async def invoke(self, *, query: str = "", **kwargs: Any) -> list[ToolResult]:
         query_val = query or str(kwargs.get("query", ""))
         try:
-            async with httpx.AsyncClient(timeout=self._timeout_s) as client:
+            async with httpx.AsyncClient(timeout=self._timeout_s, follow_redirects=True) as client:
                 resp = await client.post(
                     "https://api.tavily.com/search",
                     json={"api_key": self._api_key, "query": query_val, "max_results": self._max_results},

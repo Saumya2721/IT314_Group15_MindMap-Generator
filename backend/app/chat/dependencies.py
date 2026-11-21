@@ -1,31 +1,19 @@
-import collections
-from datetime import datetime, timedelta
+from __future__ import annotations
 
 from fastapi import HTTPException, Request
+from services.queue import get_redis_pool
+from services.rate_limiter import extract_client_key, rate_limiter
 
-# Sliding-window rate limiter (in-memory per client/user)
-request_history: collections.defaultdict[str, list[datetime]] = collections.defaultdict(list)
+# Deprecated in-memory tracker kept for backwards-compatibility inspection if needed
+request_history: dict = {}
 MAX_REQUESTS_PER_MINUTE = 20
 
 
-def check_rate_limit(request: Request):
-    """Rate limit per user token if present, falling back to client IP."""
-    token = request.headers.get("authorization") or request.cookies.get("access_token")
-    client_key = token[-32:] if token else (request.client.host if request.client else "unknown_ip")
-    now = datetime.now()
-
-    time_window = now - timedelta(minutes=1)
-
-    # Filter out requests older than the time window
-    request_history[client_key] = [req_time for req_time in request_history[client_key] if req_time > time_window]
-
-    if len(request_history[client_key]) >= MAX_REQUESTS_PER_MINUTE:
-        raise HTTPException(
-            status_code=429,
-            detail="Too Many Requests. Please wait a minute before sending more chat messages.",
-        )
-
-    request_history[client_key].append(now)
+async def check_rate_limit(request: Request) -> None:
+    """Rate limit chat messages using distributed Redis-backed sliding window (S3-BE5 / FR-41)."""
+    redis_pool = get_redis_pool(request)
+    client_key = extract_client_key(request)
+    await rate_limiter.check(client_key, api="chat", redis=redis_pool)
 
 
 def get_mindmap_service(request: Request):
