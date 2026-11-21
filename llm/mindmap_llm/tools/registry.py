@@ -12,6 +12,7 @@ from tools.arxiv_tool import ArxivTool
 from tools.base import Tool
 from tools.policy import ToolQuotaLimiter, wrap_tool_registry
 from tools.scholar_tool import ScholarTool
+from tools.web_reader import WebPageReaderTool
 from tools.web_search_tool import TavilyWebSearchTool
 from tools.wikipedia_tool import WikipediaTool
 
@@ -30,6 +31,7 @@ def build_tool_registry(
             api_key=settings.tools.scholar_api_key,
             timeout_s=settings.tools.scholar_timeout_s,
         ),
+        "web_page_reader": WebPageReaderTool(timeout_s=min(settings.tools.tool_timeout_s, 5.0)),
     }
     if settings.tools.web_search_api_key:
         try:
