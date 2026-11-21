@@ -10,6 +10,8 @@ propagating.
 from __future__ import annotations
 
 import logging
+import os
+from typing import Any
 
 from config import Settings
 from providers.base import LLMProvider
@@ -24,19 +26,59 @@ from providers.decision_model import (
 logger = logging.getLogger(__name__)
 
 
-def get_llm_provider(settings: Settings) -> LLMProvider:
-    provider = settings.llm.provider.lower()
-    if provider == "groq":
+def get_llm_provider(
+    settings: Settings,
+    provider: str | None = None,
+    model: str | None = None,
+    hyperparameters: dict[str, Any] | None = None,
+    api_base: str | None = None,
+) -> LLMProvider:
+    """Instantiate the active LLMProvider.
+
+    Can be invoked with default static Settings or dynamically overridden
+    by the dynamic configuration layer (S3-L2).
+    API keys are strictly read from environment variables or settings, never from external payloads.
+    """
+    prov = (provider or settings.llm.provider).strip().lower()
+    mod = model or settings.llm.model
+    base_url = api_base or settings.llm.api_base
+    timeout_s = settings.llm.request_timeout_s
+
+    params = hyperparameters or {}
+    if "request_timeout_s" in params and params["request_timeout_s"]:
+        timeout_s = float(params["request_timeout_s"])
+
+    if prov == "groq":
         from providers.groq_provider import GroqProvider
 
+        api_key = os.environ.get("GROQ_API_KEY") or settings.llm.api_key
         return GroqProvider(
-            api_key=settings.llm.api_key,
-            model=settings.llm.model,
-            timeout_s=settings.llm.request_timeout_s,
-            api_base=settings.llm.api_base,
+            api_key=api_key,
+            model=mod,
+            timeout_s=timeout_s,
+            api_base=base_url,
         )
+
+    if prov == "openai":
+        from providers.openai_provider import OpenAIProvider
+
+        api_key = os.environ.get("OPENAI_API_KEY") or settings.llm.api_key
+        return OpenAIProvider(
+            api_key=api_key,
+            model=mod,
+            timeout_s=timeout_s,
+            api_base=base_url,
+            default_temperature=float(params.get("temperature", 0.2)),
+            default_max_tokens=int(params.get("max_output_tokens", settings.llm.max_output_tokens)),
+        )
+
+    if prov == "mock":
+        from providers.mock_provider import MockProvider
+
+        return MockProvider(model=mod)
+
     raise ValueError(
-        f"Unknown LLM_PROVIDER={provider!r}. Add an adapter in providers/ "
+        f"Unknown LLM_PROVIDER={prov!r}. Add an adapter in providers/ "
         f"and register it in providers.registry.get_llm_provider()."
     )
 
