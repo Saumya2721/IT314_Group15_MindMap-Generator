@@ -38,5 +38,8 @@ class AppConfig:
     EXPORT_CONVERTER_URL: str = os.getenv("EXPORT_CONVERTER_URL", "http://localhost:3001/convert")
     EXPORT_TIMEOUT_SECONDS: float = float(os.getenv("EXPORT_TIMEOUT_SECONDS", "15.0"))
 
+    # Memory Settings (S3-BE4)
+    MEMORY_PER_USER_LIMIT: int = int(os.getenv("MEMORY_PER_USER_LIMIT", "500"))
+
 
 settings = AppConfig()
