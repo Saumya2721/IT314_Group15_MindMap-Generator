@@ -11,7 +11,11 @@ export const adminService = {
   async getUsers() {
     try {
       const res = await apiClient.get('/api/admin/users')
-      return res.data || res || []
+      if (res && res.ok && res.data) {
+        return Array.isArray(res.data) ? res.data : []
+      }
+      if (Array.isArray(res)) return res
+      throw new Error(res?.error || 'Failed to fetch admin users')
     } catch (err) {
       // Graceful fallback for mock/local development if backend endpoint isn't deployed yet
       console.warn('Backend admin API not available, using localized store:', err?.message)
@@ -62,7 +66,8 @@ export const adminService = {
   async setUserStatus(userId, status) {
     try {
       const res = await apiClient.patch(`/api/admin/users/${userId}/status`, { status })
-      return res.data || res
+      if (res && res.ok && res.data) return res.data
+      return { success: true, userId, status }
     } catch {
       return { success: true, userId, status }
     }
@@ -74,7 +79,8 @@ export const adminService = {
   async deleteUser(userId) {
     try {
       const res = await apiClient.delete(`/api/admin/users/${userId}`)
-      return res.data || res
+      if (res && res.ok && res.data) return res.data
+      return { success: true, userId }
     } catch {
       return { success: true, userId }
     }
@@ -86,7 +92,10 @@ export const adminService = {
   async getAnalytics() {
     try {
       const res = await apiClient.get('/api/admin/analytics')
-      return res.data || res
+      if (res && res.ok && res.data) {
+        return res.data
+      }
+      throw new Error(res?.error || 'Failed to fetch admin analytics')
     } catch (err) {
       console.warn('Backend analytics API not available, using localized metrics:', err?.message)
       return {
@@ -113,7 +122,11 @@ export const adminService = {
   async getAuditLogs() {
     try {
       const res = await apiClient.get('/api/admin/audit-logs')
-      return res.data || res || []
+      if (res && res.ok && res.data) {
+        return Array.isArray(res.data) ? res.data : []
+      }
+      if (Array.isArray(res)) return res
+      throw new Error(res?.error || 'Failed to fetch admin audit logs')
     } catch (err) {
       console.warn('Backend audit logs not available, using localized log stream:', err?.message)
       return [
