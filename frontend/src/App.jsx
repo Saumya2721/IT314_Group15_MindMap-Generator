@@ -10,6 +10,7 @@ import DashboardPage from './pages/DashboardPage'
 import CreateMapPage from './pages/CreateMapPage'
 import GeneratingPage from './pages/GeneratingPage'
 import EditorPage from './pages/EditorPage'
+import MemoryPage from './pages/memory/MemoryPage'
 import AdminPage from './pages/admin/AdminPage'
 
 export function AdminRoute({ children }) {
@@ -155,6 +156,15 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <EditorPage />
+                </ProtectedRoute>
+              }
+            />
+            {/* S3-FE2: Long-Term Agent Memory Management & GDPR Export */}
+            <Route
+              path="/memory"
+              element={
+                <ProtectedRoute>
+                  <MemoryPage />
                 </ProtectedRoute>
               }
             />

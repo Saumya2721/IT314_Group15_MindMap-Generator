@@ -50,6 +50,12 @@ export function AppHeader() {
               Dashboard
             </Link>
             <Link
+              to="/memory"
+              className={`header-nav-link ${location.pathname === '/memory' ? 'active' : ''}`}
+            >
+              Memory
+            </Link>
+            <Link
               to="/dashboard"
               className="header-nav-link"
               onClick={(e) => {
