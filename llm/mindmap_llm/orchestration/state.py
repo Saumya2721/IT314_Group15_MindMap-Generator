@@ -22,6 +22,7 @@ class GenerationState(TypedDict, total=False):
     is_regeneration: bool
     purpose: str | None
     seed_has_files: bool
+    user_id: UUID | str | None
     two_pass_enabled: bool
 
     # --- node regeneration inputs (S2-L7) ---
@@ -55,6 +56,7 @@ class GenerationState(TypedDict, total=False):
     draft_payload: dict | None  # raw LLM JSON output, pre-validation
     validation_errors: list[str]
     quality_warnings: list[str]
+    research_warnings: list[str]
     best_valid_draft: Any
     retry_count: int
     _max_retries: int

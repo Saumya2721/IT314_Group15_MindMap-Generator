@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import uuid
+from unittest.mock import patch
 
 import pytest
 from config import GenerationConfig, Settings
@@ -348,6 +350,12 @@ async def test_routing_policy_disables_arxiv_for_brainstorm_purpose():
 
 @pytest.mark.asyncio
 async def test_retrieve_node_uses_multi_query_planner_and_enforces_cap():
+    """Verify the inline multi-query planner path caps at max_search_queries_per_tool.
+
+    This test forces RESEARCH_ENGINE=inline to exercise the inline planner path
+    (plan_research_queries + execute_research_queries with max_queries cap), which
+    is distinct from the S3-A2 subgraph engine that is the new default.
+    """
     payload = _build_request_payload(topic="Distributed consensus algorithms", ideas=None)
     callback = FakeCallbackClient()
     planner_output = json.dumps(
@@ -373,7 +381,9 @@ async def test_retrieve_node_uses_multi_query_planner_and_enforces_cap():
         "callback": callback,
     }
 
-    result = await generate_mindmap(ctx, payload)
+    # Force inline engine so this test covers the multi-query planner path, not the S3-A2 subgraph
+    with patch.dict(os.environ, {"RESEARCH_ENGINE": "inline"}):
+        result = await generate_mindmap(ctx, payload)
     assert result["status"] == "completed"
     assert web_tool.invoked is True
     # Generated 4 queries, but capped to 3
