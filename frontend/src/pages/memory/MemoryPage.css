@@ -1,0 +1,441 @@
+/* MemoryPage.css - Long-term Agent Memory Management & GDPR Export Styling */
+
+.memory-layout {
+  min-height: 100vh;
+  background-color: var(--surface);
+  color: var(--on-surface);
+  display: flex;
+  flex-direction: column;
+}
+
+.memory-main {
+  width: 100%;
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 84px var(--gutter, 24px) 60px;
+  flex: 1;
+}
+
+/* Header Area */
+.memory-header {
+  margin-bottom: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  border-bottom: 1px solid var(--surface-container-high, #2b3230);
+  padding-bottom: 24px;
+}
+
+@media (min-width: 768px) {
+  .memory-header {
+    flex-direction: row;
+    align-items: flex-end;
+    justify-content: space-between;
+  }
+}
+
+.memory-header-info {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 640px;
+}
+
+.memory-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  padding: 3px 10px;
+  border-radius: 4px;
+  background-color: rgba(21, 94, 99, 0.15);
+  color: var(--accent-teal, #4da49e);
+  font-family: var(--font-label, sans-serif);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.memory-title {
+  font-family: var(--font-headline, serif);
+  font-size: 32px;
+  font-weight: 500;
+  margin: 0;
+  color: var(--on-surface, #e1e3e0);
+}
+
+.memory-subtitle {
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--ink-secondary, #a3aca9);
+  margin: 0;
+}
+
+.memory-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* GDPR Export Button */
+.btn-export-gdpr {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 18px;
+  border-radius: 6px;
+  border: 1px solid var(--surface-container-high, #2b3230);
+  background-color: var(--surface-container-low, #1e2523);
+  color: var(--on-surface, #e1e3e0);
+  font-family: var(--font-label, sans-serif);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-export-gdpr:hover {
+  background-color: var(--surface-container, #242c2a);
+  border-color: var(--outline, #89938f);
+  color: #ffffff;
+}
+
+/* Tab Navigation */
+.memory-tabs {
+  display: flex;
+  gap: 8px;
+  border-bottom: 1px solid var(--surface-container-high, #2b3230);
+  margin-bottom: 24px;
+}
+
+.memory-tab-btn {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 10px 18px;
+  font-family: var(--font-label, sans-serif);
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink-secondary, #a3aca9);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: all 0.15s ease;
+}
+
+.memory-tab-btn:hover {
+  color: var(--on-surface, #e1e3e0);
+}
+
+.memory-tab-btn.active {
+  color: var(--accent-teal, #4da49e);
+  border-bottom-color: var(--accent-teal, #4da49e);
+}
+
+/* Memory List and Row Cards */
+.memory-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.memory-row-card {
+  background-color: var(--surface-container-low, #1e2523);
+  border: 1px solid var(--surface-container-high, #2b3230);
+  border-radius: 8px;
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  transition:
+    border-color 0.15s ease,
+    opacity 0.2s ease;
+}
+
+.memory-row-card.disabled {
+  opacity: 0.6;
+}
+
+.memory-row-card:hover {
+  border-color: var(--outline, #89938f);
+}
+
+.memory-row-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.memory-row-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* Kind Badges */
+.kind-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-family: var(--font-label, sans-serif);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.kind-badge.preference {
+  background-color: rgba(77, 164, 158, 0.16);
+  color: var(--accent-teal, #4da49e);
+}
+
+.kind-badge.decision {
+  background-color: rgba(201, 107, 75, 0.16);
+  color: var(--accent-terracotta, #c96b4b);
+}
+
+.kind-badge.fact {
+  background-color: rgba(108, 52, 131, 0.2);
+  color: #c39bd3;
+}
+
+/* Map Scope Pill */
+.map-link-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  color: var(--ink-secondary, #a3aca9);
+  text-decoration: none;
+  background-color: var(--surface-container, #242c2a);
+  padding: 2px 8px;
+  border-radius: 4px;
+  transition: color 0.15s ease;
+}
+
+.map-link-pill:hover {
+  color: var(--accent-teal, #4da49e);
+}
+
+/* Content & Inline Editing */
+.memory-content-area {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.memory-text-display {
+  font-size: 14.5px;
+  line-height: 1.5;
+  color: var(--on-surface, #e1e3e0);
+  margin: 0;
+  cursor: pointer;
+}
+
+.memory-edit-textarea {
+  width: 100%;
+  padding: 10px 12px;
+  background-color: var(--surface-container, #242c2a);
+  border: 1px solid var(--accent-teal, #4da49e);
+  border-radius: 6px;
+  color: var(--on-surface, #e1e3e0);
+  font-family: var(--font-body, serif);
+  font-size: 14px;
+  line-height: 1.5;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.memory-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.btn-memory-save {
+  background-color: var(--primary, #155e63);
+  color: #ffffff;
+  border: none;
+  border-radius: 4px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-memory-cancel {
+  background: transparent;
+  color: var(--ink-secondary, #a3aca9);
+  border: 1px solid var(--surface-container-high, #2b3230);
+  border-radius: 4px;
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+/* Row Action Controls: Toggle & Delete */
+.memory-row-controls {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+/* Toggle Switch */
+.memory-toggle-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 12px;
+  color: var(--ink-secondary, #a3aca9);
+}
+
+.toggle-switch-track {
+  width: 34px;
+  height: 18px;
+  background-color: var(--surface-container-high, #2b3230);
+  border-radius: 12px;
+  position: relative;
+  transition: background-color 0.2s ease;
+}
+
+.toggle-switch-track.active {
+  background-color: var(--primary, #155e63);
+}
+
+.toggle-switch-thumb {
+  width: 14px;
+  height: 14px;
+  background-color: #ffffff;
+  border-radius: 50%;
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  transition: transform 0.2s ease;
+}
+
+.toggle-switch-track.active .toggle-switch-thumb {
+  transform: translateX(16px);
+}
+
+.btn-memory-delete {
+  background: transparent;
+  border: none;
+  color: var(--ink-secondary, #a3aca9);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    color 0.15s ease,
+    background-color 0.15s ease;
+}
+
+.btn-memory-delete:hover {
+  color: #ffb4ab;
+  background-color: rgba(186, 26, 26, 0.15);
+}
+
+/* Empty State & Skeletons */
+.memory-empty-state {
+  text-align: center;
+  padding: 56px 20px;
+  background-color: var(--surface-container-low, #1e2523);
+  border: 1px dashed var(--surface-container-high, #2b3230);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.memory-empty-icon {
+  font-size: 36px;
+  color: var(--ink-secondary, #a3aca9);
+}
+
+.memory-empty-text {
+  font-size: 14px;
+  color: var(--ink-secondary, #a3aca9);
+  margin: 0;
+}
+
+.memory-skeleton-card {
+  height: 96px;
+  background-color: var(--surface-container-low, #1e2523);
+  border-radius: 8px;
+  animation: skeletonPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes skeletonPulse {
+  0% {
+    opacity: 0.6;
+  }
+  50% {
+    opacity: 0.3;
+  }
+  100% {
+    opacity: 0.6;
+  }
+}
+
+/* Modal Backdrop & Confirmation */
+.memory-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(14, 18, 16, 0.75);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 16px;
+}
+
+.memory-modal-dialog {
+  background-color: var(--surface-container-low, #1e2523);
+  border: 1px solid var(--surface-container-high, #2b3230);
+  border-radius: 8px;
+  padding: 24px;
+  width: 100%;
+  max-width: 440px;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.4);
+}
+
+.memory-modal-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.memory-modal-title {
+  font-family: var(--font-headline, serif);
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0;
+  color: var(--on-surface, #e1e3e0);
+}
+
+.memory-modal-body {
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--ink-secondary, #a3aca9);
+  margin-bottom: 24px;
+}
+
+.memory-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
