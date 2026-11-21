@@ -585,3 +585,8 @@ def extract_json_object(text: str) -> dict:
         return json.loads(match.group(0))
     except json.JSONDecodeError as exc:
         raise JSONExtractionError(f"Model output was not valid JSON: {exc}") from exc
+
+
+# Aliases for unified shared branch expansion prompt functions (S3-A3)
+build_branch_expansion_system_prompt = build_regenerate_node_system_prompt
+build_branch_expansion_user_prompt = build_regenerate_node_user_prompt

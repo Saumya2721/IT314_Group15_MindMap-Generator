@@ -45,6 +45,8 @@ class AppConfig:
     CHAT_RATE_LIMIT_WINDOW_S: int = int(os.getenv("CHAT_RATE_LIMIT_WINDOW_S", "60"))
     MEMORY_PROPOSE_RATE_LIMIT_PER_MINUTE: int = int(os.getenv("MEMORY_PROPOSE_RATE_LIMIT_PER_MINUTE", "30"))
     MEMORY_PROPOSE_RATE_LIMIT_WINDOW_S: int = int(os.getenv("MEMORY_PROPOSE_RATE_LIMIT_WINDOW_S", "60"))
+    # Memory Settings (S3-BE4)
+    MEMORY_PER_USER_LIMIT: int = int(os.getenv("MEMORY_PER_USER_LIMIT", "500"))
 
 
 settings = AppConfig()

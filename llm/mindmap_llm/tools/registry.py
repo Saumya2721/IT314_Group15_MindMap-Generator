@@ -25,10 +25,6 @@ def build_tool_registry(
             api_base=settings.tools.arxiv_api_base,
             timeout_s=settings.tools.arxiv_search_timeout_s,
         ),
-        "wikipedia": WikipediaTool(
-            api_base=settings.tools.wikipedia_api_base,
-            timeout_s=settings.tools.wikipedia_timeout_s,
-        ),
         "scholar": ScholarTool(
             api_base=settings.tools.scholar_api_base,
             api_key=settings.tools.scholar_api_key,
@@ -43,6 +39,14 @@ def build_tool_registry(
             )
         except RuntimeError:
             pass  # no key configured — web_search simply won't be offered to the LLM
+
+    # S3-T1 / fixes #184: Wikipedia research tool (CC BY-SA attribution, section hierarchy)
+    if settings.tools.wikipedia_enabled:
+        registry["wikipedia"] = WikipediaTool(
+            api_base=settings.tools.wikipedia_api_base,
+            timeout_s=settings.tools.wikipedia_timeout_s,
+            max_sections=settings.tools.wikipedia_max_sections,
+        )
 
     # S3-L1: Apply policy enforcement layer (per-tool timeouts, enable/disable flags, quota limits)
     return wrap_tool_registry(registry, settings, limiter=limiter)

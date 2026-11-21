@@ -65,6 +65,78 @@ class BranchExpansionResult:
     retrieved_chunks: list[RetrievedChunk] = field(default_factory=list)
     status: str = "completed"  # "completed" | "failed"
     errors: list[str] = field(default_factory=list)
+    quality_warnings: list[str] = field(default_factory=list)
+
+
+@dataclass
+class BranchQualityReport:
+    """Report from branch-level content quality evaluation."""
+
+    passed: bool
+    warnings: list[str] = field(default_factory=list)
+
+
+def check_branch_quality(
+    draft: DraftMindMap,
+    *,
+    selected_node: NodeDraft,
+    supporting_context: list[Any] | None = None,
+    min_subnodes: int = 0,
+) -> BranchQualityReport:
+    """Evaluate quality of an expanded branch beyond basic schema syntax.
+
+    Unified quality check shared across all branch expansion callers:
+      1. Expansion coverage: must produce at least `min_subnodes` sub-concepts under root (if min_subnodes > 0).
+      2. Citation validity: any `ctx:N` citation must refer to a valid context chunk index.
+      3. Branch descriptions: intermediate subnodes should have descriptive explanations.
+      4. Edge relationship labels: edges should have non-empty relationship verbs/prepositions.
+    """
+    warnings: list[str] = []
+    passed = True
+
+    # 1. Expansion coverage: count children under root
+    incoming: dict[str, int] = {n.id: 0 for n in draft.nodes}
+    for e in draft.edges:
+        if e.target in incoming:
+            incoming[e.target] += 1
+    roots = [n_id for n_id, count in incoming.items() if count == 0]
+    root_id = roots[0] if roots else draft.nodes[0].id
+    children = [n for n in draft.nodes if n.id != root_id]
+
+    if min_subnodes > 0 and len(children) < min_subnodes:
+        warnings.append(f"Branch expansion produced {len(children)} child nodes; minimum required is {min_subnodes}.")
+        passed = False
+
+    # 2. Citation validity check
+    context_count = len(supporting_context or [])
+    for n in draft.nodes:
+        if n.sources:
+            for s in n.sources:
+                match = re.match(r"^ctx:(\d+)$", s.strip())
+                if match:
+                    idx = int(match.group(1))
+                    if idx < 1 or (context_count > 0 and idx > context_count):
+                        warnings.append(
+                            f"Node '{n.label}' has invalid citation reference 'ctx:{idx}' (available context passages: 1..{context_count})."
+                        )
+                        passed = False
+
+    # 3. Intermediate branch descriptions
+    children_count: dict[str, int] = {n.id: 0 for n in draft.nodes}
+    for e in draft.edges:
+        if e.source in children_count:
+            children_count[e.source] += 1
+    for n in draft.nodes:
+        if children_count.get(n.id, 0) > 0 and (not n.description or not n.description.strip()):
+            warnings.append(f"Sub-branch node '{n.label}' is missing an explanatory description.")
+
+    # 4. Edge relationship labels
+    if draft.edges:
+        labeled = sum(1 for e in draft.edges if e.label and e.label.strip())
+        if labeled == 0 and len(draft.edges) >= 2:
+            warnings.append("Branch edges are missing relationship labels.")
+
+    return BranchQualityReport(passed=passed, warnings=warnings)
 
 
 # ---------------------------------------------------------------------------
@@ -77,7 +149,7 @@ async def expand_branch(
     *,
     namespace: str,
     selected_node: NodeDraft,
-    ancestor_labels: list[str],
+    ancestor_labels: list[str] | None = None,
     breadcrumb_path: str | None = None,
     comment: str | None = None,
     parent_edges: list[dict[str, Any]] | None = None,
@@ -86,15 +158,26 @@ async def expand_branch(
     max_retries: int = 2,
     existing_chunks: list[RetrievedChunk] | None = None,
     previous_validation_errors: list[str] | None = None,
+    report_progress: bool = False,
+    min_subnodes: int = 0,
+    enforce_quality: bool = True,
 ) -> BranchExpansionResult:
     """Expand a single branch independently.
 
-    Shared by:
-      - Full mind map Pass 2 (expanding each outline branch).
-      - S2-L7 node regeneration.
-      - Chat branch elaboration.
+    Unified implementation consolidating:
+      1. Scoped retrieval & reranking with breadcrumbs
+      2. Dynamic prompt building with token budgeting
+      3. Schema parsing & boundary validation
+      4. Content quality checking
+      5. Canonical source tagging
+
+    Shared by all three invocation paths:
+      - Full mind map Pass 2 (parallel branch expansion)
+      - Node regeneration task (regenerate_node_task / run_regenerate_node)
+      - Chat branch elaboration (elaborate_branch / action proposals)
     """
-    breadcrumb = breadcrumb_path or " > ".join([*ancestor_labels, selected_node.label])
+    ancestors = ancestor_labels or []
+    breadcrumb = breadcrumb_path or " > ".join([*ancestors, selected_node.label])
     scoped_query = f"{breadcrumb}: {comment or selected_node.description or selected_node.label}"
 
     # Stage 1: Branch-specific Retrieval
@@ -115,9 +198,13 @@ async def expand_branch(
             keep_top_k=deps.settings.generation.rag_rerank_top_k,
         )
 
-    # Stage 2: LLM Generation with Retry Loop
+    if report_progress and deps.callback:
+        await deps.callback.progress(40)
+
+    # Stage 2: LLM Generation with Unified Retry Loop
     system_prompt = build_regenerate_node_system_prompt()
     validation_errors: list[str] = list(previous_validation_errors or [])
+    quality_warnings: list[str] = []
     draft: DraftMindMap | None = None
 
     for _attempt in range(max_retries + 1):
@@ -132,7 +219,7 @@ async def expand_branch(
                 selected_node_label=selected_node.label,
                 selected_node_description=selected_node.description,
                 comment=comment,
-                ancestor_labels=ancestor_labels,
+                ancestor_labels=ancestors,
                 breadcrumb_path=breadcrumb,
                 parent_edges=parent_edges,
                 branch_context_nodes=branch_context_nodes,
@@ -171,12 +258,30 @@ async def expand_branch(
                 payload,
                 selected_node=selected_node,
                 allowed_node_ids=effective_allowed,
-                ancestor_labels=ancestor_labels,
+                ancestor_labels=ancestors,
             )
             validation_errors = []
-            break
         except ValidationFailure as exc:
             validation_errors = exc.errors
+            continue
+
+        # Stage 2b: Unified Content Quality Checks
+        quality_report = check_branch_quality(
+            draft,
+            selected_node=selected_node,
+            supporting_context=chunks,
+            min_subnodes=min_subnodes,
+        )
+        if not quality_report.passed and enforce_quality:
+            validation_errors = quality_report.warnings
+            continue
+
+        quality_warnings = quality_report.warnings
+        validation_errors = []
+        break
+
+    if report_progress and deps.callback and draft is not None:
+        await deps.callback.progress(70)
 
     if draft is None or validation_errors:
         return BranchExpansionResult(
@@ -184,8 +289,10 @@ async def expand_branch(
             retrieved_chunks=chunks,
             status="failed",
             errors=validation_errors or ["Failed to generate valid branch draft after retries"],
+            quality_warnings=quality_warnings,
         )
 
+    # Stage 3: Source Tagging and Record Resolution
     effective_allowed = allowed_node_ids or {str(selected_node.id)}
     nodes, edges = resolve_branch_to_records(
         draft,
@@ -193,6 +300,9 @@ async def expand_branch(
         allowed_node_ids=effective_allowed,
         supporting_context=chunks,
     )
+
+    if report_progress and deps.callback:
+        await deps.callback.progress(85)
 
     return BranchExpansionResult(
         selected_node=selected_node,
@@ -202,6 +312,7 @@ async def expand_branch(
         retrieved_chunks=chunks,
         status="completed",
         errors=[],
+        quality_warnings=quality_warnings,
     )
 
 
@@ -271,10 +382,20 @@ async def generate_outline(
     min_branches: int = 4,
     max_branches: int = 8,
     max_retries: int = 2,
+    section_headings: list[str] | None = None,
 ) -> tuple[DraftMindMap, _DraftNode, list[_DraftNode]]:
-    """Execute Pass 1: Generate a high-level structural outline with 4-8 branches."""
+    """Execute Pass 1: Generate a high-level structural outline with 4-8 branches.
+
+    Structural headings from external sources (e.g. the Wikipedia article
+    section tree collected during research) are merged in as guidance for the
+    top-level branches when the seed itself carries no document headings.
+    """
     system_prompt = build_outline_system_prompt()
     headings = extract_headings_from_text(seed_text)
+    for heading in section_headings or []:
+        cleaned = (heading or "").strip()
+        if cleaned and cleaned not in headings:
+            headings.append(cleaned)
     validation_errors: list[str] = []
 
     for _attempt in range(max_retries + 1):
@@ -528,6 +649,7 @@ async def execute_two_pass_generation(
     max_retries: int = 2,
     target_node_range: tuple[int, int] = (10, 35),
     target_max_depth: int = 4,
+    section_headings: list[str] | None = None,
 ) -> tuple[list[NodeDraft], list[EdgeDraft], list[RetrievedChunk], list[str]]:
     """Execute the complete two-pass generation pipeline:
 
@@ -543,6 +665,7 @@ async def execute_two_pass_generation(
         min_branches=min_branches,
         max_branches=max_branches,
         max_retries=max_retries,
+        section_headings=section_headings,
     )
     logger.info("Pass 1 completed with %d branches", len(branch_nodes))
 
