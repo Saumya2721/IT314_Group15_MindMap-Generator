@@ -36,7 +36,7 @@ def require_admin_role(
 
     # Trusted server-side lookup — never rely on client-supplied role claims.
     try:
-        res = supabase_admin.table("profiles").select("role").eq("id", user_id).execute()
+        res = supabase_admin.table("profiles").select("role, suspended_at").eq("id", user_id).execute()
         profile_data = res.data if res and hasattr(res, "data") else None
     except Exception as exc:
         logger.error("Failed to fetch profile for user %s: %s", user_id, exc)
@@ -54,8 +54,14 @@ def require_admin_role(
 
     first_profile = profile_data[0]
     role = first_profile.get("role") if isinstance(first_profile, dict) else None
-    if role != "admin":
-        logger.info("Non-admin user %s (role=%s) attempted to access admin endpoint", user_id, role)
+    suspended_at = first_profile.get("suspended_at") if isinstance(first_profile, dict) else None
+    if role != "admin" or suspended_at is not None:
+        logger.info(
+            "Access denied to admin endpoint for user %s (role=%s, suspended=%s)",
+            user_id,
+            role,
+            suspended_at is not None,
+        )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin privileges required.",
