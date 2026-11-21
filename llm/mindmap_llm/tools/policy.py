@@ -183,6 +183,12 @@ def load_tool_policy(tool_name: str, settings: Settings) -> ToolPolicy:
     elif tool_name == "arxiv_search":
         enabled = cfg.arxiv_search_enabled
         timeout_s = cfg.arxiv_search_timeout_s
+    elif tool_name == "wikipedia":
+        enabled = cfg.wikipedia_enabled
+        timeout_s = cfg.wikipedia_timeout_s
+    elif tool_name == "scholar":
+        enabled = cfg.scholar_enabled
+        timeout_s = cfg.scholar_timeout_s
     elif tool_name == "web_reader":
         enabled = cfg.web_reader_enabled
         timeout_s = cfg.web_reader_timeout_s

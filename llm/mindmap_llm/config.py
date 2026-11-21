@@ -45,6 +45,13 @@ def _get_float(name: str, default: float) -> float:
     return float(val) if val is not None else default
 
 
+def _get_research_engine() -> str:
+    val = os.environ.get("RESEARCH_ENGINE", "subgraph").strip().lower()
+    if val not in {"subgraph", "inline"}:
+        return "subgraph"
+    return val
+
+
 @dataclass(frozen=True)
 class ArqConfig:
     redis_url: str = field(default_factory=lambda: os.environ.get("REDIS_URL", "redis://localhost:6379"))
@@ -135,15 +142,32 @@ class ToolConfig:
     web_search_timeout_s: float = field(default_factory=lambda: _get_float("TOOL_WEB_SEARCH_TIMEOUT_S", 15.0))
     arxiv_search_timeout_s: float = field(default_factory=lambda: _get_float("TOOL_ARXIV_TIMEOUT_S", 20.0))
     web_reader_timeout_s: float = field(default_factory=lambda: _get_float("TOOL_WEB_READER_TIMEOUT_S", 10.0))
+    wikipedia_timeout_s: float = field(default_factory=lambda: _get_float("TOOL_WIKIPEDIA_TIMEOUT_S", 10.0))
+    scholar_timeout_s: float = field(default_factory=lambda: _get_float("TOOL_SCHOLAR_TIMEOUT_S", 15.0))
     # S3-L1: Enable/disable flags loaded from config
     web_search_enabled: bool = field(default_factory=lambda: _get_bool("TOOL_WEB_SEARCH_ENABLED", True))
     arxiv_search_enabled: bool = field(default_factory=lambda: _get_bool("TOOL_ARXIV_SEARCH_ENABLED", True))
     web_reader_enabled: bool = field(default_factory=lambda: _get_bool("TOOL_WEB_READER_ENABLED", True))
+    wikipedia_enabled: bool = field(default_factory=lambda: _get_bool("TOOL_WIKIPEDIA_ENABLED", True))
+    scholar_enabled: bool = field(default_factory=lambda: _get_bool("TOOL_SCHOLAR_ENABLED", True))
+    wikipedia_api_base: str = field(
+        default_factory=lambda: os.environ.get("WIKIPEDIA_API_BASE", "https://en.wikipedia.org/w/api.php")
+    )
+    scholar_api_base: str = field(
+        default_factory=lambda: os.environ.get(
+            "SCHOLAR_API_BASE", "https://api.semanticscholar.org/graph/v1/paper/search"
+        )
+    )
+    scholar_api_key: str = field(default_factory=lambda: os.environ.get("SCHOLAR_API_KEY", ""))
     # S3-L1: Per-user quota configuration (enforced via Redis limiter)
     user_quota_calls: int = field(default_factory=lambda: _get_int("TOOL_USER_QUOTA_CALLS", 30))
     user_quota_window_s: int = field(default_factory=lambda: _get_int("TOOL_USER_QUOTA_WINDOW_S", 60))
-    # S3-L1: Overall research time budget (S3-A2)
-    research_time_budget_s: float = field(default_factory=lambda: _get_float("RESEARCH_TIME_BUDGET_S", 30.0))
+    # S3-L1 & S3-A2: Overall research time budget and subgraph settings
+    research_time_budget_s: float = field(default_factory=lambda: _get_float("RESEARCH_TIME_BUDGET_S", 10.0))
+    research_engine: str = field(default_factory=lambda: _get_research_engine())
+    research_subgraph_timeout_s: float = field(default_factory=lambda: _get_float("RESEARCH_SUBGRAPH_TIMEOUT_S", 10.0))
+    research_max_rounds: int = field(default_factory=lambda: _get_int("RESEARCH_MAX_ROUNDS", 2))
+    research_cache_ttl_s: int = field(default_factory=lambda: _get_int("RESEARCH_CACHE_TTL_S", 3600))
 
 
 @dataclass(frozen=True)

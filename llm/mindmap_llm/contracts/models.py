@@ -142,6 +142,7 @@ class GenerationRequest(BaseModel):
     detail_level: DetailLevel | None = None  # None => worker infers it
     purpose: str | None = None
     seed_has_files: bool = False
+    user_id: UUID | str | None = None
 
     # Internal callback auth — see callback/client.py. Not a user secret;
     # scoped to this one job by the backend when it enqueues.

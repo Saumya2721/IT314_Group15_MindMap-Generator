@@ -9,7 +9,8 @@ orchestration" requirement.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 
 from providers.base import ToolSpec
 
@@ -19,6 +20,8 @@ class ToolResult:
     content: str
     source_title: str | None
     source_url: str  # required: embeddings.chk_embeddings_source_url needs this for non-seed sources
+    doi: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class ToolError(Exception):

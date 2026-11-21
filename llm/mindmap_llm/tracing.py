@@ -79,21 +79,26 @@ def trace_span(
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """
     Decorator for instrumenting functions as LangSmith spans.
-    Falls back to a transparent no-op decorator if langsmith is not installed.
+    Falls back to a transparent no-op decorator if tracing is disabled or langsmith is not installed.
     """
-    try:
-        from langsmith import traceable
 
-        return cast(
-            Callable[[Callable[..., Any]], Callable[..., Any]],
-            traceable(run_type, name=name, **traceable_kwargs),
-        )
-    except Exception:  # noqa: BLE001
-
-        def _noop(fn: Callable[..., Any]) -> Callable[..., Any]:
+    def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
+        # Fast path: when tracing is disabled (default in dev & test), act as zero-overhead identity
+        tracing_enabled = os.environ.get("LANGSMITH_TRACING", "").lower() in ("true", "1") or os.environ.get(
+            "LANGCHAIN_TRACING_V2", ""
+        ).lower() in ("true", "1")
+        if not tracing_enabled:
             return fn
 
-        return _noop
+        try:
+            from langsmith import traceable
+
+            wrapped = traceable(run_type=run_type, name=name, **traceable_kwargs)(fn)
+            return cast(Callable[..., Any], wrapped)
+        except Exception:  # noqa: BLE001
+            return fn
+
+    return decorator
 
 
 def annotate_current_span(
