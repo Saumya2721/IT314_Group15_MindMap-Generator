@@ -281,3 +281,85 @@ async def delete_map_storage_files(
             raise RuntimeError(f"Storage deletion failed for keys {keys_list}: {exc}") from exc
 
     return []
+
+
+async def delete_user_storage_files(
+    user_id: UUID,
+    pool: Any = None,
+) -> list[str]:
+    """Remove all Supabase Storage files associated with a user across all their maps.
+
+    Cleans up files recorded in the database (public.seed_assets) and any
+    files stored under the storage prefix `<user_id>/`.
+    """
+    keys_to_remove: set[str] = set()
+
+    # 1. Fetch explicitly recorded storage paths from DB if pool is available
+    if pool is not None:
+        try:
+            rows = await pool.fetch(
+                """
+                SELECT sa.storage_key
+                FROM public.seed_assets sa
+                JOIN public.generation_jobs gj ON sa.generation_job_id = gj.id
+                JOIN public.mind_maps m ON gj.map_id = m.id
+                WHERE m.user_id = $1 AND sa.storage_key IS NOT NULL
+                """,
+                user_id,
+            )
+            for r in rows:
+                key = r.get("storage_key") or r.get("storage_path")
+                if key:
+                    keys_to_remove.add(key)
+        except Exception as exc:
+            logger.warning("Could not query seed_assets for user %s: %s", user_id, exc)
+
+    # 2. Discover any objects under the folder prefix <user_id>/
+    try:
+        prefix = str(user_id)
+        top_items = await asyncio.to_thread(admin.storage.from_(BUCKET).list, prefix)
+        if isinstance(top_items, list):
+            for item in top_items:
+                name = item.get("name") if isinstance(item, dict) else getattr(item, "name", None)
+                if not name:
+                    continue
+                sub_path = f"{prefix}/{name}"
+                try:
+                    sub_items = await asyncio.to_thread(admin.storage.from_(BUCKET).list, sub_path)
+                    if isinstance(sub_items, list) and sub_items:
+                        for sub in sub_items:
+                            sub_name = sub.get("name") if isinstance(sub, dict) else getattr(sub, "name", None)
+                            if not sub_name:
+                                continue
+                            leaf_path = f"{sub_path}/{sub_name}"
+                            try:
+                                leaf_items = await asyncio.to_thread(admin.storage.from_(BUCKET).list, leaf_path)
+                                if isinstance(leaf_items, list) and leaf_items:
+                                    for leaf in leaf_items:
+                                        leaf_name = (
+                                            leaf.get("name") if isinstance(leaf, dict) else getattr(leaf, "name", None)
+                                        )
+                                        if leaf_name:
+                                            keys_to_remove.add(f"{leaf_path}/{leaf_name}")
+                                else:
+                                    keys_to_remove.add(leaf_path)
+                            except Exception:
+                                keys_to_remove.add(leaf_path)
+                    else:
+                        keys_to_remove.add(sub_path)
+                except Exception:
+                    keys_to_remove.add(sub_path)
+    except Exception as exc:
+        logger.warning("Could not list storage prefix %s: %s", user_id, exc)
+
+    if keys_to_remove:
+        keys_list = list(keys_to_remove)
+        try:
+            await asyncio.to_thread(admin.storage.from_(BUCKET).remove, keys_list)
+            logger.info("Successfully deleted %d storage files for user %s", len(keys_list), user_id)
+            return keys_list
+        except Exception as exc:
+            logger.warning("Failed to remove storage keys %s for user %s: %s", keys_list, user_id, exc)
+            raise RuntimeError(f"Storage deletion failed for keys {keys_list}: {exc}") from exc
+
+    return []

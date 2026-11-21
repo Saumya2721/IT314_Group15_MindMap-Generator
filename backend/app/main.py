@@ -171,6 +171,7 @@ app.include_router(snapshots_router)
 app.include_router(chat_router, prefix="/api")
 app.include_router(memory_router, prefix="/api")
 app.include_router(admin_router, prefix="/api")
+app.include_router(admin_router, include_in_schema=False)
 
 
 @app.get("/", include_in_schema=False)
