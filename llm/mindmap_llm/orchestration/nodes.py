@@ -541,8 +541,12 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
             max_output_tokens=deps.settings.llm.max_output_tokens,
         )
         mode: SeedMode = state.get("mode", "document")
+        prompt_mgr = getattr(deps, "prompt_manager", None)
         if not enable_dynamic:
-            system_prompt = GENERATION_SYSTEM_PROMPT
+            if prompt_mgr and hasattr(prompt_mgr, "get_template"):
+                system_prompt = prompt_mgr.get_template("generation_system") or GENERATION_SYSTEM_PROMPT
+            else:
+                system_prompt = GENERATION_SYSTEM_PROMPT
             target_node_range = (10, 25)
             target_max_depth = 3
         else:
@@ -552,7 +556,7 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
                 mode=mode,
                 max_output_tokens=manager.max_output_tokens,
             )
-            system_prompt = build_generation_system_prompt(targets, mode)
+            system_prompt = build_generation_system_prompt(targets, mode, prompt_manager=prompt_mgr)
             target_node_range = (targets.min_nodes, targets.max_nodes)
             target_max_depth = targets.max_depth
 
