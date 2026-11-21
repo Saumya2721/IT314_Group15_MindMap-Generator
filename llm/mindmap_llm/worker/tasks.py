@@ -293,19 +293,6 @@ async def regenerate_node_task(ctx: dict, request_payload: dict) -> dict:
         await _send_terminal(callback, result)
     else:
         await _send_terminal(callback, result)
-        # S3-L3: Fire-and-forget background memory extraction after successful generation.
-        if result.status == "completed" and request.user_id:
-            user_inputs = [s for s in [request.topic, request.ideas] if s]
-            fire_and_forget_memory_extraction(
-                llm=deps.llm,
-                callback_base_url=request.callback_base_url,
-                callback_token=request.callback_token,
-                user_id=request.user_id,
-                map_id=request.map_id,
-                user_inputs=user_inputs,
-                interaction_summary=f"Generated mind map on: {gen_query}",
-                existing_memories=retrieved_memories,
-            )
     finally:
         await callback.aclose()
 
