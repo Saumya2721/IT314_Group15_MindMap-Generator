@@ -23,11 +23,18 @@ from uuid import UUID
 
 from chat.context import assemble_chat_context
 from chat.prompts import build_proposal_system_prompt, build_proposal_user_prompt
+from chat.research import (
+    ResearchInvocationGuard,
+    format_research_context,
+    invoke_chat_research,
+    should_conduct_research,
+)
 from chat.token_budget import TokenBudget
 from contracts.models import ActionProposal, ChatIntent, ChatTurnRequest, ChatTurnResponse
 from orchestration.deps import GenerationDeps
 from orchestration.prompts import JSONExtractionError, extract_json_object
 from providers.base import Message
+from research.models import ResearchSource
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +46,7 @@ async def build_action_proposal(
     deps: GenerationDeps,
     request: ChatTurnRequest,
     intent: ChatIntent,
+    guard: ResearchInvocationGuard | None = None,
 ) -> ChatTurnResponse:
     """Ask the LLM to describe the requested map change as structured JSON.
 
@@ -46,6 +54,26 @@ async def build_action_proposal(
     mutation).  When the request is ambiguous or references unknown nodes,
     sets needs_clarification=True.
     """
+    inv_guard = guard or ResearchInvocationGuard(max_invocations=1)
+
+    # Check if external research is needed to ground the proposed changes
+    research_sources: list[ResearchSource] = []
+    research_refs: list[str] = []
+    needs_research = await should_conduct_research(deps.decision_model, request.message, request.map_snapshot)
+    if needs_research and inv_guard.can_invoke:
+        user_id = (request.memory_context or {}).get("user_id") if request.memory_context else None
+        res_sources, res_refs, _warnings = await invoke_chat_research(
+            deps=deps,
+            query=request.message,
+            map_id=request.map_id,
+            guard=inv_guard,
+            user_id=user_id,
+        )
+        research_sources.extend(res_sources)
+        research_refs.extend(res_refs)
+
+    research_context = format_research_context(research_sources) if research_sources else None
+
     system = build_proposal_system_prompt(request.map_snapshot)
     # S3-L3: Inject user memories from memory_context into the proposal system prompt.
     # Lazy import to avoid circular dependency: chat → memory → chat
@@ -73,6 +101,7 @@ async def build_action_proposal(
         request.message,
         assembled.recent_messages,
         summary=assembled.summary,
+        research_context=research_context,
     )
 
     # LLM call — single turn, no retry (parse errors become clarifications)
@@ -136,22 +165,45 @@ async def build_action_proposal(
             clarification_question=q,
         )
 
-    # Determine effective action type — use the LLM's suggestion if valid,
-    # otherwise fall back to the classifier's intent.
+    # Validate update_nodes if present in parameters
+    raw_params = parsed.get("parameters") or {}
+    if isinstance(raw_params, dict):
+        for un in raw_params.get("update_nodes", []):
+            if isinstance(un, dict) and "id" in un:
+                un_id = str(un["id"]).strip()
+                if un_id not in valid_node_ids:
+                    return ChatTurnResponse(
+                        intent=intent,
+                        needs_clarification=True,
+                        clarification_question=f"Cannot update node {un_id} because it does not exist on the map.",
+                    )
+
+        # Ground create_nodes or update_nodes with research sources if not explicitly provided
+        if research_refs:
+            for cn in raw_params.get("create_nodes", []):
+                if isinstance(cn, dict) and not cn.get("sources"):
+                    cn["sources"] = list(research_refs[:3])
+            for un in raw_params.get("update_nodes", []):
+                if isinstance(un, dict) and not un.get("sources"):
+                    un["sources"] = list(research_refs[:3])
+
+    # Determine effective action type — preserve add_node / update_node / edit_proposal
     raw_action = str(parsed.get("action_type", "")).strip()
+    action_type: ChatIntent | str
     try:
         action_type = ChatIntent(raw_action)
     except ValueError:
-        action_type = intent
+        action_type = raw_action if raw_action in ("add_node", "update_node") else intent
 
     proposal = ActionProposal(
         action_type=action_type,
         target_node_ids=resolved_ids,
-        parameters=parsed.get("parameters") or {},
+        parameters=raw_params,
         explanation=str(parsed.get("explanation") or ""),
     )
 
     return ChatTurnResponse(
         intent=intent,
         action_proposal=proposal,
+        source_refs=research_refs,
     )

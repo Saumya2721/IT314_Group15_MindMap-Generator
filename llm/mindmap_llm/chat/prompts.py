@@ -87,12 +87,13 @@ def build_chat_qa_system_prompt(map_snapshot: MapSnapshot) -> str:
         "## Current Mind Map\n\n"
         f"{_map_summary(map_snapshot)}\n\n"
         "## Instructions\n\n"
-        "- Only state facts that appear in the map or reference material below.\n"
+        "- Only state facts that appear in the map or reference/research material below.\n"
         "- Do NOT invent nodes, relationships, or facts that are not present.\n"
         "- When you refer to a node, ALWAYS write its human-readable title/label in bold (e.g. **Policy Gradient**) and append its tag [node:<uuid>] immediately after so the interface can link directly to it.\n"
         "- Never refer to a node using just a raw hexadecimal UUID in conversational prose without its title.\n"
-        "- When you cite a reference passage, include its number, e.g. [1].\n"
-        "- Keep answers concise and grounded.\n"
+        "- When you cite a reference passage or research material, include its number, e.g. [1], [2].\n"
+        "- Do not fabricate references or citations. If research returned no sources, state the limitation honestly.\n"
+        "- Keep answers concise, factual, and well-grounded.\n"
     )
 
 
@@ -101,11 +102,14 @@ def build_chat_qa_user_prompt(
     history: list[ChatMessage],
     chunks: list[RetrievedChunkRecord],
     summary: str | None = None,
+    research_context: str | None = None,
 ) -> str:
     chunks_block = _format_chunks(chunks)
     parts = []
     parts.extend(format_conversation_context(history, summary))
     parts.append(f"## Reference Material\n\n{chunks_block}")
+    if research_context and research_context.strip():
+        parts.append(f"## External Research Material\n\n{research_context.strip()}")
     parts.append(f"## User Question\n\n{message}")
     return "\n\n".join(parts)
 
@@ -156,8 +160,8 @@ def build_proposal_system_prompt(map_snapshot: MapSnapshot) -> str:
         '  "action_type": "<edit_proposal|regen_whole|regen_node>",\n'
         '  "target_node_ids": ["<uuid>", ...],\n'
         '  "parameters": {\n'
-        '    "update_nodes": [{"id": "<uuid>", "label": "New label", "description": "optional"}],\n'
-        '    "create_nodes": [{"id": "<new-uuid>", "label": "New node", "description": "optional"}],\n'
+        '    "update_nodes": [{"id": "<uuid>", "label": "New label", "description": "optional", "sources": ["<url>"]}],\n'
+        '    "create_nodes": [{"id": "<new-uuid>", "label": "New node", "description": "optional", "sources": ["<url>"]}],\n'
         '    "delete_nodes": ["<uuid-to-delete>"],\n'
         '    "update_edges": [{"id": "<edge-uuid>", "label": "updated relation"}],\n'
         '    "create_edges": [{"source_node_id": "<parent-uuid>", "target_node_id": "<child-uuid>", "label": "relation"}],\n'
@@ -185,10 +189,13 @@ def build_proposal_user_prompt(
     message: str,
     history: list[ChatMessage],
     summary: str | None = None,
+    research_context: str | None = None,
 ) -> str:
     sections = format_conversation_context(history, summary)
     parts = []
     if sections:
         parts.extend(sections)
+    if research_context and research_context.strip():
+        parts.append(f"## External Research Findings (Grounding for Node Changes)\n\n{research_context.strip()}")
     parts.append(f"## User request\n\n{message}")
     return "\n\n".join(parts)
