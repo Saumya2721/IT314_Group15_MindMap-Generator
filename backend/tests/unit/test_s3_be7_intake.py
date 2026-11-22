@@ -14,9 +14,18 @@ import io
 from unittest.mock import AsyncMock
 
 import pytest
-from contracts.models import ChunkSource, GenerationRequest, JobType, SeedAssetType
+from contracts.models import (
+    ALLOWED_PURPOSES,
+    DEFAULT_PURPOSE,
+    ChunkSource,
+    GenerationRequest,
+    JobType,
+    MapPurpose,
+    SeedAssetType,
+)
 from fastapi import UploadFile
-from uploads.service import sniff_mime, validate_seed_url
+from maps.routes import QuickGenerateRequest
+from uploads.service import sniff_mime, validate_purpose, validate_seed_url
 
 # ---------------------------------------------------------------------------
 # Enum extensions
@@ -270,3 +279,98 @@ class TestValidateSeedUrl:
         assert len(url) == MAX_SEED_URL_LENGTH
         ok, _err = validate_seed_url(url)
         assert ok is True
+
+
+# ---------------------------------------------------------------------------
+# S3-FE5 / S3-BE7: Map Purpose Intake
+# ---------------------------------------------------------------------------
+
+
+class TestMapPurposeContract:
+    def test_enum_values(self) -> None:
+        assert MapPurpose.GENERAL == "general"
+        assert MapPurpose.STUDY == "study"
+        assert MapPurpose.RESEARCH == "research"
+
+    def test_allowed_purposes_set(self) -> None:
+        assert frozenset({"general", "study", "research"}) == ALLOWED_PURPOSES
+
+    def test_default_purpose_constant(self) -> None:
+        assert DEFAULT_PURPOSE == "general"
+
+    def test_generation_request_default_purpose(self) -> None:
+        from uuid import uuid4
+
+        req = GenerationRequest(
+            job_id=uuid4(),
+            map_id=uuid4(),
+            job_type=JobType.GENERATE,
+            callback_base_url="http://internal:8000",
+            callback_token="tok",
+        )
+        assert req.purpose == "general"
+
+    def test_generation_request_explicit_purpose(self) -> None:
+        from uuid import uuid4
+
+        req = GenerationRequest(
+            job_id=uuid4(),
+            map_id=uuid4(),
+            job_type=JobType.GENERATE,
+            purpose="study",
+            callback_base_url="http://internal:8000",
+            callback_token="tok",
+        )
+        assert req.purpose == "study"
+
+
+class TestPurposeValidation:
+    def test_none_defaults_to_general(self) -> None:
+        ok, norm, err = validate_purpose(None)
+        assert ok is True
+        assert norm == "general"
+        assert err is None
+
+    def test_empty_and_whitespace_defaults_to_general(self) -> None:
+        for val in ("", "   ", "\t\n"):
+            ok, norm, err = validate_purpose(val)
+            assert ok is True
+            assert norm == "general"
+            assert err is None
+
+    @pytest.mark.parametrize("valid_p", ["general", "study", "research"])
+    def test_valid_purposes_accepted(self, valid_p: str) -> None:
+        ok, norm, err = validate_purpose(valid_p)
+        assert ok is True
+        assert norm == valid_p
+        assert err is None
+
+    def test_trimming_and_case_insensitivity(self) -> None:
+        ok, norm, err = validate_purpose("  RESEARCH  ")
+        assert ok is True
+        assert norm == "research"
+        assert err is None
+
+        ok, norm, err = validate_purpose("StUdY")
+        assert ok is True
+        assert norm == "study"
+        assert err is None
+
+    @pytest.mark.parametrize("invalid_p", ["unknown", "academic", "personal", "123", "hack"])
+    def test_invalid_purposes_rejected(self, invalid_p: str) -> None:
+        ok, norm, err = validate_purpose(invalid_p)
+        assert ok is False
+        assert norm == invalid_p
+        assert err is not None
+        assert "Invalid purpose" in err
+        assert "general, research, study" in err
+
+
+class TestQuickGenerateRequestPurpose:
+    def test_default_purpose_is_general(self) -> None:
+        req = QuickGenerateRequest(topic="Artificial Intelligence")
+        assert req.purpose == "general"
+
+    def test_explicit_purpose_set(self) -> None:
+        req = QuickGenerateRequest(topic="Quantum Computing", purpose="research")
+        assert req.purpose == "research"
