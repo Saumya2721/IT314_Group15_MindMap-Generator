@@ -141,7 +141,15 @@ export const mindMapService = {
    */
   async generateMap(
     mapId,
-    { topic, ideas, detail_level = 'overview', purpose = 'general', files = [], seed_url = null, seedUrl = null },
+    {
+      topic,
+      ideas,
+      detail_level = 'overview',
+      purpose = 'general',
+      files = [],
+      seed_url = null,
+      seedUrl = null,
+    },
   ) {
     const formData = new FormData()
     if (topic) formData.append('topic', topic.trim())

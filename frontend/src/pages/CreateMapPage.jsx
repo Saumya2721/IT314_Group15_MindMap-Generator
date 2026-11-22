@@ -203,7 +203,9 @@ export default function CreateMapPage() {
 
     // Client-side validation: Topic, ideas, file, or seed URL required
     if (!trimmedTopic && !trimmedThoughts && validFiles.length === 0 && !trimmedSeedUrl) {
-      setError('Please provide a topic, some thoughts, attach a document, or paste a URL for synthesis.')
+      setError(
+        'Please provide a topic, some thoughts, attach a document, or paste a URL for synthesis.',
+      )
       return
     }
 

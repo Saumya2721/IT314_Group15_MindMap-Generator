@@ -21,8 +21,8 @@ export const SUPPORTED_EXTENSIONS = [
 export const OFFICE_EXTENSIONS = ['.docx', '.pptx']
 
 export const MAX_STANDARD_FILE_BYTES = 25 * 1024 * 1024 // 25 MB
-export const MAX_OFFICE_FILE_BYTES = 20 * 1024 * 1024   // 20 MB
-export const MAX_SEED_URL_LENGTH = 2000                 // 2000 chars
+export const MAX_OFFICE_FILE_BYTES = 20 * 1024 * 1024 // 20 MB
+export const MAX_SEED_URL_LENGTH = 2000 // 2000 chars
 
 /**
  * Format raw bytes into human-readable size string.
@@ -129,15 +129,18 @@ function isPrivateOrLocalHost(hostname) {
 
   // Check IPv4 ranges
   const parts = rawHost.split('.')
-  if (parts.length === 4 && parts.every((p) => /^\d+$/.test(p) && Number(p) >= 0 && Number(p) <= 255)) {
+  if (
+    parts.length === 4 &&
+    parts.every((p) => /^\d+$/.test(p) && Number(p) >= 0 && Number(p) <= 255)
+  ) {
     const [b1, b2] = parts.map(Number)
     if (
-      b1 === 0 ||                        // 0.0.0.0/8
-      b1 === 10 ||                       // 10.0.0.0/8
-      b1 === 127 ||                      // 127.0.0.0/8 (loopback)
-      (b1 === 169 && b2 === 254) ||      // 169.254.0.0/16 (link-local & cloud metadata)
+      b1 === 0 || // 0.0.0.0/8
+      b1 === 10 || // 10.0.0.0/8
+      b1 === 127 || // 127.0.0.0/8 (loopback)
+      (b1 === 169 && b2 === 254) || // 169.254.0.0/16 (link-local & cloud metadata)
       (b1 === 172 && b2 >= 16 && b2 <= 31) || // 172.16.0.0/12 (private B)
-      (b1 === 192 && b2 === 168)        // 192.168.0.0/16 (private C)
+      (b1 === 192 && b2 === 168) // 192.168.0.0/16 (private C)
     ) {
       return true
     }

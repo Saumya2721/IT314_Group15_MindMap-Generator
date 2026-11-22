@@ -76,7 +76,7 @@ function renderCreateMapPage(initialDraft = null) {
   return render(
     <MemoryRouter>
       <CreateMapPage />
-    </MemoryRouter>
+    </MemoryRouter>,
   )
 }
 
@@ -262,7 +262,9 @@ describe('S3-FE4: Upload UI for New Types (DOCX, PPTX, Seed URL)', () => {
       const urlWrapper = document.querySelector('.url-input-container')
       expect(dropzone).toBeDefined()
       expect(urlWrapper).toBeDefined()
-      expect(dropzone.compareDocumentPosition(urlWrapper) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+      expect(
+        dropzone.compareDocumentPosition(urlWrapper) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy()
     })
   })
 
@@ -531,7 +533,7 @@ describe('S3-FE4: Upload UI for New Types (DOCX, PPTX, Seed URL)', () => {
       expect(mockSetDraftMap).toHaveBeenCalledWith(
         expect.objectContaining({
           seed_url: 'https://en.wikipedia.org/wiki/Neural_network',
-        })
+        }),
       )
     })
 
@@ -570,7 +572,7 @@ describe('S3-FE4: Upload UI for New Types (DOCX, PPTX, Seed URL)', () => {
   describe('Generation Error Flow (Unreachable URL / Worker Rejection)', () => {
     it('displays clear error and "Back to Create" button when backend rejects URL seed at dispatch', async () => {
       vi.spyOn(mindMapService, 'generateMap').mockRejectedValueOnce(
-        new Error('URL unreachable: Could not establish connection to host')
+        new Error('URL unreachable: Could not establish connection to host'),
       )
       const deleteSpy = vi.spyOn(mindMapService, 'deleteMap').mockResolvedValue({})
 
@@ -583,12 +585,12 @@ describe('S3-FE4: Upload UI for New Types (DOCX, PPTX, Seed URL)', () => {
               seed_url: 'https://nonexistent-domain-12345.org',
             }}
           />
-        </MemoryRouter>
+        </MemoryRouter>,
       )
 
       await waitFor(() => {
         expect(
-          screen.getByText(/URL unreachable: Could not establish connection to host/i)
+          screen.getByText(/URL unreachable: Could not establish connection to host/i),
         ).toBeDefined()
       })
 
@@ -617,12 +619,14 @@ describe('S3-FE4: Upload UI for New Types (DOCX, PPTX, Seed URL)', () => {
             jobId="job-rejected-1"
             initialParams={null}
           />
-        </MemoryRouter>
+        </MemoryRouter>,
       )
 
       await waitFor(() => {
         expect(
-          screen.getByText(/Worker rejected seed URL: Target server timed out or returned HTTP 504/i)
+          screen.getByText(
+            /Worker rejected seed URL: Target server timed out or returned HTTP 504/i,
+          ),
         ).toBeDefined()
       })
 
