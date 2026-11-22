@@ -15,6 +15,7 @@ from typing import Any
 from urllib.parse import urlparse
 from uuid import UUID
 
+from contracts.models import ALLOWED_PURPOSES, DEFAULT_PURPOSE
 from core.supabase import admin
 from fastapi import HTTPException, UploadFile
 
@@ -157,6 +158,22 @@ def validate_seed_url(url: str) -> tuple[bool, str | None]:
     except ValueError:
         pass  # hostname is a domain name, not a bare IP — allow it
     return True, None
+
+
+def validate_purpose(purpose: str | None) -> tuple[bool, str, str | None]:
+    """Validate and normalize the generation purpose (S3-FE5 / S3-BE7).
+
+    Returns (is_valid, normalized_purpose, error_message).
+    """
+    if not purpose or not purpose.strip():
+        return True, DEFAULT_PURPOSE, None
+
+    cleaned = purpose.strip().lower()
+    if cleaned not in ALLOWED_PURPOSES:
+        allowed_list = ", ".join(sorted(ALLOWED_PURPOSES))
+        return False, cleaned, f"Invalid purpose '{purpose}'. Allowed values: {allowed_list}."
+
+    return True, cleaned, None
 
 
 async def store_files(

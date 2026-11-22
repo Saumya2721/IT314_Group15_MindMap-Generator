@@ -16,7 +16,7 @@ from enum import StrEnum
 from typing import Any
 from uuid import UUID, uuid4
 
-from contracts.models import FileRef, GenerationRequest, JobType
+from contracts.models import DEFAULT_PURPOSE, FileRef, GenerationRequest, JobType
 from core.config import settings
 from core.supabase import admin, current_user_id
 from fastapi import (
@@ -62,7 +62,13 @@ from services.export_service import (
 )
 from services.queue import enqueue_generation_job, get_redis_pool
 from services.runner import limiter
-from uploads.service import delete_map_storage_files, read_uploads, store_files, validate_seed_url
+from uploads.service import (
+    delete_map_storage_files,
+    read_uploads,
+    store_files,
+    validate_purpose,
+    validate_seed_url,
+)
 
 from db.connection import transaction
 from db.repository import (
@@ -150,6 +156,10 @@ class QuickGenerateRequest(BaseModel):
     topic: str | None = None
     ideas: str | None = None
     detail_level: DetailLevel | None = DetailLevel.overview
+    purpose: str | None = Field(
+        default=DEFAULT_PURPOSE,
+        description="Map generation purpose: general, study, or research (S3-FE5)",
+    )
     map_id: UUID | None = None
 
 
@@ -437,6 +447,10 @@ async def quick_generate(
     if not (body.topic or "").strip() and not (body.ideas or "").strip():
         raise HTTPException(422, "Provide a topic or some ideas.")
 
+    p_ok, norm_purpose, p_err = validate_purpose(body.purpose)
+    if not p_ok:
+        raise HTTPException(422, p_err)
+
     await limiter.check(uid, api="generation", redis=redis_pool)
 
     map_id = body.map_id
@@ -460,7 +474,11 @@ async def quick_generate(
     callback_token = secrets.token_urlsafe(32)
     token_hash = hashlib.sha256(callback_token.encode("utf-8")).hexdigest()
 
-    summary_msg = f"Quick generate mind map for topic: '{body.topic or 'General'}'"
+    summary_msg = (
+        f"Quick generate mind map for topic: '{body.topic or 'General'}' "
+        f"(Detail: {body.detail_level.value if body.detail_level else 'overview'}, "
+        f"Purpose: {norm_purpose})"
+    )
     async with transaction(pool) as conn:
         thread_id = await get_or_create_chat_thread(conn, map_id, uid)
         msg_id = await insert_chat_message(conn, thread_id, "user", summary_msg)
@@ -481,6 +499,7 @@ async def quick_generate(
         ideas=body.ideas,
         files=[],
         detail_level=body.detail_level.value if body.detail_level else "overview",
+        purpose=norm_purpose,
         callback_base_url=settings.BACKEND_INTERNAL_URL,
         callback_token=callback_token,
     )
@@ -549,6 +568,7 @@ async def generate(
     topic: str | None = Form(None),
     ideas: str | None = Form(None),
     detail_level: DetailLevel | None = Form(None),
+    purpose: str | None = Form(DEFAULT_PURPOSE, description="Map purpose: general, study, or research"),
     file: UploadFile | str | None = File(None, description="Upload a single PDF or image"),
     files: list[UploadFile | str] | UploadFile | str | None = File(None, description="Or upload multiple files"),
     seed_url: str | None = Form(None, description="Optional public URL to use as generation seed (S3-BE7)"),
@@ -569,6 +589,11 @@ async def generate(
         url_ok, url_err = validate_seed_url(seed_url)
         if not url_ok:
             raise HTTPException(422, url_err)
+
+    # S3-FE5 / S3-BE7: normalise and validate the optional purpose
+    p_ok, norm_purpose, p_err = validate_purpose(purpose)
+    if not p_ok:
+        raise HTTPException(422, p_err)
 
     def _is_file(obj: Any) -> bool:
         return (
@@ -608,7 +633,11 @@ async def generate(
     token_hash = hashlib.sha256(callback_token.encode("utf-8")).hexdigest()
 
     # Step 1: Create chat thread & user turn, then create the job record in DB upfront
-    summary_msg = f"Generate mind map for topic: '{topic or 'General'}' (Detail: {detail_level.value if detail_level else 'overview'})"
+    summary_msg = (
+        f"Generate mind map for topic: '{topic or 'General'}' "
+        f"(Detail: {detail_level.value if detail_level else 'overview'}, "
+        f"Purpose: {norm_purpose})"
+    )
     async with transaction(pool) as conn:
         thread_id = await get_or_create_chat_thread(conn, map_id, uid)
         msg_id = await insert_chat_message(conn, thread_id, "user", summary_msg)
@@ -653,6 +682,7 @@ async def generate(
             files=file_refs,
             seed_has_files=bool(file_refs),
             detail_level=detail_level.value if detail_level else None,
+            purpose=norm_purpose,
             callback_base_url=settings.BACKEND_INTERNAL_URL,
             callback_token=callback_token,
             seed_url=seed_url,
