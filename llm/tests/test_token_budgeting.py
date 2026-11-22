@@ -109,6 +109,7 @@ async def test_generate_node_logs_budget_and_uses_bounded_context():
     from orchestration.nodes import make_nodes
 
     deps = MagicMock()
+    deps.pipeline_flags = None
     deps.settings.generation.enable_two_pass = False
     deps.settings.generation.enable_dynamic_prompts = False
     deps.settings.llm.provider = "groq"
