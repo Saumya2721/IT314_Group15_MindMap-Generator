@@ -117,6 +117,9 @@ class EmbeddingConfig:
             "EMBEDDING_API_BASE", "https://router.huggingface.co/hf-inference/models"
         )
     )
+    account_id: str = field(
+        default_factory=lambda: os.environ.get("CLOUDFLARE_ACCOUNT_ID", os.environ.get("EMBEDDING_ACCOUNT_ID", ""))
+    )
     dimension: int = field(default_factory=lambda: _get_int("EMBEDDING_DIMENSION", 384))
     batch_size: int = field(default_factory=lambda: _get_int("EMBEDDING_BATCH_SIZE", 32))
 

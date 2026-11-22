@@ -6,6 +6,16 @@ from embeddings.base import EmbeddingProvider
 
 def get_embedding_provider(settings: Settings) -> EmbeddingProvider:
     provider = settings.embedding.provider.lower()
+    if provider == "cloudflare":
+        from embeddings.cloudflare_provider import CloudflareEmbeddingProvider
+
+        return CloudflareEmbeddingProvider(
+            account_id=settings.embedding.account_id,
+            api_token=settings.embedding.api_key,
+            model=settings.embedding.model,
+            expected_dimension=settings.embedding.dimension,
+            batch_size=settings.embedding.batch_size,
+        )
     if provider == "huggingface":
         from embeddings.huggingface_provider import HuggingFaceEmbeddingProvider
 
@@ -27,5 +37,5 @@ def get_embedding_provider(settings: Settings) -> EmbeddingProvider:
 
     # Add new vendors here, e.g. "openai", "cohere", etc.
     raise ValueError(
-        f"Unknown EMBEDDING_PROVIDER={provider!r}. Supported providers: 'fastembed', 'local', 'huggingface'."
+        f"Unknown EMBEDDING_PROVIDER={provider!r}. Supported providers: 'cloudflare', 'fastembed', 'local', 'huggingface'."
     )
