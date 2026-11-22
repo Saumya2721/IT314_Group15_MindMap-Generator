@@ -24,11 +24,14 @@ from services.pipeline_config import effective_config, pipeline_pool, read_confi
 from db.connection import transaction
 from db.models import EdgeRecord, NodeRecord, SeedAssetType
 from db.repository import (
+    check_and_bump_map_version,
     get_chat_messages,
     get_chat_thread_summary,
+    get_node_by_id,
     get_or_create_chat_thread,
     insert_chat_message,
     insert_seed_asset,
+    lock_map_for_mutation,
     persist_generated_graph,
     replace_map_graph,
     replace_node_branch,
@@ -234,6 +237,9 @@ async def report_complete(
 
     # Idempotent lock and check
     async with transaction(pool) as conn:
+        # Acquire map lock first to enforce uniform lock hierarchy and prevent deadlocks
+        current_map_version = await lock_map_for_mutation(conn, map_id)
+
         job_row = await conn.fetchrow(
             "SELECT id, map_id, job_type, target_node_id, status, started_at FROM public.generation_jobs WHERE id = $1 FOR UPDATE",
             job_id,
@@ -325,6 +331,52 @@ async def report_complete(
             target_node_id = job_row["target_node_id"]
             if not target_node_id:
                 raise HTTPException(500, "Node regeneration job missing target_node_id")
+
+            # Concurrency guard: compare current map version with expected_map_version
+            if result.expected_map_version is not None and current_map_version != result.expected_map_version:
+                logger.warning(
+                    "Job %s node regeneration conflict: current map version %s != expected %s; skipping branch replacement.",
+                    job_id,
+                    current_map_version,
+                    result.expected_map_version,
+                )
+                await conn.execute(
+                    """
+                    UPDATE public.generation_jobs
+                       SET status = 'failed',
+                           progress_percent = 100,
+                           started_at = COALESCE(started_at, now()),
+                           completed_at = now(),
+                           error_message = $2
+                     WHERE id = $1
+                    """,
+                    job_id,
+                    f"Node regeneration skipped: map was modified concurrently (version changed from {result.expected_map_version} to {current_map_version}).",
+                )
+                map_owner = await conn.fetchval("SELECT user_id FROM public.mind_maps WHERE id = $1", map_id)
+                if map_owner:
+                    thread_id = await get_or_create_chat_thread(conn, map_id, map_owner)
+                    target_label = "the node"
+                    target_row = await get_node_by_id(conn, map_id, target_node_id)
+                    if target_row and target_row.get("label"):
+                        target_label = f"'{target_row['label']}'"
+                    await insert_chat_message(
+                        conn,
+                        thread_id,
+                        "assistant",
+                        f"Regeneration of {target_label} was cancelled because the mind map was modified while generating. Your edits have been preserved.",
+                        metadata={
+                            "concurrency_conflict": True,
+                            "expected_version": result.expected_map_version,
+                            "current_version": current_map_version,
+                        },
+                    )
+                return {
+                    "status": "conflict_skipped",
+                    "message": "Node regeneration skipped due to concurrent modification. User edits preserved.",
+                    "receipt_id": str(job_id),
+                }
+
             await replace_node_branch(
                 conn,
                 map_id=map_id,
@@ -332,6 +384,7 @@ async def report_complete(
                 source_job_id=job_id,
                 new_nodes=node_records,
                 new_edges=edge_records,
+                expected_map_version=result.expected_map_version,
             )
         elif job_type in ("regenerate_full", "regenerate", JobType.REGENERATE_FULL):
             await replace_map_graph(
@@ -349,6 +402,7 @@ async def report_complete(
                 nodes=node_records,
                 edges=edge_records,
             )
+            await check_and_bump_map_version(conn, map_id)
 
         # Update terminal job status with guaranteed started_at (P1-15) and 100% progress
         await conn.execute(

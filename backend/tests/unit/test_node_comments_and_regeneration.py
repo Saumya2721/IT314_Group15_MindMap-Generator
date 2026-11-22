@@ -422,7 +422,9 @@ def test_get_and_restore_snapshot(auth_client):
 
     # 2. Restore snapshot
     mock_conn.transaction.return_value.__aenter__.return_value = mock_conn
-    mock_conn.fetchval = AsyncMock(side_effect=[safety_snap_id, 4])  # safety snapshot id, then version 4
+    mock_conn.fetchval = AsyncMock(
+        side_effect=[1, safety_snap_id, 4]
+    )  # map lock version, safety snapshot id, then version 4
     mock_conn.fetchrow = AsyncMock(return_value=snapshot_row)
     mock_conn.fetch = AsyncMock(return_value=[])
     mock_conn.execute = AsyncMock()
@@ -437,7 +439,7 @@ def test_get_and_restore_snapshot(auth_client):
     assert res_data["nodes_restored"] == 1
 
     # 3. Restore snapshot via direct alias route
-    mock_conn.fetchval = AsyncMock(side_effect=[safety_snap_id, 5])
+    mock_conn.fetchval = AsyncMock(side_effect=[1, safety_snap_id, 5])
     mock_pool.fetchrow = AsyncMock(return_value={"map_id": map_id, **snapshot_row})
     resp_restore_direct = client.post(f"/api/snapshots/{snap_id}/restore")
     assert resp_restore_direct.status_code == 200

@@ -465,6 +465,10 @@ async def test_late_complete_on_failed_job_returns_409():
                 "status": "failed",
                 "callback_token_hash": token_hash,
             },
+            # Map lock row:
+            {
+                "version": 1,
+            },
             # SELECT FOR UPDATE in transaction:
             {
                 "id": job_id,

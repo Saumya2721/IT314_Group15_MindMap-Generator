@@ -237,6 +237,8 @@ async def _run_regenerate_node(
             seed_assets=[],
             rejected_files=[],
             tool_call_log=[ToolCallLogEntry(**e) for e in final_state.get("tool_call_log", [])],
+            expected_map_version=request.expected_map_version,
+            expected_node_version=request.expected_node_version,
         )
 
     return GenerationResult(
@@ -515,6 +517,8 @@ async def _run(
             rejected_files=rejected_files,
             tool_call_log=[ToolCallLogEntry(**e) for e in final_state.get("tool_call_log", [])],
             quality_warnings=final_state.get("quality_warnings", []),
+            expected_map_version=request.expected_map_version,
+            expected_node_version=request.expected_node_version,
         )
 
     return GenerationResult(

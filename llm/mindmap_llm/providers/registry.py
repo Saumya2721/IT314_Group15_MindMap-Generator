@@ -72,7 +72,7 @@ def get_llm_provider(
             default_max_tokens=int(params.get("max_output_tokens", settings.llm.max_output_tokens)),
         )
 
-    if prov == "mock":
+    if prov in ("mock", "deterministic"):
         from providers.mock_provider import MockProvider
 
         return MockProvider(model=mod)
