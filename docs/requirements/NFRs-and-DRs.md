@@ -71,6 +71,14 @@ The software architecture must be modular to facilitate the addition of future s
 **NFR-19: DSL Extensibility**
 The parser and interpreter for the Domain-Specific Language (DSL) must be designed to be extensible, allowing straightforward addition of new commands, attributes, and node types in future software updates.
 
+### 1.6 Observability, Reliability & Token Budgeting (Sprint 3 Additions)
+
+**NFR-20: Pipeline Observability & Distributed Tracing**
+The system shall instrument all LLM inference operations, tool executions, and LangGraph workflow transitions with named spans in LangSmith (`S3-OBS`), ensuring complete execution visibility without imposing latency overhead in production or requiring external network calls during automated CI test runs.
+
+**NFR-21: Dynamic Context Budgeting & Provider Clamping**
+The prompt assembly pipeline shall actively partition and bound token context across system instructions, long-term memories, RAG chunks, and conversation history (`S3-L7`), adhering to active provider ceilings (Groq, Qwen, Gemini Flash) to achieve a 0% failure rate for HTTP 413 (Payload Too Large) and HTTP 429 (Rate/Token quota exceeded).
+
 ---
 
 ## 2. Domain Requirements (DRs)

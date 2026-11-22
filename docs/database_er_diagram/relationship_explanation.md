@@ -56,7 +56,25 @@ Source of truth: the PostgreSQL catalog of a database built from `supabase/migra
 
 ## Security (Row Level Security) — explained separately, not part of the ER model
 
-- Row Level Security is enabled on all nine tables; policies are not ER entities and are not drawn.
+- Row Level Security is enabled on all tables; policies are not ER entities and are not drawn.
 - Ownership has one source of truth, `mind_maps.user_id`; every child table proves ownership through its map.
 - Through the Supabase Data API a user can read/write their own maps, nodes and edges, read their own chat, jobs, seed assets and embeddings, and read maps marked `is_public` (anonymous visitors too). `callback_token_hash` is never readable by API users.
 - The FastAPI backend connects as the table owner / service role (bypasses RLS) and checks ownership itself (`assert_map_owner`). The LLM worker has no database access.
+
+## Sprint 2 & 3 Schema Extensions
+
+Subsequent sprint iterations extended the database schema to support snapshots, personalization, and platform administration:
+
+1. **`map_snapshots` (Added in Sprint 2):**
+   - Foreign key: `map_snapshots.map_id → mind_maps.id` (1 : 0..N, ON DELETE CASCADE).
+   - Encapsulates `snapshot_data jsonb` (complete node and edge graph array) and `label text` for point-in-time version history browsing and rollbacks.
+2. **`agent_memories` (Added in Sprint 3 — S3-DB2):**
+   - Foreign keys: `agent_memories.user_id → profiles.id` (1 : 0..N, CASCADE) and `agent_memories.map_id → mind_maps.id` (0..1 : 0..N, nullable, CASCADE).
+   - Stores extracted personal preferences, decisions, and facts with `importance float` and `last_accessed_at timestamp`.
+   - Strict RLS guarantees: users see only their own memories; administrators have **zero SELECT permissions**.
+3. **`admin_audit_log` (Added in Sprint 3 — S3-DB1):**
+   - Foreign key: `admin_audit_log.actor_id → profiles.id` (0..1 : 0..N, SET NULL).
+   - Append-only audit trail recording administrative actions (`action text`, `target_user_id uuid`, `metadata jsonb`).
+4. **Role-Based Authentication Extension (`profiles` table — S3-DB1):**
+   - Added `role text NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin'))`.
+   - Added `suspended_at timestamp with time zone` to support immediate user suspension.

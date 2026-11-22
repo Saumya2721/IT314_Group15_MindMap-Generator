@@ -13,6 +13,8 @@ erDiagram
     profiles {
         uuid id PK, FK "NOT NULL"
         varchar(255) name "NULL"
+        varchar(20) role "NOT NULL - user or admin (S3-DB1)"
+        timestamptz suspended_at "NULL"
         timestamptz created_at "NOT NULL"
         timestamptz updated_at "NOT NULL"
     }
@@ -109,6 +111,36 @@ erDiagram
         jsonb edge_data "NULL"
         timestamptz created_at "NOT NULL"
     }
+    map_snapshots {
+        uuid id PK "NOT NULL"
+        uuid map_id FK "NOT NULL"
+        text label "NULL"
+        jsonb snapshot_data "NOT NULL"
+        timestamptz created_at "NOT NULL"
+    }
+    agent_memories {
+        uuid id PK "NOT NULL"
+        uuid user_id FK "NOT NULL"
+        uuid map_id FK "NULL"
+        varchar(50) kind "NOT NULL - preference, decision, fact (S3-DB2)"
+        text content "NOT NULL"
+        float8 importance "NOT NULL"
+        timestamptz last_accessed_at "NULL"
+        timestamptz disabled_at "NULL"
+        timestamptz created_at "NOT NULL"
+    }
+    admin_audit_log {
+        uuid id PK "NOT NULL"
+        uuid actor_id FK "NULL"
+        text action "NOT NULL"
+        uuid target_user_id "NULL"
+        jsonb metadata "NULL"
+        timestamptz created_at "NOT NULL"
+    }
+    mind_maps ||--o{ map_snapshots : "has snapshots [map_id]"
+    profiles ||--o{ agent_memories : "owns memories [user_id]"
+    mind_maps |o--o{ agent_memories : "scopes memories [map_id]"
+    profiles |o--o{ admin_audit_log : "actor [actor_id]"
     chat_threads ||--o{ chat_messages : "contains [thread_id]"
     mind_maps ||--o| chat_threads : "has conversation [map_id]"
     profiles ||--o{ chat_threads : "owns thread [user_id]"

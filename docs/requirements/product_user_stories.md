@@ -457,6 +457,105 @@ correct it.
 
 ------------------------------------------------------------------------
 
+## US-06B --- Conversational Chat Assistant & Action Proposals
+
+**Epic:** Epic 3 --- Mind Map Editing & Refinement  
+*(Added afterwards in Sprint 2)*
+
+### Front of the Card
+
+**User Story**
+
+> As a User, I want to chat interactively with an AI assistant about my
+> mind map and receive actionable proposals (such as adding, editing,
+> deleting, or elaborating nodes), so that I can iteratively refine the
+> structure without manual node creation or whole-map regeneration.
+
+### Acceptance Criteria
+
+#### Scenario 1 --- Conversational Refinement & Proposal Generation
+
+**Given** a mind map is open on the canvas\
+**When** I ask the chat assistant to suggest additional subtopics or elaborate a node\
+**Then** the assistant generates a structured action proposal (`add_node`, `edit_node`, `delete_node`, or `elaborate_node`)\
+**And** the proposal appears in the chat message with clear preview buttons.
+
+#### Scenario 2 --- User Confirmation of Action Proposal
+
+**Given** a pending action proposal in the chat\
+**When** I click **Apply / Confirm**\
+**Then** the proposed modification is applied directly to the canvas graph\
+**And** the proposal badge updates to reflect its confirmed state.
+
+#### Scenario 3 --- User Dismissal of Action Proposal
+
+**Given** a pending action proposal in the chat\
+**When** I click **Dismiss**\
+**Then** the proposal is marked as dismissed\
+**And** the canvas graph remains completely unchanged.
+
+### Back of the Card
+
+**Technical Notes**
+
+-   Added afterwards during Sprint 2 (S2-BE1, S2-BE2, S2-BE3, S2-FE1, S2-FE2, S2-FE3).
+-   Persisted via `chat_threads` (one-to-one with `mind_maps`) and `chat_messages` tables.
+-   Proposals contain structured payloads validating against `EditProposal` models.
+-   The canvas is never mutated until the user explicitly confirms the proposal.
+
+**Validation / Test Strategy**
+
+-   Test creation of chat messages and action proposals.
+-   Test proposal execution against graph endpoints.
+-   Test dismissal state persistence.
+-   Verify invalid proposals (e.g. deleting the root node) are rejected with HTTP 400.
+
+------------------------------------------------------------------------
+
+## US-06C --- Short-Term Conversational Memory & Context Window Management
+
+**Epic:** Epic 3 --- Mind Map Editing & Refinement  
+*(Added afterwards in Sprint 2)*
+
+### Front of the Card
+
+**User Story**
+
+> As a User, I want the chat assistant to remember previous messages in the
+> current map conversation while remaining fast and within token limits, so
+> that I can have a natural, multi-turn refinement experience.
+
+### Acceptance Criteria
+
+#### Scenario 1 --- Multi-Turn Follow-Ups
+
+**Given** an existing conversation thread on a mind map\
+**When** I ask a follow-up question referencing an earlier answer\
+**Then** the assistant uses the conversation history to understand the context.
+
+#### Scenario 2 --- Context Window Protection
+
+**Given** a long conversation or a large uploaded reference document\
+**When** prompt assembly occurs\
+**Then** the system extracts structured abstract excerpts (`format_seed_content`) and maintains a sliding history window\
+**And** avoids exceeding model input token limits (preventing HTTP 413).
+
+### Back of the Card
+
+**Technical Notes**
+
+-   Added afterwards in Sprint 2 (LLM-413, LLM-429).
+-   Implements sliding conversation window and abstract-aware document excerpting.
+-   Enforces provider output clamps (e.g. Qwen OTPM clamp).
+
+**Validation / Test Strategy**
+
+-   Test multi-turn context retention.
+-   Unit-test `format_seed_content` heading and abstract extraction.
+-   Verify total assembled prompt token size remains below model ceilings.
+
+------------------------------------------------------------------------
+
 # Epic 4 --- Export & Persistence
 
 ## US-07 --- Export a Mind Map
@@ -600,11 +699,111 @@ restored.
 
 ------------------------------------------------------------------------
 
+## US-08B --- Map Snapshots, Version History & Safe Restore
+
+**Epic:** Epic 4 --- Export & Persistence  
+*(Added afterwards in Sprint 2)*
+
+### Front of the Card
+
+**User Story**
+
+> As a User, I want point-in-time snapshots of my mind map saved
+> automatically on generation/edits or on demand, so that I can browse
+> version history and safely restore a previous graph state if an edit or
+> regeneration is unsatisfactory.
+
+### Acceptance Criteria
+
+#### Scenario 1 --- Browsing Version History
+
+**Given** a mind map that has undergone edits or generations\
+**When** I open the Version History panel\
+**Then** I see an ordered list of previous snapshots with timestamps, node counts, and edge counts.
+
+#### Scenario 2 --- Safe Restore with Collision Protection
+
+**Given** a snapshot in the history list\
+**When** I choose to restore it\
+**Then** the current canvas graph is replaced with the snapshot data\
+**And** the version token (`If-Match`) is updated to prevent concurrent edit collisions.
+
+### Back of the Card
+
+**Technical Notes**
+
+-   Added afterwards in Sprint 2 (S2-DB3, S2-BE5, S2-FE6).
+-   Persisted in `map_snapshots` table with `snapshot_data jsonb`.
+-   Double-click restore guards and optimistic UI updates.
+
+**Validation / Test Strategy**
+
+-   Test snapshot creation on generation and canvas edits.
+-   Test restoring snapshot and verifying node/edge counts match.
+-   Verify restore updates the map's updated_at and version counter.
+
+------------------------------------------------------------------------
+
+# Epic 5 --- Collaboration & Shared Workspaces
+
+## US-09 --- Shared Mind Maps & Multi-User Collaboration
+
+**Epic:** Epic 5 --- Collaboration & Shared Workspaces  
+*(Decision: Not Implemented / Descope)*
+
+> [!WARNING]
+> **Implementation Status: Descope / Not Implemented**  
+> **Decision & Rationale:** Due to high architectural complexity, real-time synchronization overhead, state reconciliation challenges, and strict sprint time constraints, it was decided **not to implement** multi-user collaboration in Sprint 3. The platform strictly maintains single-user per map ownership with database Row Level Security (RLS) isolation.
+
+### Front of the Card
+
+**User Story**
+
+> As a User, I want to share my mind map with specific collaborators via
+> email with view or edit permissions, so that we can work on shared ideas
+> together.
+
+### Back of the Card
+
+**Technical Notes**
+
+-   Originally proposed under Module F (FR-20, FR-23).
+-   Deferred indefinitely to post-sprint backlog due to complexity and sprint constraints.
+
+------------------------------------------------------------------------
+
+## US-10 --- Real-Time Concurrent Collaboration & Conflict Synchronization
+
+**Epic:** Epic 5 --- Collaboration & Shared Workspaces  
+*(Decision: Not Implemented / Descope)*
+
+> [!WARNING]
+> **Implementation Status: Descope / Not Implemented**  
+> **Decision & Rationale:** Because of the complex engineering requirements of Operational Transformation (OT) or Conflict-Free Replicated Data Types (CRDTs), concurrent edit locking, and presence tracking, it was decided **not to implement** real-time multi-user concurrent editing in Sprint 3.
+
+### Front of the Card
+
+**User Story**
+
+> As a User, I want to see collaborators' edits and presence on the canvas
+> in real time without conflicting overwrites, so that we can brainstorm
+> synchronously.
+
+### Back of the Card
+
+**Technical Notes**
+
+-   Originally proposed under Module F (FR-21, FR-22, FR-24, FR-25).
+-   Deferred to backlog. The application uses single-owner pessimistic locking/version tokens (`If-Match`) instead.
+
+------------------------------------------------------------------------
+
 # Epic 6 --- Admin & Platform Operations
 
 ## US-11 --- Admin Oversight
 
-**Epic:** Epic 6 --- Admin & Platform Operations
+**Epic:** Epic 6 --- Admin & Platform Operations  
+*(Implemented in Sprint 3: S3-DB1, S3-BE1, S3-BE2, S3-BE3, S3-FE1)*
 
 ### Front of the Card
 
@@ -619,46 +818,37 @@ restored.
 #### Scenario --- Aggregate-Only Visibility
 
 **Given** the admin panel\
-**When** I view usage logs\
-**Then** I see aggregate activity, such as generation counts\
-**And** I cannot view the raw content of Users' maps or uploads.
+**When** I view usage logs and analytics\
+**Then** I see aggregate activity, such as generation counts, active users, and failure rates\
+**And** I cannot view or select the raw content of Users' maps, chat messages, or uploads.
 
 #### Scenario --- User Account Management
 
-**Given** an Admin has the required permissions\
-**When** they manage a User account\
-**Then** only explicitly supported account-management actions are
-available.
+**Given** an Admin has the required `admin` role in `profiles.role`\
+**When** they manage a User account (suspend, unsuspend, delete)\
+**Then** the action succeeds and is recorded in `admin_audit_log` with actor, action, and target ID.
 
 #### Scenario --- Admin Authorization
 
-**Given** a normal User attempts to access the admin panel\
+**Given** a normal User attempts to access the admin panel or admin endpoints\
 **When** they make the request\
-**Then** access is denied.
+**Then** access is denied with HTTP 403 Forbidden.
 
 ### Back of the Card
 
 **Technical Notes**
 
--   Implements FR-26 and FR-27.
--   Admin privileges must be separate from normal User privileges.
--   Aggregate metrics should be designed so that administrators do not
-    need raw map content to understand platform usage.
--   Administrative actions should be logged for auditability.
--   Sensitive User content should not be included in normal operational
-    dashboards.
--   If support workflows require exceptional access to User content,
-    that process should be explicitly defined and audited rather than
-    silently exposing it.
+-   Implements FR-26 and FR-27; delivered via Sprint 3 issues S3-DB1, S3-BE1, S3-BE2, S3-BE3, S3-FE1.
+-   Role defined in `profiles.role` (`user` vs `admin`, default `user`).
+-   Admin audit trail stored in `admin_audit_log`.
+-   **Zero SELECT privacy boundary:** PostgreSQL RLS and aggregate views enforce that administrators have zero SELECT capability on private user content (`mind_maps`, `nodes`, `edges`, `chat_messages`, `agent_memories`).
 
 **Validation / Test Strategy**
 
--   Confirm admin log views exclude raw User content.
--   Test role-based access control.
--   Verify normal Users cannot access administrative endpoints.
--   Test administrative action logging.
--   Review API responses to ensure private map data is not accidentally
-    included.
+-   Automated pgTAP tests prove the admin SELECT restriction holds on all content tables.
+-   FastAPI dependency `require_admin_role()` unit tests.
+-   Admin user management and analytics endpoint tests.
+-   Audit log insertion tests for every administrative write.
 
 **Dependencies / Risks**
 
@@ -815,6 +1005,308 @@ live service.
 
 ------------------------------------------------------------------------
 
+# Epic 8 --- Conversational Agent & Memory
+
+## US-14 --- Long-Term Agent Memory & Personalization
+
+**Epic:** Epic 8 --- Conversational Agent & Memory  
+*(Added afterwards in Sprint 3: S3-DB2, S3-BE4, S3-L3, S3-FE2)*
+
+### Front of the Card
+
+**User Story**
+
+> As a User, I want the AI assistant to remember my design preferences, past
+> map decisions, and project facts across sessions and across different maps,
+> so that generated mind maps and chat recommendations automatically tailor to
+> my personal workflow.
+
+### Acceptance Criteria
+
+#### Scenario 1 --- Asynchronous Memory Extraction
+
+**Given** a mind map generation or chat turn finishes\
+**When** the worker processes the turn\
+**Then** an extraction node identifies durable preferences, decisions, or facts\
+**And** asynchronously proposes them to `agent_memories` via the backend without adding user-facing latency.
+
+#### Scenario 2 --- Token-Budgeted Memory Retrieval
+
+**Given** a user with stored memories generates a map or asks a chat question\
+**When** prompt assembly occurs\
+**Then** the top-k most relevant memories are retrieved and injected\
+**And** memory tokens are strictly capped at $\le 10\%$ of the model context window.
+
+#### Scenario 3 --- User Memory Management & Privacy
+
+**Given** the user navigates to `/memory`\
+**When** they view their memories\
+**Then** they can view, disable, enable, or delete individual memories\
+**And** export their memories as a GDPR JSON bundle\
+**And** no other user or administrator can read their memory records.
+
+### Back of the Card
+
+**Technical Notes**
+
+-   Added afterwards in Sprint 3 (S3-DB2, S3-BE4, S3-L3, S3-FE2).
+-   Persisted in PostgreSQL table `agent_memories` with `user_id`, `map_id` (nullable), `kind`, `importance`, and `last_accessed_at`.
+-   Worker remains database-free; requests memories through backend internal endpoints.
+-   Protected by PostgreSQL Row Level Security (RLS); administrators have zero SELECT access.
+
+**Validation / Test Strategy**
+
+-   pgTAP tests proving RLS isolation: user sees only own memories, admin sees none.
+-   Backend memory CRUD and GDPR export endpoint tests.
+-   Worker memory proposal deduplication and importance decay unit tests.
+
+------------------------------------------------------------------------
+
+# Epic 9 --- Observability & Operational Quality
+
+## US-15 --- LangSmith Observability & Pipeline Tracing
+
+**Epic:** Epic 9 --- Observability & Operational Quality  
+*(Added afterwards in Sprint 3: S3-OBS)*
+
+### Front of the Card
+
+**User Story**
+
+> As a Developer and Platform Engineer, I want all LLM calls, tool executions,
+> and LangGraph state transitions captured as named spans in LangSmith, so that
+> I can debug latency bottlenecks, trace token consumption, and evaluate map
+> quality against benchmark datasets.
+
+### Acceptance Criteria
+
+#### Scenario 1 --- Named Span Tracing
+
+**Given** `LANGCHAIN_TRACING_V2=true` is set in the environment\
+**When** a generation, regeneration, chat turn, or research loop runs\
+**Then** every LangGraph node transition and tool invocation is recorded as a named span in LangSmith\
+**And** traces are routed to `mindweave-dev` or `mindweave-prod` based on environment.
+
+#### Scenario 2 --- Benchmark Dataset Evaluation
+
+**Given** the evaluation seed dataset\
+**When** quality-gate runs are triggered\
+**Then** node count, graph depth, schema validity, and latency metrics are automatically logged to LangSmith datasets.
+
+#### Scenario 3 --- Graceful Degradation in Clean CI
+
+**Given** `LANGCHAIN_TRACING_V2` is absent or set to false\
+**When** automated CI tests run without API keys\
+**Then** tracing decorators act as a zero-overhead no-op\
+**And** tests pass cleanly without network calls.
+
+### Back of the Card
+
+**Technical Notes**
+
+-   Added afterwards in Sprint 3 (S3-OBS).
+-   Instrumented via `@traceable` decorators on `generate_node`, `chat_turn_task`, `regenerate_node_task`, and research planner nodes.
+-   API keys strictly managed via environment variables and CI secrets.
+
+**Validation / Test Strategy**
+
+-   Verify trace metadata emission when tracing is enabled.
+-   Verify zero exception / no-op behavior when environment variable is omitted.
+-   Confirm no API keys or secrets are logged in traces.
+
+------------------------------------------------------------------------
+
+## US-16 --- Dynamic Context Management & Token Budgeting
+
+**Epic:** Epic 7 --- Developer & QA Enablement  
+*(Added afterwards in Sprint 3: S3-L7)*
+
+### Front of the Card
+
+**User Story**
+
+> As a Developer and User, I want the generation engine to automatically manage
+> and partition context window slots across prompts, memories, RAG chunks, and
+> chat history according to provider limits, so that generations never fail due
+> to HTTP 413 (Payload Too Large) or HTTP 429 (Rate/Token quota exceeded).
+
+### Acceptance Criteria
+
+#### Scenario 1 --- Dynamic Context Partitioning
+
+**Given** a generation or chat request with multiple context inputs (seed, memory, RAG, history)\
+**When** `ContextBudgetManager` prepares the prompt payload\
+**Then** it dynamically partitions available tokens across components according to active provider constraints.
+
+#### Scenario 2 --- Hierarchical Pruning on Ceiling Overflow
+
+**Given** assembled context exceeds the active provider input ceiling\
+**When** pruning is applied\
+**Then** items are pruned in strict priority order: (1) lowest-scoring RAG chunks, (2) oldest chat messages beyond sliding window, (3) dense external tool payloads\
+**And** essential system instructions and core topic seeds are strictly preserved.
+
+### Back of the Card
+
+**Technical Notes**
+
+-   Added afterwards in Sprint 3 (S3-L7).
+-   Scales limits dynamically for Groq (8k/6k input ceiling), Qwen OTPM clamp, and Gemini Flash (32k/128k).
+-   Emits token slot breakdowns to `state["prompt_items_log"]` and span attributes in LangSmith.
+
+**Validation / Test Strategy**
+
+-   Unit tests in `llm/tests/test_token_budgeting.py` verifying slot bounds and degradation order.
+-   Mock tests simulating near-limit payloads and ensuring no HTTP 413/429 errors.
+
+------------------------------------------------------------------------
+
+## US-17 --- Multimodal Seed Intake & Expanded Document Formats
+
+**Epic:** Epic 1 --- Onboarding & Seed Capture  
+*(Added afterwards in Sprint 3: S3-BE7, S3-FE4, S3-FE5, S3-DB3, S3-T4)*
+
+### Front of the Card
+
+**User Story**
+
+> As a User, I want to submit public web URLs, DOCX files, and PPTX slide decks
+> as generation seeds and select my map's purpose (General, Study, Research), so
+> that the system can synthesize information from modern document and research
+> sources.
+
+### Acceptance Criteria
+
+#### Scenario 1 --- Public URL Seed Intake
+
+**Given** the create-map interface\
+**When** I enter a valid public web URL in the seed URL field\
+**Then** the backend validates the address against an SSRF blocklist (blocking loopback and private IPs)\
+**And** fetches the page content for mind map generation.
+
+#### Scenario 2 --- Office Document Ingestion
+
+**Given** an uploaded DOCX or PPTX document\
+**When** the file is submitted\
+**Then** the system extracts structural headings and slide titles\
+**And** generates structured concepts representing the presentation or report.
+
+#### Scenario 3 --- Map Generation Purpose Selection
+
+**Given** the create-map screen\
+**When** I choose **Research** as the map purpose\
+**Then** the backend forwards `purpose="research"` to the generation pipeline\
+**And** activates academic literature search tools (arXiv and Scholar).
+
+### Back of the Card
+
+**Technical Notes**
+
+-   Added afterwards in Sprint 3 (S3-BE7, S3-FE4, S3-FE5, S3-DB3, S3-T4).
+-   SSRF protection blocks RFC-1918, loopback, link-local, and zero hosts with max 3 redirects and 1MB size limit.
+-   Document extractors enforce size limits (20MB) and zip-bomb safety.
+
+**Validation / Test Strategy**
+
+-   SSRF unit tests in `test_s3_be7_intake.py` verifying private IP rejection.
+-   MIME sniffing tests for DOCX/PPTX.
+-   Purpose selector UI unit tests and backend routing tests.
+
+------------------------------------------------------------------------
+
+## US-18 --- Advanced Research Tools & Subgraph Execution
+
+**Epic:** Epic 2 --- AI-Driven Mind Map Generation  
+*(Added afterwards in Sprint 3: S3-A2, S3-A3, S3-A4, S3-T1, S3-T2, S3-T3)*
+
+### Front of the Card
+
+**User Story**
+
+> As a User, I want the AI generator to search Wikipedia, clean full-text web
+> pages, and academic literature repositories when exploring a topic, so that the
+> generated mind map is authoritative, grounded, and attributed with verifiable
+> citations.
+
+### Acceptance Criteria
+
+#### Scenario 1 --- Bounded Research Agent Subgraph
+
+**Given** a topic-mode seed\
+**When** research is triggered\
+**Then** a dedicated research subgraph plans queries, executes parallel tool calls (Tavily, Wikipedia, Scholar), deduplicates sources by canonical URL/DOI, caches results in Redis, and checks sufficiency in $\le 2$ rounds.
+
+#### Scenario 2 --- Wikipedia Attribution
+
+**Given** Wikipedia is used during generation\
+**When** nodes are created from Wikipedia content\
+**Then** CC BY-SA attribution links are stored in chunk metadata and displayed in the frontend `NodeInspector` panel.
+
+#### Scenario 3 --- Shared Branch Expansion
+
+**Given** full map generation, node regeneration, or chat elaboration\
+**When** subtrees are expanded\
+**Then** all three operations use the unified `expand_branch` function, ensuring consistent quality gates and source tagging.
+
+### Back of the Card
+
+**Technical Notes**
+
+-   Added afterwards in Sprint 3 (S3-A2, S3-A3, S3-A4, S3-T1, S3-T2, S3-T3).
+-   Redis result cache with 1h TTL; bounded research time budget (10s).
+-   Graceful fallback: returns degraded-run warning if any research tool fails without breaking map generation.
+
+**Validation / Test Strategy**
+
+-   Unit tests for Wikipedia REST API integration and CC BY-SA links.
+-   Page reader HTML sanitization tests.
+-   Scholar tool contract and policy tests.
+
+------------------------------------------------------------------------
+
+## US-19 --- Vision Model for Image Ingestion (Gemini Flash)
+
+**Epic:** Epic 1 --- Onboarding & Seed Capture  
+*(Added afterwards in Sprint 3: S3-L6, Deferred from Sprint 2 L-1)*
+
+### Front of the Card
+
+**User Story**
+
+> As a User, I want uploaded images and diagram seeds processed by a modern
+> multimodal vision model (Google Gemini Flash), so that diagrams, textbook
+> figures, and handwritten notes in images are accurately recognized into
+> structured mind map concepts.
+
+### Acceptance Criteria
+
+#### Scenario 1 --- Vision API Extraction
+
+**Given** an uploaded diagram or handwritten note image\
+**When** image ingestion runs\
+**Then** Google Gemini Flash processes the image and extracts rich structured text concepts.
+
+#### Scenario 2 --- Automatic Fallback to Tesseract OCR
+
+**Given** the vision API is temporarily unavailable or reaches quota limits\
+**When** image extraction is attempted\
+**Then** the system automatically falls back to local Tesseract OCR\
+**And** generates a seed from extracted text without failing the user's request.
+
+### Back of the Card
+
+**Technical Notes**
+
+-   Added afterwards in Sprint 3 (S3-L6; deferred from Sprint 2 L-1).
+-   Pluggable extractor registry (`S3-R1`) configured via `IMAGE_EXTRACTOR=gemini|openrouter|tesseract`.
+-   Eliminates legacy forced-501 behavior for image uploads.
+
+**Validation / Test Strategy**
+
+-   Mocked API failure test verifying transparent Tesseract OCR fallback.
+-   Extractor registry unit tests verifying MIME mapping and heading emission.
+
+------------------------------------------------------------------------
+
 # 2. Cross-Cutting Definition of Done
 
 The following checklist can be applied to each story before it is
@@ -857,6 +1349,13 @@ The chosen definition should be reflected consistently in the API and
 UI.
 
 
+## 3.2 Multi-User Collaboration & Synchronization Scope Decision
+
+For US-09 and US-10, the project evaluated multi-user real-time collaboration.
+
+**Final Decision for Sprint 3:**
+Due to high architectural complexity, real-time operational transformation/CRDT synchronization overhead, concurrency state reconciliation, and strict sprint deadlines, multi-user concurrent editing and real-time conflict synchronization were officially **not implemented**. Mind maps strictly remain single-user per map ownership, enforced by PostgreSQL Row Level Security (RLS). Single-owner version conflicts during save and restore are handled deterministically via `If-Match` version checking.
+
 ## 3.3 Admin Privacy Boundary
 
 For US-11, explicitly define:
@@ -865,6 +1364,9 @@ For US-11, explicitly define:
 -   Whether any exceptional support access to User content exists.
 -   How such access is authorized.
 -   What is recorded in the audit log.
+
+**Final Implementation in Sprint 3:**
+Administrators have access to aggregate metrics only (generation counts, active users, failure rates) via dedicated SQL views. Under no circumstances do administrators have SELECT permissions on raw user content tables (`mind_maps`, `nodes`, `edges`, `chat_messages`, `agent_memories`). Every administrative account action (suspend, unsuspend, delete) appends to `admin_audit_log`.
 
 ## 3.4 Generation Versioning
 
@@ -878,7 +1380,7 @@ At minimum, consider distinguishing:
 -   Regenerated version
 -   Partially regenerated version
 
-This can prevent accidental loss of useful work and simplify debugging.
+This can prevent accidental loss of useful work and simplify debugging. Implemented in Sprint 2 via `map_snapshots` and optimistic concurrency version checking.
 
 ## 3.5 External Service Failure Policy
 
@@ -899,41 +1401,42 @@ For each integration, define:
 
 # 4. Backlog Dependency Overview
 
-  Story   Main Dependency / Risk
-  ------- ----------------------------------------------------
-  US-01   Google OAuth and secure authentication
-  US-02   File parsing and input normalization
-  US-03   LLM service and research tools
-  US-04   LLM cost/rate limits and generation versioning
-  US-05   Canvas state management and future multi-user features
-  US-06   Branch-definition decision and scoped LLM context
-  US-07   Third-party export service and large-map rendering
-  US-08   Persistent storage and search
-  US-09   Authorization and permission model
-  US-10   Real-time synchronization and conflict resolution
-  US-11   Role-based access control and privacy boundaries
-  US-12   LLM/tool abstraction and configuration
-  US-13   Test environment and mockable integrations
+| Story | Feature / Scope | Main Dependency / Risk | Implementation Status |
+|---|---|---|---|
+| **US-01** | Sign Up / Sign In | Google OAuth and secure authentication | ✅ Implemented (Sprint 1) |
+| **US-02** | Submit a Raw Seed | File parsing and input normalization | ✅ Implemented (Sprint 1) |
+| **US-03** | Generate Mind Map from Seed | LLM service and research tools | ✅ Implemented (Sprint 1) |
+| **US-04** | Whole Map Regeneration | LLM cost/rate limits and generation versioning | ✅ Implemented (Sprint 1) |
+| **US-05** | Direct-Manipulation Canvas | Canvas state management and layout engine | ✅ Implemented (Sprint 2) |
+| **US-06** | Node Comment & Partial Regen | Scoped branch context and boundary decisions | ✅ Implemented (Sprint 2) |
+| **US-06B** | Conversational Chat Assistant | Action proposal execution & user confirmation | ✅ Implemented (Sprint 2 Mid-Sprint) |
+| **US-06C** | Short-Term Conversational Memory | Chat history sliding window & seed excerpting | ✅ Implemented (Sprint 2 Mid-Sprint) |
+| **US-07** | Export a Mind Map | Headless export microservice & client fallback | ✅ Implemented (Sprint 2) |
+| **US-08** | Save & Find Past Mind Maps | Asyncpg parameterized search and RLS boundaries | ✅ Implemented (Sprint 2) |
+| **US-08B** | Map Snapshots & Version History | `map_snapshots` table & version token restore | ✅ Implemented (Sprint 2 Mid-Sprint) |
+| **US-09** | Shared Maps / Collaboration | Permission control & invitation workflow | ❌ Descope / Not Implemented (Complexity/Time) |
+| **US-10** | Real-Time Sync & Presence | OT/CRDTs and concurrent conflict sync | ❌ Descope / Not Implemented (Complexity/Time) |
+| **US-11** | Admin Oversight & RBAC | `profiles.role`, aggregate views & zero-SELECT RLS | ✅ Implemented (Sprint 3: S3-DB1/BE1-3/FE1) |
+| **US-12** | Configure Generation Pipeline | Dynamic pipeline config API and admin UI | ✅ Implemented (Sprint 3: S3-BE8/FE7/L2) |
+| **US-13** | Test in Isolation | Deterministic mocks, fixtures, and pgTAP tests | ✅ Implemented (Sprint 3: S3-L5) |
+| **US-14** | Long-Term Agent Memory | `agent_memories` table, async extraction, GDPR | ✅ Implemented (Sprint 3: S3-DB2/BE4/L3/FE2) |
+| **US-15** | LangSmith Observability | `@traceable` spans & automated eval datasets | ✅ Implemented (Sprint 3: S3-OBS) |
+| **US-16** | Dynamic Context Budgeting | Provider-aware token clamps & hierarchical pruning | ✅ Implemented (Sprint 3: S3-L7) |
+| **US-17** | Multimodal Document Intake | URL SSRF protection, DOCX/PPTX, Purpose Intake | ✅ Implemented (Sprint 3: S3-BE7/FE4-5/DB3/T4) |
+| **US-18** | Advanced Research Subgraph | Wikipedia, Page Reader, Scholar, Branch Expand | ✅ Implemented (Sprint 3: S3-A2-4/T1-3) |
+| **US-19** | Gemini Flash Vision Model | Multimodal vision extraction with Tesseract fallback | ✅ Implemented (Sprint 3: S3-L6/R1) |
 
 ------------------------------------------------------------------------
 
 # 5. Summary
 
 The backlog progresses from the basic User journey toward increasingly
-complex platform capabilities:
+sophisticated and resilient platform capabilities:
 
-1.  **Onboarding and seed capture** establish the User and collect raw
-    material.
-2.  **AI generation** turns that material into a structured mind map.
-3.  **Canvas editing** gives the User direct control over the generated
-    structure.
-4.  **Export and persistence** allow the User to save, search, and reuse
-    their work.
-5.  **Admin operations** provide platform oversight while maintaining
-    User privacy.
-6.  **Developer and QA enablement** keeps the generation pipeline
-    extensible and testable.
-
-The most important architectural considerations that cut across multiple
-stories are **secure authorization, structured map data, generation versioning,
-external-service failure handling, testability, and extensibility**.
+1.  **Onboarding and seed capture** establish the User and collect raw material (text, PDFs, images, URLs, DOCX, and PPTX).
+2.  **AI generation and research** transform raw material into structured mind maps supported by Wikipedia, Web Page, and Scholar research tools.
+3.  **Canvas editing and conversational refinement** give the User direct interactive control over the graph through direct canvas manipulation, snapshot version history, and an AI chat assistant with action proposals.
+4.  **Export and persistence** allow the User to save, search, restore snapshots, and export their work to PDF/PNG via a dedicated headless service or client-side canvas fallback.
+5.  **Admin operations** provide platform oversight and user account moderation while strictly guaranteeing User content privacy via database-enforced zero-SELECT rules.
+6.  **Agent memory and personalization** enable the assistant to retain durable user preferences, past decisions, and project facts across sessions and maps with full GDPR user controls.
+7.  **Developer, QA, and observability enablement** instrument the entire pipeline with LangSmith tracing, dynamic context token budgeting preventing HTTP 413/429 errors, and deterministic test fixtures for reliable CI.

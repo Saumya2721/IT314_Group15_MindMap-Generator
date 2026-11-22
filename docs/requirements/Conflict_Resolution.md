@@ -244,6 +244,93 @@ Export the **current visible state** of the mind map, while clearly indicating t
 
 ---
 
+## 8. Chat Action Proposals vs Live Canvas Edits
+
+### Related User Stories
+
+- **US-05 – Canvas Editing**
+- **US-06B – Conversational Chat Assistant & Action Proposals**
+
+### Conflict
+
+The conversational assistant may suggest adding, modifying, or deleting nodes while the user is actively making manual edits on the canvas. If the AI were to apply edits immediately, it could unexpectedly overwrite nodes the user is currently working on or delete an active branch.
+
+### Potential Solution
+
+Proposals must never mutate the canvas directly. The system:
+1. Generates an `action_proposal` with an execution status (`pending`, `confirmed`, `dismissed`).
+2. Displays visual proposal cards in the chat with explicit **Apply** and **Dismiss** buttons.
+3. Only triggers graph mutation endpoints when the user clicks **Apply**.
+
+### Recommended Resolution
+
+**Two-phase proposal execution:** The AI proposes changes, but the user retains total authority over when and whether changes are applied.
+
+---
+
+## 9. Snapshot Restore vs Remote Map Version Collision
+
+### Related User Stories
+
+- **US-05 – Canvas Editing**
+- **US-08B – Map Snapshots & Version History**
+
+### Conflict
+
+A user restores a past snapshot while an asynchronous background generation or an edit from another open browser tab has incremented the map's remote version.
+
+### Potential Solution
+
+Use optimistic concurrency control with HTTP `If-Match` version headers:
+1. Every map row has an `updated_at` / version token.
+2. The restore payload sends `expected_version`.
+3. If the remote version differs, the server rejects with `HTTP 409 Conflict`.
+4. The frontend intercepts the 409, refreshes latest remote state, and prompts the user before re-attempting.
+
+### Recommended Resolution
+
+Enforce **optimistic version checking on restore operations** to prevent silent overwrites.
+
+---
+
+## 10. Multi-User Collaboration Conflicts (Descoping Decision)
+
+### Related User Stories
+
+- **US-09 – Shared Mind Maps (Descoped)**
+- **US-10 – Real-Time Concurrent Collaboration (Descoped)**
+
+### Conflict & Complexity Analysis
+
+Multi-user concurrent editing introduces severe engineering challenges:
+1. Operational Transformation (OT) or Conflict-Free Replicated Data Types (CRDTs) to reconcile simultaneous node dragging and edge creation without graph cycles.
+2. Distributed cursor tracking and presence heartbeats.
+3. Complex permissions and concurrent write conflicts.
+
+### Recommended Resolution
+
+> [!WARNING]
+> **Decision for Sprint 3:** Due to high architectural complexity and strict sprint deadlines, multi-user concurrent editing was **officially descoped**. Each mind map remains strictly single-owner with database Row Level Security (RLS) isolation. Single-owner multi-tab concurrency is resolved through version checking (`If-Match`) and window-focus graph revalidation.
+
+---
+
+## 11. Context Window Overfill vs Token Rate Ceilings
+
+### Related User Stories
+
+- **US-06C – Short-Term Conversational Memory**
+- **US-16 – Dynamic Context Management & Token Budgeting**
+
+### Conflict
+
+Injecting dense external tool payloads (Wikipedia, Scholar), long-term memories, and conversational history simultaneously exceeds provider context ceilings (e.g., Groq 8k/6k input limit, Qwen OTPM clamp), causing catastrophic `HTTP 413 (Payload Too Large)` or `HTTP 429 (Rate Limit Exceeded)` failures during generation.
+
+### Recommended Resolution
+
+Implement `ContextBudgetManager` (`S3-L7`) to dynamically partition context slots and hierarchically prune lowest-scoring RAG chunks and older chat turns before prompt assembly.
+
+---
+
 # Conflict Resolution Strategy
 
 The following general principles can be applied throughout the system.
@@ -254,9 +341,13 @@ The following general principles can be applied throughout the system.
 | Two regenerations at once | Allow only one active regeneration |
 | AI regeneration vs editing | Lock the affected node |
 | Save during regeneration | Wait until generation is complete |
-| Old version vs new version | Use versioning |
+| Old version vs new version | Use versioning and `If-Match` concurrency tokens |
 | Admin configuration changes | Use configuration versions |
 | Export with unsaved changes | Export current state and clearly handle saving |
+| Chat proposals vs canvas edits | Two-phase confirmation (Apply / Dismiss) |
+| Snapshot restore collision | Version token match; reject with 409 on stale restore |
+| Context limit vs token quotas | Dynamic slot budgeting & hierarchical pruning |
+| Multi-user editing | Descoped in Sprint 3; single-owner RLS enforced |
 
 ---
 

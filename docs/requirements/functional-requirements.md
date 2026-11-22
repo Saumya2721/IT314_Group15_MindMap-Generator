@@ -2,9 +2,15 @@
 
 ## 1. Overview
 
-The **Mind Map Generator from Raw Ideas** provides functionality for users to submit raw ideas or reference material, generate AI-powered mind maps, edit and refine them, save and export them, and eventually collaborate with other users.
+The **Mind Map Generator from Raw Ideas** provides functionality for users to submit raw ideas or reference material, generate AI-powered mind maps, edit and refine them, save and export them, and interact with a conversational assistant.
 
-The system also provides functionality for **Administrators, Developers, and QA/Testers**, along with integrations for the **LLM Service** and external third-party APIs.
+The system also provides functionality for **Administrators, Developers, and QA/Testers**, along with integrations for the **LLM Service**, observability platforms, and external third-party APIs.
+
+> [!NOTE]
+> **Evolution of Scope across Sprints:**
+> - **Added in Sprint 2:** Interactive Chat Assistant with Action Proposals (Module L) and Short-Term Conversational Memory.
+> - **Added in Sprint 3:** Long-Term Agent Personalization (Module L), LangSmith Observability & Tracing (Module M), Dynamic Token Budgeting, and Multimodal Document & URL Seed Intake (Module N).
+> - **Descoped in Sprint 3:** Multi-user collaboration and real-time concurrent synchronization (Module F) were excluded from implementation due to architectural complexity, synchronization overhead, and strict sprint deadlines. The platform maintains strict single-user per map ownership with database Row Level Security (RLS).
 
 The functional requirements are organized into the following modules:
 
@@ -13,31 +19,36 @@ The functional requirements are organized into the following modules:
 * **Module C: AI-Driven Mind Map Generation**
 * **Module D: Canvas & Direct-Manipulation Editing**
 * **Module E: Persistence, Search & Export**
-* **Module F: Collaboration**
+* **Module F: Collaboration (Descoped / Not Implemented)**
 * **Module G: Admin**
 * **Module H: Developer-Facing**
 * **Module I: QA/Tester-Facing**
 * **Module J: LLM Service Integration**
 * **Module K: Third-Party API Integration**
-
+* **Module L: Conversational Assistant & Memory (Added Afterwards)**
+* **Module M: Observability & Monitoring (Added Afterwards)**
+* **Module N: Multimodal & Document Intake (Added Afterwards)**
 
 ---
 
 ## 2. Functional Requirements Summary
 
-| Module       | Area                                 | Requirements  |
-| ------------ | ------------------------------------ | ------------- |
-| **Module A** | Authentication & Onboarding          | FR-01 - FR-03 |
-| **Module B** | Seed Capture                         | FR-04 - FR-06 |
-| **Module C** | AI-Driven Mind Map Generation        | FR-07 - FR-10 |
-| **Module D** | Canvas & Direct-Manipulation Editing | FR-11 - FR-16 |
-| **Module E** | Persistence, Search & Export         | FR-17 - FR-19 |
-| **Module F** | Collaboration                        | FR-20 - FR-25 |
-| **Module G** | Admin                                | FR-26 - FR-27 |
-| **Module H** | Developer-Facing                     | FR-28 - FR-31 |
-| **Module I** | QA/Tester-Facing                     | FR-32 - FR-34 |
-| **Module J** | LLM Service Integration              | FR-35 - FR-37 |
-| **Module K** | Third-Party API Integration          | FR-38 - FR-41 |
+| Module | Area | Requirements | Implementation Status |
+| --- | --- | --- | --- |
+| **Module A** | Authentication & Onboarding | FR-01 - FR-03 | ✅ Implemented (Sprint 1) |
+| **Module B** | Seed Capture | FR-04 - FR-06 | ✅ Implemented (Sprint 1 & Sprint 3) |
+| **Module C** | AI-Driven Mind Map Generation | FR-07 - FR-10 | ✅ Implemented (Sprint 1 & Sprint 3) |
+| **Module D** | Canvas & Direct-Manipulation Editing | FR-11 - FR-16 | ✅ Implemented (Sprint 2) |
+| **Module E** | Persistence, Search & Export | FR-17 - FR-19 | ✅ Implemented (Sprint 2) |
+| **Module F** | Collaboration | FR-20 - FR-25 | ❌ Descope / Not Implemented (Complexity/Time) |
+| **Module G** | Admin | FR-26 - FR-27 | ✅ Implemented (Sprint 3: S3-DB1, BE1-3, FE1) |
+| **Module H** | Developer-Facing | FR-28 - FR-31 | ✅ Implemented (Sprint 3: S3-BE8, FE7, L2) |
+| **Module I** | QA/Tester-Facing | FR-32 - FR-34 | ✅ Implemented (Sprint 3: S3-L5) |
+| **Module J** | LLM Service Integration | FR-35 - FR-37 | ✅ Implemented (Sprint 1 & Sprint 3) |
+| **Module K** | Third-Party API Integration | FR-38 - FR-41 | ✅ Implemented (Sprint 1, 2 & 3) |
+| **Module L** | Conversational Assistant & Memory | FR-42 - FR-44 | ✅ Implemented (Sprint 2 Mid-Sprint & Sprint 3) |
+| **Module M** | Observability & Tracing | FR-45 | ✅ Implemented (Sprint 3: S3-OBS) |
+| **Module N** | Multimodal & Document Intake | FR-46 - FR-47 | ✅ Implemented (Sprint 3: S3-BE7, FE4-5, T4) |
 
 ---
 
@@ -204,11 +215,13 @@ The system shall allow a User to export a mind map as PDF, PNG, or other common 
 
 ---
 
-## 8. Collaboration
+## 8. Collaboration (Descoped / Not Implemented in Sprint 3)
 
-The collaboration functionality allows multiple users to share and work on the same mind map.
+The collaboration functionality was originally proposed to allow multiple users to share and work on the same mind map concurrently.
 
-> **Status:** Early-stage / evolving. These requirements depend on DR-05, which states that the synchronization strategy and conflict-handling rules have not yet been finalized.
+> [!WARNING]
+> **Status: Descope / Not Implemented in Sprint 3**  
+> **Decision & Rationale:** Due to high architectural complexity, real-time synchronization overhead (OT/CRDT algorithms), race-condition reconciliation, and strict sprint deadlines, it was decided **not to implement** multi-user collaboration (FR-20 through FR-25) in Sprint 3. The platform strictly enforces single-user ownership with PostgreSQL Row Level Security (RLS) isolation. Single-owner concurrent edit protection is implemented via optimistic version token matching (`If-Match`).
 
 ### FR-20 - Share Mind Map
 
@@ -397,16 +410,76 @@ The system shall observe the rate limits and usage quotas of every integrated th
 
 ---
 
-## 14. Functional Requirement–Stakeholder Mapping
+## 14. Conversational Assistant & Memory (Module L — Added Afterwards)
+
+The system shall provide conversational refinement and persistent memory so the assistant can iteratively update maps and personalize to user preferences.
+
+### FR-42 - Interactive Chat Assistant & Action Proposals
+
+**Requirement:**
+The system shall provide an interactive conversational chat panel for each mind map, allowing Users to request structural changes. The assistant shall return structured action proposals (`add_node`, `edit_node`, `delete_node`, `elaborate_node`) that require explicit User confirmation or dismissal before modifying the live canvas graph.
+
+**Stakeholders:** User, LLM Service
+
+### FR-43 - Short-Term Conversational Context Window
+
+**Requirement:**
+The system shall persist conversation turns per mind map and maintain a dynamic sliding context window with abstract-aware seed excerpting to ensure multi-turn continuity without exceeding model input token ceilings.
+
+**Stakeholders:** User, LLM Service
+
+### FR-44 - Long-Term Agent Personalization & Memory
+
+**Requirement:**
+The system shall asynchronously extract durable user preferences, past decisions, and project facts from chat and generation turns, store them in a persistent `agent_memories` table, inject relevant memories into future prompt contexts within a strict token budget ($\le 10\%$), and provide Users with full memory management and GDPR export controls.
+
+**Stakeholders:** User, LLM Service
+
+---
+
+## 15. Observability & Monitoring (Module M — Added Afterwards)
+
+The system shall provide comprehensive tracing and automated evaluation across all LLM worker executions.
+
+### FR-45 - Pipeline Observability & Named Span Tracing
+
+**Requirement:**
+The system shall instrument all generation nodes, chat turns, branch expansions, and research planner executions as named spans in LangSmith (`LANGCHAIN_TRACING_V2`), routing telemetry to dedicated development and production projects, and logging evaluation seed benchmarks automatically without impeding hermetic CI runs.
+
+**Stakeholders:** Developer, LLM Service, Third Party API
+
+---
+
+## 16. Multimodal & Document Intake (Module N — Added Afterwards)
+
+The system shall support modern document formats, web URLs, and explicit purpose routing during seed intake.
+
+### FR-46 - Public URL Seed Intake with SSRF Protection
+
+**Requirement:**
+The system shall accept public web URLs as generation seeds, validate them against an SSRF protection blocklist (preventing loopback, private IP, and link-local traversal), and retrieve clean markdown text for mind map generation.
+
+**Stakeholders:** User, Third Party API
+
+### FR-47 - Office Document Ingestion & Map Purpose Routing
+
+**Requirement:**
+The system shall accept DOCX and PPTX file uploads, extract structural headings and slide titles, and allow the User to specify a generation purpose (`general`, `study`, `research`) that deterministically governs the activation of academic research tools (arXiv and Scholar).
+
+**Stakeholders:** User, LLM Service
+
+---
+
+## 17. Functional Requirement–Stakeholder Mapping
 
 The functional requirements can be mapped to their primary stakeholders as follows:
 
-| Stakeholder         | Functional Requirements                    |
-| ------------------- | ------------------------------------------ |
-| **User**            | FR-01 to FR-07, FR-09 to FR-25             |
-| **Admin**           | FR-26, FR-27                               |
-| **Developer**       | FR-28 to FR-31                             |
-| **QA / Tester**     | FR-32 to FR-34                             |
-| **LLM Service**     | FR-07, FR-08, FR-10, FR-15, FR-35 to FR-37 |
-| **Third Party API** | FR-03, FR-08, FR-19, FR-38 to FR-41        |
+| Stakeholder | Functional Requirements |
+| --- | --- |
+| **User** | FR-01 to FR-07, FR-09 to FR-19, FR-42 to FR-44, FR-46 to FR-47 *(FR-20 to FR-25 descoped)* |
+| **Admin** | FR-26, FR-27 *(Hardened with zero-SELECT RLS)* |
+| **Developer** | FR-28 to FR-31, FR-45 |
+| **QA / Tester** | FR-32 to FR-34 |
+| **LLM Service** | FR-07, FR-08, FR-10, FR-15, FR-35 to FR-37, FR-42 to FR-45, FR-47 |
+| **Third Party API** | FR-03, FR-08, FR-19, FR-38 to FR-41, FR-45, FR-46 |
 
