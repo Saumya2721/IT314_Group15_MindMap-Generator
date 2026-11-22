@@ -30,6 +30,7 @@ export function MindMapProvider({ children }) {
     topic: '',
     thoughts: '',
     detailLevel: 'overview',
+    purpose: 'general',
     files: [],
     filePreviews: [],
   })

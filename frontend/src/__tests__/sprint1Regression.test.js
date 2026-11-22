@@ -324,6 +324,7 @@ describe('US-02: Generation intake regression', () => {
     expect(call.options.body.get('topic')).toBe('Neural Networks')
     expect(call.options.body.get('ideas')).toBe('Backprop, activations')
     expect(call.options.body.get('detail_level')).toBe('overview')
+    expect(call.options.body.get('purpose')).toBe('general')
     expect(call.options.body.get('files')).toBe(file)
   })
 
