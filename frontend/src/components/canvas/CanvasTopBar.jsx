@@ -13,6 +13,7 @@ export function CanvasTopBar({
   onRegenerate,
   onHistory,
   onToggleChat,
+  onToggleSources,
   canUndo = false,
   canRedo = false,
   onUndo,
@@ -149,6 +150,21 @@ export function CanvasTopBar({
           </span>
           <span>Export</span>
         </button>
+
+        {/* Research Transparency Sources Toggle (S3-FE3) */}
+        {onToggleSources && (
+          <button
+            type="button"
+            className="btn-canvas-action"
+            onClick={onToggleSources}
+            title="Research Sources & Transparency"
+            aria-label="Toggle research sources"
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>
+              find_in_page
+            </span>
+          </button>
+        )}
 
         {/* Chat Drawer Toggle (FE-2) */}
         {onToggleChat && (

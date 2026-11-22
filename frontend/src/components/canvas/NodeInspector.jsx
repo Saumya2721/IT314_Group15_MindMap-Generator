@@ -38,6 +38,21 @@ const SOURCE_CONFIG = {
     bg: '#d9ead3',
     tooltip:
       'This concept was grounded using Wikipedia article content available under CC BY-SA 4.0.',
+    requiresCcBySa: true,
+  },
+  scholar: {
+    label: 'Scholar',
+    icon: 'school',
+    color: '#3949ab',
+    bg: '#e8eaf6',
+    tooltip: 'This concept was grounded from Google Scholar academic papers and citations.',
+  },
+  page_reader: {
+    label: 'Page Reader',
+    icon: 'auto_stories',
+    color: '#00838f',
+    bg: '#e0f7fa',
+    tooltip: 'This concept was extracted and synthesized from a parsed webpage source.',
   },
   context_citation: {
     label: 'Context Citation',
@@ -129,6 +144,19 @@ function SourceAttributionBadge({ sourceType, sourceUrl, sourceLabel }) {
             <span className="material-symbols-outlined" style={{ fontSize: '12px' }}>
               open_in_new
             </span>
+          </a>
+        )}
+        {cfg.requiresCcBySa && (
+          <a
+            href="https://creativecommons.org/licenses/by-sa/4.0/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="source-cc-link"
+            onClick={(e) => e.stopPropagation()}
+            title="Content available under CC BY-SA 4.0 license"
+            aria-label="Creative Commons Attribution-ShareAlike 4.0 International license"
+          >
+            CC BY-SA 4.0
           </a>
         )}
       </div>
