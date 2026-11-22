@@ -1258,10 +1258,7 @@ export function EditorWorkspace({
       {/* S3-FE3: Web Research Degradation Notice Banner */}
       {isResearchDegraded && (
         <ResearchDegradedBanner
-          reason={
-            initialMetadata?.degraded_reason ||
-            'Web and academic search was degraded during generation. Concepts were grounded using foundational knowledge.'
-          }
+          reason={initialMetadata?.degraded_reason || 'Web research degraded during generation.'}
           onDismiss={() => setResearchNoticeDismissed(true)}
         />
       )}
@@ -1273,7 +1270,8 @@ export function EditorWorkspace({
         nodes={canvas.nodes}
         onSelectNode={(node) => {
           handleNodeSelect(node)
-          if (flowApiRef.current?.setCenter && (node.pos_x !== undefined || node.x !== undefined)) {
+          const hasPos = node.pos_x !== undefined || node.x !== undefined
+          if (flowApiRef.current?.setCenter && hasPos) {
             const nx = Number(node.pos_x ?? node.x ?? 0)
             const ny = Number(node.pos_y ?? node.y ?? 0)
             if (nx !== 0 || ny !== 0) {
