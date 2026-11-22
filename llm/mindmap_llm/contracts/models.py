@@ -148,6 +148,8 @@ class GenerationRequest(BaseModel):
     branch_context: BranchContext | dict[str, Any] | None = None
     branch_nodes: list[NodeDraft] = Field(default_factory=list)
     branch_edges: list[EdgeDraft] = Field(default_factory=list)
+    expected_map_version: int | None = None
+    expected_node_version: int | None = None
 
     detail_level: DetailLevel | None = None  # None => worker infers it
     purpose: str | None = Field(
@@ -283,6 +285,8 @@ class GenerationResult(BaseModel):
     rejected_files: list[RejectedFile] = Field(default_factory=list)
     tool_call_log: list[ToolCallLogEntry] = Field(default_factory=list)
     quality_warnings: list[str] = Field(default_factory=list)
+    expected_map_version: int | None = None
+    expected_node_version: int | None = None
 
     error: GenerationError | None = None
 

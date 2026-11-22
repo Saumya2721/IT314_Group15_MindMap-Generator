@@ -13,6 +13,8 @@ removed — JobTracker is gone; the worker uses JobCallbackClient instead.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import pytest
 from callback.client import CallbackAlreadySent
 from contracts.models import ChatCompleteCallback, GenerationResult
@@ -29,13 +31,19 @@ class FakeLLMProvider(LLMProvider):
     """Returns a scripted sequence of responses, one per call, so a test
     can simulate 'bad output, then good output on retry' deterministically."""
 
-    def __init__(self, responses: list[str]):
-        self._responses = list(responses)
+    def __init__(self, responses: Sequence[str | LLMResponse] | None = None):
+        self._responses: list[str | LLMResponse] = list(responses) if responses is not None else []
         self.calls: list[list[Message]] = []
 
     @property
     def name(self) -> str:
         return "fake-llm"
+
+    def set_responses(self, responses: Sequence[str | LLMResponse]) -> None:
+        self._responses = list(responses)
+
+    def add_response(self, response: str | LLMResponse) -> None:
+        self._responses.append(response)
 
     async def generate(
         self,
@@ -47,8 +55,12 @@ class FakeLLMProvider(LLMProvider):
         temperature: float = 0.2,
     ) -> LLMResponse:
         self.calls.append(messages)
-        text = self._responses.pop(0) if self._responses else ""
-        return LLMResponse(text=text, tool_calls=[], stop_reason="end_turn")
+        if not self._responses:
+            return LLMResponse(text="", tool_calls=[], stop_reason="end_turn")
+        resp = self._responses.pop(0)
+        if isinstance(resp, LLMResponse):
+            return resp
+        return LLMResponse(text=resp, tool_calls=[], stop_reason="end_turn")
 
 
 # ---------------------------------------------------------------------------
@@ -271,6 +283,20 @@ def fake_vector_store():
 @pytest.fixture
 def fake_callback():
     return FakeCallbackClient()
+
+
+@pytest.fixture
+def fake_tools():
+    from tools.fake_tools import build_fake_tool_registry
+
+    return build_fake_tool_registry()
+
+
+@pytest.fixture
+def mock_llm_provider():
+    from providers.mock_provider import MockProvider
+
+    return MockProvider()
 
 
 # ---------------------------------------------------------------------------

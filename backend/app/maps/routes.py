@@ -98,6 +98,7 @@ from db.repository import (
     list_map_nodes,
     list_map_snapshots,
     list_node_comments,
+    lock_map_for_mutation,
     search_maps,
     update_map_edge,
     update_map_node,
@@ -786,6 +787,7 @@ async def regenerate(
     # Step 1: Create chat thread & user turn, then create the job record and safety snapshot in DB upfront
     summary_msg = f"Regenerate mind map with instruction: '{body.instruction.strip()}'"
     async with transaction(pool) as conn:
+        await lock_map_for_mutation(conn, map_id)
         thread_id = await get_or_create_chat_thread(conn, map_id, uid)
         msg_id = await insert_chat_message(conn, thread_id, "user", summary_msg)
         await create_generation_job(
@@ -982,7 +984,10 @@ async def regenerate_node(
     token_hash = hashlib.sha256(callback_token.encode("utf-8")).hexdigest()
 
     summary_msg = f"Regenerate branch for node '{target_node['label']}': '{instruction}'"
+    expected_map_version: int
+    expected_node_version: int = int(target_node.get("version") if target_node.get("version") is not None else 1)
     async with transaction(pool) as conn:
+        expected_map_version = await lock_map_for_mutation(conn, map_id)
         thread_id = await get_or_create_chat_thread(conn, map_id, uid)
         msg_id = await insert_chat_message(conn, thread_id, "user", summary_msg)
         await create_generation_job(
@@ -1024,6 +1029,8 @@ async def regenerate_node(
             regeneration_instruction=instruction,
             seed_has_files=bool(has_file_seed),
             detail_level=req_body.detail_level,
+            expected_map_version=expected_map_version,
+            expected_node_version=expected_node_version,
             callback_base_url=settings.BACKEND_INTERNAL_URL,
             callback_token=callback_token,
         )
@@ -1170,6 +1177,7 @@ async def create_node_route(
     edge_id = uuid4() if body.parent_node_id else None
 
     async with transaction(pool) as conn:
+        await lock_map_for_mutation(conn, map_id)
         existing_nodes = await list_map_nodes(conn, map_id)
         parent_id = body.parent_node_id
 
@@ -1278,10 +1286,13 @@ async def update_node_route(
         return dict(existing)
 
     async with transaction(pool) as conn:
+        await lock_map_for_mutation(conn, map_id)
         updated = await update_map_node(conn, map_id, node_id, updates)
+        if not updated:
+            raise HTTPException(404, "Node not found on this map")
         new_version = await check_and_bump_map_version(conn, map_id)
 
-    res = dict(updated) if updated else dict(existing)
+    res = dict(updated)
     res["map_version"] = new_version
     return res
 
@@ -1318,7 +1329,10 @@ async def delete_node_route(
         targets_to_delete.update(descendants)
 
     async with transaction(pool) as conn:
+        await lock_map_for_mutation(conn, map_id)
         deleted = await delete_map_node(conn, map_id, node_id, targets_to_delete)
+        if not deleted:
+            raise HTTPException(404, "Node not found on this map")
         new_version = await check_and_bump_map_version(conn, map_id)
 
     return {
@@ -1371,6 +1385,7 @@ async def create_edge_route(
 
     edge_id = uuid4()
     async with transaction(pool) as conn:
+        await lock_map_for_mutation(conn, map_id)
         created_edge = await create_map_edge(
             conn,
             edge_id=edge_id,
@@ -1473,10 +1488,13 @@ async def update_edge_route(
             raise HTTPException(400, "Updating this edge would create a cycle in the mind map hierarchy")
 
     async with transaction(pool) as conn:
+        await lock_map_for_mutation(conn, map_id)
         updated = await update_map_edge(conn, map_id, edge_id, updates)
+        if not updated:
+            raise HTTPException(404, "Edge not found on this map")
         new_version = await check_and_bump_map_version(conn, map_id)
 
-    res = dict(updated) if updated else dict(existing)
+    res = dict(updated)
     res["map_version"] = new_version
     return res
 
@@ -1498,6 +1516,7 @@ async def delete_edge_route(
         raise HTTPException(404, "Edge not found on this map")
 
     async with transaction(pool) as conn:
+        await lock_map_for_mutation(conn, map_id)
         await delete_map_edge(conn, map_id, edge_id)
         new_version = await check_and_bump_map_version(conn, map_id)
 

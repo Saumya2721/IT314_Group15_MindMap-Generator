@@ -49,6 +49,7 @@ from db.repository import (
     insert_seed_asset,
     list_map_edges,
     list_map_nodes,
+    lock_map_for_mutation,
     persist_generated_graph,
     replace_map_graph,
     update_job_status,
@@ -194,6 +195,7 @@ class MindMapBackendService:
 
         # Step 4: Persist generated nodes & edges to backend DB
         async with transaction(self.pool) as conn:
+            await lock_map_for_mutation(conn, map_id)
             await persist_generated_graph(
                 conn,
                 map_id=map_id,
@@ -201,6 +203,7 @@ class MindMapBackendService:
                 nodes=node_records,
                 edges=edge_records,
             )
+            await check_and_bump_map_version(conn, map_id)
             await update_job_status(
                 conn,
                 job_id=job_id,
@@ -403,6 +406,7 @@ class MindMapBackendService:
 
             # Atomically replace graph in DB
             async with transaction(self.pool) as conn:
+                await lock_map_for_mutation(conn, map_id)
                 await replace_map_graph(
                     conn,
                     map_id=map_id,
@@ -558,7 +562,10 @@ class MindMapBackendService:
 
         summary_msg = f"Regenerate branch for node '{target_node['label']}': '{resolved_instruction}'"
         snapshot_id: UUID
+        expected_map_version: int
+        expected_node_version: int = int(target_node.get("version") if target_node.get("version") is not None else 1)
         async with transaction(self.pool) as conn:
+            expected_map_version = await lock_map_for_mutation(conn, map_id)
             thread_id = await get_or_create_chat_thread(conn, map_id, user_id)
             msg_id = await insert_chat_message(conn, thread_id, "user", summary_msg)
             await create_generation_job(
@@ -598,6 +605,8 @@ class MindMapBackendService:
             regeneration_instruction=resolved_instruction,
             seed_has_files=bool(has_file_seed),
             detail_level=detail_level,
+            expected_map_version=expected_map_version,
+            expected_node_version=expected_node_version,
             callback_base_url=settings.BACKEND_INTERNAL_URL,
             callback_token=callback_token,
         )

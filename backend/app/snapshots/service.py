@@ -15,6 +15,7 @@ from db.repository import (
     create_map_node,
     create_map_snapshot,
     get_map_snapshot,
+    lock_map_for_mutation,
     update_map_edge,
     update_map_node,
 )
@@ -169,6 +170,7 @@ async def restore_snapshot_by_version_or_id(
             return None
 
     async with transaction(pool) as conn:
+        await lock_map_for_mutation(conn, map_id)
         snap: dict[str, Any] | None = None
         if version_no is not None:
             snap = await get_snapshot_by_version(conn, map_id, version_no)

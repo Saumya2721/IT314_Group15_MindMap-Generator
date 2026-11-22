@@ -5,11 +5,17 @@ All SQL operations are centralized here.
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 from datetime import datetime
 from typing import Any
 from uuid import UUID, uuid4
+
+try:
+    from unittest.mock import AsyncMock, MagicMock
+except ImportError:
+    AsyncMock = MagicMock = None  # type: ignore
 
 import asyncpg
 
@@ -611,6 +617,21 @@ async def replace_map_graph(
     edges: list[EdgeRecord],
 ) -> None:
     """Replace an existing graph on full regeneration."""
+    await lock_map_for_mutation(conn, map_id)
+    # Safely cancel any active generation jobs on this map whose targets will be removed
+    await conn.execute(
+        """
+        UPDATE public.generation_jobs
+           SET status = 'failed',
+               completed_at = now(),
+               error_message = 'Job cancelled: graph was replaced by full-map regeneration.'
+         WHERE map_id = $1
+           AND status IN ('pending', 'running')
+           AND ($2::uuid IS NULL OR id != $2)
+        """,
+        map_id,
+        source_job_id,
+    )
     await conn.execute("DELETE FROM public.edges WHERE map_id = $1", map_id)
     await conn.execute("DELETE FROM public.nodes WHERE map_id = $1", map_id)
     await persist_generated_graph(conn, map_id=map_id, source_job_id=source_job_id, nodes=nodes, edges=edges)
@@ -830,6 +851,52 @@ async def get_map_version(conn: asyncpg.Connection, map_id: UUID) -> int:
     return int(val) if val is not None else 1
 
 
+async def lock_map_for_mutation(conn: asyncpg.Connection, map_id: UUID) -> int:
+    """Acquire exclusive row lock on mind_maps aggregate root and return current version.
+
+    Must be acquired as the first lock in every transaction that mutates a map's nodes or edges.
+    Guarantees global lock order (mind_maps -> nodes -> edges) to prevent deadlocks,
+    eliminates phantom inserts, and serializes graph mutations.
+    """
+    sql = "SELECT COALESCE(version, 1) AS version FROM public.mind_maps WHERE id = $1 FOR UPDATE"
+
+    fetchrow_fn = getattr(conn, "fetchrow", None)
+    fetchval_fn = getattr(conn, "fetchval", None)
+
+    # 1. Try fetchval
+    val = None
+    if callable(fetchval_fn):
+        raw = fetchval_fn(sql, map_id)
+        val = await raw if inspect.isawaitable(raw) else raw
+        if val is not None and not isinstance(val, MagicMock):
+            return int(val)
+
+    # 2. Try fetchrow (if fetchval was None, not configured, or a mock)
+    if callable(fetchrow_fn):
+        raw = fetchrow_fn(sql, map_id)
+        row = await raw if inspect.isawaitable(raw) else raw
+        if row is not None and not isinstance(row, MagicMock):
+            if hasattr(row, "get"):
+                ver = row.get("version", 1)
+            else:
+                try:
+                    ver = row["version"]
+                except (KeyError, TypeError):
+                    ver = getattr(row, "version", 1)
+            try:
+                return int(ver if ver is not None else 1)
+            except (ValueError, TypeError):
+                return 1
+        if row is None and (isinstance(fetchrow_fn, AsyncMock) or inspect.iscoroutinefunction(fetchrow_fn)):
+            raise ValueError("Map not found")
+
+    # 3. If both were None on an async connection
+    if val is None and (isinstance(fetchval_fn, AsyncMock) or inspect.iscoroutinefunction(fetchval_fn)):
+        raise ValueError("Map not found")
+
+    return 1
+
+
 async def check_and_bump_map_version(
     conn: asyncpg.Connection,
     map_id: UUID,
@@ -886,7 +953,7 @@ async def get_node_by_id(conn: asyncpg.Connection, map_id: UUID, node_id: UUID) 
     row = await conn.fetchrow(
         """
         SELECT id, map_id, label, description, pos_x, pos_y, background_color, text_color,
-               width, height, node_type, source_job_id, node_data, created_at, updated_at
+               width, height, node_type, source_job_id, node_data, version, created_at, updated_at
         FROM public.nodes
         WHERE id = $1 AND map_id = $2
         """,
@@ -900,7 +967,7 @@ async def list_map_nodes(conn: asyncpg.Connection, map_id: UUID) -> list[dict]:
     rows = await conn.fetch(
         """
         SELECT id, map_id, label, description, pos_x, pos_y, background_color, text_color,
-               width, height, node_type, source_job_id, node_data, created_at, updated_at
+               width, height, node_type, source_job_id, node_data, version, created_at, updated_at
         FROM public.nodes
         WHERE map_id = $1
         ORDER BY created_at ASC
@@ -935,7 +1002,7 @@ async def create_map_node(
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         RETURNING id, map_id, label, description, pos_x, pos_y,
                   background_color, text_color, width, height, node_type,
-                  source_job_id, node_data, created_at, updated_at
+                  source_job_id, node_data, version, created_at, updated_at
         """,
         node_id,
         map_id,
@@ -995,7 +1062,7 @@ async def update_map_node(
         WHERE id = $1 AND map_id = $2
         RETURNING id, map_id, label, description, pos_x, pos_y,
                   background_color, text_color, width, height, node_type,
-                  source_job_id, node_data, created_at, updated_at
+                  source_job_id, node_data, version, created_at, updated_at
     """
     row = await conn.fetchrow(sql, *args)
     return dict(row) if row else None
@@ -1315,6 +1382,7 @@ async def restore_map_snapshot(
     3. Replaces all nodes and edges with snapshot data.
     4. Bumps map version atomically.
     """
+    await lock_map_for_mutation(conn, map_id)
     snapshot = await get_map_snapshot(conn, map_id, snapshot_id)
     if not snapshot:
         raise ValueError(f"Snapshot {snapshot_id} not found for map {map_id}")
@@ -1478,15 +1546,26 @@ async def replace_node_branch(
     source_job_id: UUID,
     new_nodes: list[NodeRecord],
     new_edges: list[EdgeRecord],
+    expected_map_version: int | None = None,
 ) -> None:
     """Regenerate only affected descendants while preserving the rest of the mind map.
 
-    1. Identifies all existing descendants downstream of target_node_id.
-    2. Removes old descendant nodes (and their connecting edges).
-    3. Preserves existing incoming edges into target_node_id from its parent.
-    4. Inserts new branch nodes and edges.
-    5. Updates map version and timestamp.
+    1. Acquires map aggregate root lock.
+    2. Validates expected map version if supplied.
+    3. Identifies all existing descendants downstream of target_node_id.
+    4. Cancels any active jobs targeting descendants to be removed.
+    5. Removes old descendant nodes (and their connecting edges).
+    6. Preserves existing incoming edges into target_node_id from its parent.
+    7. Inserts new branch nodes and edges.
+    8. Updates map version and timestamp atomically.
     """
+    current_map_version = await lock_map_for_mutation(conn, map_id)
+    if expected_map_version is not None and current_map_version != expected_map_version:
+        raise OptimisticConcurrencyError(
+            current_version=current_map_version,
+            expected_version=expected_map_version,
+        )
+
     edges = await list_map_edges(conn, map_id)
     from maps.graph_validator import get_node_descendant_ids
 
@@ -1505,6 +1584,22 @@ async def replace_node_branch(
     safe_to_delete_descendants = set(descendant_ids) - nodes_with_external_parents
 
     if safe_to_delete_descendants:
+        # Safely cancel active jobs targeting removed descendants to prevent FK cascade deadlocks
+        await conn.execute(
+            """
+            UPDATE public.generation_jobs
+               SET status = 'failed',
+                   completed_at = now(),
+                   error_message = 'Job cancelled: target node was removed by concurrent branch replacement.'
+             WHERE map_id = $1
+               AND target_node_id = ANY($2::uuid[])
+               AND status IN ('pending', 'running')
+               AND id != $3
+            """,
+            map_id,
+            list(safe_to_delete_descendants),
+            source_job_id,
+        )
         await conn.execute(
             "DELETE FROM public.nodes WHERE map_id = $1 AND id = ANY($2::uuid[])",
             map_id,

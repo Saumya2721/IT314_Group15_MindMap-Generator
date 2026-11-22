@@ -108,6 +108,8 @@ class GenerationRequest(BaseModel):
     ancestor_labels: list[str] = Field(default_factory=list)
     branch_context: BranchContext | dict[str, Any] | None = None
     instruction: str | None = None
+    expected_map_version: int | None = None
+    expected_node_version: int | None = None
 
     # Internal callback auth — see callback/client.py. Not a user secret;
     # scoped to this one job by the backend when it enqueues.
@@ -295,6 +297,8 @@ class GenerationResult(BaseModel):
     rejected_files: list[RejectedFile] = Field(default_factory=list)
     tool_call_log: list[ToolCallLogEntry] = Field(default_factory=list)
     quality_warnings: list[str] = Field(default_factory=list)
+    expected_map_version: int | None = None
+    expected_node_version: int | None = None
 
     error: GenerationError | None = None
 
