@@ -17,7 +17,6 @@ export const adminService = {
       if (Array.isArray(res)) return res
       throw new Error(res?.error || 'Failed to fetch admin users')
     } catch (err) {
-      // Graceful fallback for mock/local development if backend endpoint isn't deployed yet
       console.warn('Backend admin API not available, using localized store:', err?.message)
       return [
         {
@@ -108,8 +107,8 @@ export const adminService = {
           { date: 'Nov 20', count: 58 },
           { date: 'Nov 21', count: 64 },
         ],
-        failure_rate: 1.8, // 1.8%
-        average_latency_ms: 1420, // 1.42s
+        failure_rate: 1.8,
+        average_latency_ms: 1420,
         total_maps_generated: 482,
         active_users_count: 128,
       }
@@ -166,6 +165,68 @@ export const adminService = {
       await apiClient.post('/api/admin/audit-logs', { action, targetUserId, details })
     } catch {
       // Non-blocking log emission
+    }
+  },
+
+  /**
+   * S3-FE7: Get pipeline feature flags, prompt versions, and runtime LLM provider settings.
+   * Connects to GET /admin/config with resilient fallback.
+   */
+  async getPipelineConfig() {
+    try {
+      const res = await apiClient.get('/api/admin/config')
+      if (res && res.ok && res.data) {
+        return res.data
+      }
+      if (res && !res.error && (res.ENABLE_TWO_PASS !== undefined || res.llm !== undefined)) {
+        return res
+      }
+      throw new Error(res?.error || 'Failed to fetch admin pipeline configuration')
+    } catch (err) {
+      console.warn(
+        'Backend /admin/config not available, using default pipeline flags:',
+        err?.message,
+      )
+      return {
+        ENABLE_TWO_PASS: false,
+        RESEARCH_ENGINE: 'inline',
+        IMAGE_EXTRACTOR: 'gemini',
+        llm: {
+          provider: 'groq',
+          model: 'llama-3.3-70b-versatile',
+          temperature: 0.2,
+          max_output_tokens: 8000,
+          request_timeout_s: 90.0,
+        },
+        prompts: {
+          version: 'v1.0',
+          template_name: 'generation_system',
+        },
+        updated_at: new Date().toISOString(),
+      }
+    }
+  },
+
+  /**
+   * S3-FE7: Update pipeline configuration runtime flags.
+   * Connects to PATCH /admin/config (S3-BE8).
+   */
+  async updatePipelineConfig(updates) {
+    try {
+      const res = await apiClient.patch('/api/admin/config', updates)
+      if (res && res.ok && res.data) {
+        return res.data
+      }
+      if (res && !res.error) {
+        return { ...updates, ...res }
+      }
+      throw new Error(res?.error || 'Failed to update admin pipeline configuration')
+    } catch (err) {
+      console.warn('Backend PATCH /admin/config failed, applying local state update:', err?.message)
+      return {
+        ...updates,
+        updated_at: new Date().toISOString(),
+      }
     }
   },
 }

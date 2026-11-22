@@ -12,6 +12,7 @@ import GeneratingPage from './pages/GeneratingPage'
 import EditorPage from './pages/EditorPage'
 import MemoryPage from './pages/memory/MemoryPage'
 import AdminPage from './pages/admin/AdminPage'
+import AdminPipelineConfigPage from './pages/admin/AdminPipelineConfigPage'
 
 export function AdminRoute({ children }) {
   const { user, isInitializing } = useAuth()
@@ -174,6 +175,15 @@ export default function App() {
               element={
                 <AdminRoute>
                   <AdminPage />
+                </AdminRoute>
+              }
+            />
+            {/* S3-FE7: Role-guarded Admin Pipeline Configuration Panel */}
+            <Route
+              path="/admin/config"
+              element={
+                <AdminRoute>
+                  <AdminPipelineConfigPage />
                 </AdminRoute>
               }
             />
