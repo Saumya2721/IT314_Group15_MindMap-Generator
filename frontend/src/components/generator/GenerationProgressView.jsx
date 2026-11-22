@@ -82,6 +82,7 @@ export function GenerationProgressView({
           topic: initialParams.topic || mapTitle,
           ideas: initialParams.ideas || '',
           detail_level: initialParams.detail_level || 'overview',
+          purpose: initialParams.purpose || 'general',
           files: initialParams.files || [],
         })
 

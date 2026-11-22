@@ -15,6 +15,7 @@ export default function CreateMapPage() {
   const [topic, setTopic] = useState(draftMap?.topic || '')
   const [thoughts, setThoughts] = useState(draftMap?.thoughts || '')
   const [detailLevel, setDetailLevel] = useState(draftMap?.detailLevel || 'overview')
+  const [purpose, setPurpose] = useState(draftMap?.purpose || 'general')
   const [attachedFiles, setAttachedFiles] = useState(draftMap?.filePreviews || [])
   const [rawFiles, setRawFiles] = useState(draftMap?.files || [])
   const [error, setError] = useState('')
@@ -124,6 +125,7 @@ export default function CreateMapPage() {
         topic: trimmedTopic || finalTitle,
         thoughts: trimmedThoughts,
         detailLevel,
+        purpose,
         files: rawFiles,
         filePreviews: attachedFiles,
       }
@@ -236,6 +238,58 @@ export default function CreateMapPage() {
                 <span>
                   {charCount} {charCount === 1 ? 'character' : 'characters'}
                 </span>
+              </div>
+            </div>
+
+            {/* Purpose Selector (S3-FE5) */}
+            <div className="form-field-group">
+              <label className="field-title-label">What is this map for?</label>
+              <div
+                className="purpose-options-group"
+                role="radiogroup"
+                aria-label="What is this map for?"
+              >
+                {[
+                  {
+                    id: 'general',
+                    label: 'General',
+                    desc: 'Everyday exploration, brainstorming & synthesis',
+                    icon: 'lightbulb',
+                  },
+                  {
+                    id: 'study',
+                    label: 'Study',
+                    desc: 'Concept revision, structured learning & retention',
+                    icon: 'school',
+                  },
+                  {
+                    id: 'research',
+                    label: 'Research',
+                    desc: 'Academic literature discovery via arXiv & Scholar',
+                    icon: 'science',
+                  },
+                ].map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={purpose === item.id}
+                    data-purpose={item.id}
+                    className={`purpose-option-btn ${purpose === item.id ? 'active' : ''}`}
+                    onClick={() => setPurpose(item.id)}
+                  >
+                    <div className="purpose-option-header">
+                      <span
+                        className="material-symbols-outlined purpose-option-icon"
+                        aria-hidden="true"
+                      >
+                        {item.icon}
+                      </span>
+                      <span className="purpose-option-label">{item.label}</span>
+                    </div>
+                    <div className="purpose-option-desc">{item.desc}</div>
+                  </button>
+                ))}
               </div>
             </div>
 

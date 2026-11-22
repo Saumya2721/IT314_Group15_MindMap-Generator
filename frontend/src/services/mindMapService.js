@@ -109,11 +109,18 @@ export const mindMapService = {
    * Direct quick generation (synchronous or queued)
    * Endpoint: POST /api/maps/quick-generate
    */
-  async quickGenerate({ topic, ideas, detail_level = 'overview', map_id = null }) {
+  async quickGenerate({
+    topic,
+    ideas,
+    detail_level = 'overview',
+    purpose = 'general',
+    map_id = null,
+  }) {
     const payload = {
       topic: topic?.trim() || undefined,
       ideas: ideas?.trim() || undefined,
       detail_level,
+      purpose,
       map_id: map_id || undefined,
     }
 
@@ -128,11 +135,15 @@ export const mindMapService = {
    * Multipart/form-data generation supporting text + file uploads
    * Endpoint: POST /api/maps/{map_id}/generate
    */
-  async generateMap(mapId, { topic, ideas, detail_level = 'overview', files = [] }) {
+  async generateMap(
+    mapId,
+    { topic, ideas, detail_level = 'overview', purpose = 'general', files = [] },
+  ) {
     const formData = new FormData()
     if (topic) formData.append('topic', topic.trim())
     if (ideas) formData.append('ideas', ideas.trim())
     if (detail_level) formData.append('detail_level', detail_level)
+    if (purpose) formData.append('purpose', purpose)
 
     if (files && files.length > 0) {
       for (const f of files) {

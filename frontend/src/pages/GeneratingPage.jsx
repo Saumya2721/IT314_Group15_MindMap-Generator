@@ -34,6 +34,7 @@ export default function GeneratingPage({ initialPhase }) {
   const topic = location.state?.topic || draftMap?.topic || mapTitle
   const thoughts = location.state?.thoughts || draftMap?.thoughts || ''
   const detailLevel = location.state?.detailLevel || draftMap?.detailLevel || 'overview'
+  const purpose = location.state?.purpose || draftMap?.purpose || 'general'
   const files = useMemo(() => location.state?.files || [], [location.state?.files])
 
   // Graph state (nodes & edges directly from backend)
@@ -208,6 +209,7 @@ export default function GeneratingPage({ initialPhase }) {
               topic,
               ideas: thoughts,
               detail_level: detailLevel,
+              purpose,
               files,
             }
       }

@@ -410,3 +410,77 @@
 .btn-generate-submit:hover .btn-generate-arrow {
   transform: translateX(3px);
 }
+
+/* =========================================================
+   PURPOSE SELECTOR (S3-FE5)
+   ========================================================= */
+
+.purpose-options-group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+@media (min-width: 640px) {
+  .purpose-options-group {
+    flex-direction: row;
+  }
+}
+
+.purpose-option-btn {
+  flex: 1;
+  padding: 12px 14px;
+  border-radius: var(--radius-default);
+  border: 1px solid var(--outline-variant);
+  background-color: var(--surface-container-lowest);
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.15s ease;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.purpose-option-btn:hover {
+  background-color: var(--surface-container-low);
+  border-color: var(--outline);
+}
+
+.purpose-option-btn.active {
+  border: 2px solid var(--primary);
+  background-color: var(--surface-container-low);
+}
+
+.purpose-option-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.purpose-option-icon {
+  font-size: 18px;
+  color: var(--outline);
+}
+
+.purpose-option-btn.active .purpose-option-icon {
+  color: var(--primary);
+}
+
+.purpose-option-label {
+  font-family: var(--font-headline);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--on-surface);
+}
+
+.purpose-option-btn.active .purpose-option-label {
+  color: var(--primary);
+}
+
+.purpose-option-desc {
+  font-family: var(--font-label);
+  font-size: 11px;
+  color: var(--outline);
+  line-height: 1.4;
+}
