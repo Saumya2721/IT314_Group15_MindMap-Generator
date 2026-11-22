@@ -985,7 +985,8 @@ async def regenerate_node(
 
     summary_msg = f"Regenerate branch for node '{target_node['label']}': '{instruction}'"
     expected_map_version: int
-    expected_node_version: int = int(target_node.get("version") if target_node.get("version") is not None else 1)
+    raw_node_version = target_node.get("version")
+    expected_node_version: int = int(raw_node_version) if raw_node_version is not None else 1
     async with transaction(pool) as conn:
         expected_map_version = await lock_map_for_mutation(conn, map_id)
         thread_id = await get_or_create_chat_thread(conn, map_id, uid)

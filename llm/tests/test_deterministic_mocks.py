@@ -311,8 +311,9 @@ def test_build_fake_tool_registry_structure():
 
 
 @pytest.mark.asyncio
-async def test_fake_tool_registry_with_policy_layer():
+async def test_fake_tool_registry_with_policy_layer(monkeypatch):
     """Fake tool registry integrates cleanly with the policy enforcement wrapper."""
+    monkeypatch.setenv("SEARCH_API_KEY", "mock-search-key")
     settings = Settings()
     reg = build_fake_tool_registry()
     wrapped = wrap_tool_registry(reg, settings)
