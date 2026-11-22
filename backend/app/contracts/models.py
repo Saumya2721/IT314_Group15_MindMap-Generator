@@ -31,6 +31,16 @@ class SeedAssetType(StrEnum):
     URL = "url"  # S3-BE7: URL-seeded content
 
 
+class MapPurpose(StrEnum):
+    GENERAL = "general"
+    STUDY = "study"
+    RESEARCH = "research"
+
+
+ALLOWED_PURPOSES: frozenset[str] = frozenset({p.value for p in MapPurpose})
+DEFAULT_PURPOSE: str = MapPurpose.GENERAL.value
+
+
 class ChunkSource(StrEnum):
     UPLOADED_SEED = "uploaded_seed"
     WEB_SEARCH = "web_search"
@@ -87,7 +97,10 @@ class GenerationRequest(BaseModel):
     regeneration_instruction: str | None = None
 
     detail_level: DetailLevel | None = None  # None => worker infers it
-    purpose: str | None = None
+    purpose: str | None = Field(
+        default=DEFAULT_PURPOSE,
+        description="Map generation purpose: general, study, or research (S3-FE5/BE7)",
+    )
     seed_has_files: bool = False
 
     # Node-level regeneration (US-06 / S2-BE2 / S2-BE7):
