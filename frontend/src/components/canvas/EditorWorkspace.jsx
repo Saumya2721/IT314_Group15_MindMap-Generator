@@ -7,6 +7,8 @@ import EdgeInspector from './EdgeInspector'
 import OutlineView from './OutlineView'
 import { VersionHistoryPanel } from '../history/VersionHistoryPanel'
 import { ChatPanel } from './ChatPanel'
+import { MapSourcesSidebar } from './MapSourcesSidebar'
+import { ResearchDegradedBanner } from './ResearchDegradedBanner'
 import { ExportModal } from './ExportModal'
 import { exportMindMap } from '../../services/exportService'
 import { mindMapService } from '../../services/mindMapService'
@@ -93,6 +95,7 @@ export function EditorWorkspace({
   initialEdges = [],
   initialViewport = null,
   initialVersion = null,
+  initialMetadata = null,
   onTitleChange = null,
   onTitleBlur = null,
   onBack = null,
@@ -127,6 +130,17 @@ export function EditorWorkspace({
   // Branch Deletion Confirmation State
   const [deleteConfirmNode, setDeleteConfirmNode] = useState(null)
   const hasUserEditedRef = useRef(false)
+
+  // S3-FE3: Research Sources Sidebar & Research Degradation Notice
+  const [showSourcesSidebar, setShowSourcesSidebar] = useState(false)
+  const [researchNoticeDismissed, setResearchNoticeDismissed] = useState(false)
+  const isResearchDegraded =
+    !researchNoticeDismissed &&
+    Boolean(
+      initialMetadata?.web_research_degraded ||
+        initialMetadata?.research_degraded ||
+        initialMetadata?.degraded_reason,
+    )
 
   const displayToast = useCallback((msg) => {
     setLocalToast(msg)
@@ -917,6 +931,7 @@ export function EditorWorkspace({
         onRegenerate={onRegenerate ? () => setShowRegenModal(true) : undefined}
         onHistory={exportHistory.openHistory}
         onToggleChat={commentsChat.toggleChat}
+        onToggleSources={() => setShowSourcesSidebar((prev) => !prev)}
         canUndo={canvas.canUndo}
         canRedo={canvas.canRedo}
         onUndo={handleUndo}
@@ -1240,6 +1255,34 @@ export function EditorWorkspace({
           </div>
         </div>
       )}
+      {/* S3-FE3: Web Research Degradation Notice Banner */}
+      {isResearchDegraded && (
+        <ResearchDegradedBanner
+          reason={
+            initialMetadata?.degraded_reason ||
+            'Web and academic search was degraded during generation. Concepts were grounded using foundational knowledge.'
+          }
+          onDismiss={() => setResearchNoticeDismissed(true)}
+        />
+      )}
+
+      {/* S3-FE3: Aggregated Map Sources & Research Transparency Sidebar */}
+      <MapSourcesSidebar
+        isOpen={showSourcesSidebar}
+        onClose={() => setShowSourcesSidebar(false)}
+        nodes={canvas.nodes}
+        onSelectNode={(node) => {
+          handleNodeSelect(node)
+          if (flowApiRef.current?.setCenter && (node.pos_x !== undefined || node.x !== undefined)) {
+            const nx = Number(node.pos_x ?? node.x ?? 0)
+            const ny = Number(node.pos_y ?? node.y ?? 0)
+            if (nx !== 0 || ny !== 0) {
+              flowApiRef.current.setCenter(nx, ny, { duration: 500 })
+            }
+          }
+        }}
+      />
+
       {/* S2-FE4: Conversational Chat Panel (US-14) */}
       <ChatPanel
         isOpen={commentsChat.isChatOpen}
