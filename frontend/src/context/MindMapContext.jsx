@@ -33,6 +33,8 @@ export function MindMapProvider({ children }) {
     purpose: 'general',
     files: [],
     filePreviews: [],
+    seedUrl: '',
+    seed_url: '',
   })
   const [snapshots, setSnapshots] = useState([])
   const [snapshotsLoading, setSnapshotsLoading] = useState(false)

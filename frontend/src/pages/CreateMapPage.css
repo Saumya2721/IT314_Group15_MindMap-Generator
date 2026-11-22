@@ -298,25 +298,69 @@
   font-weight: 500;
 }
 
-/* Attached file tag pill */
+/* Attached files container & pill (S3-FE4) */
+.attached-files-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
 .attached-file-pill {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  padding: 6px 12px;
+  gap: 12px;
+  padding: 8px 12px;
   background-color: #ffffff;
   border: 1px solid var(--structural-border);
   border-radius: var(--radius-default);
-  font-size: 12px;
-  margin-top: 8px;
+  font-size: 13px;
+  transition: all 0.15s ease;
+}
+
+.attached-file-pill.has-error {
+  border-color: #ba1a1a;
+  background-color: #fff9f9;
 }
 
 .attached-file-info {
   display: flex;
-  align-items: center;
-  gap: 6px;
+  align-items: flex-start;
+  gap: 8px;
   color: var(--on-surface);
+  flex: 1;
+  min-width: 0;
+}
+
+.attached-file-details {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.attached-file-name {
+  font-weight: 500;
+  color: var(--on-surface);
+  word-break: break-all;
+}
+
+.attached-file-pill.has-error .attached-file-name {
+  color: #ba1a1a;
+}
+
+.attached-file-size {
+  color: var(--outline);
+  font-size: 11px;
+}
+
+.attached-file-error-msg {
+  font-size: 11px;
+  color: #ba1a1a;
+  font-weight: 500;
+  margin-top: 2px;
 }
 
 .btn-remove-file {
@@ -324,13 +368,99 @@
   border: none;
   color: var(--outline);
   cursor: pointer;
-  padding: 0;
+  padding: 4px;
   display: flex;
   align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: color 0.15s ease;
 }
 
 .btn-remove-file:hover {
   color: #ba1a1a;
+}
+
+/* =========================================================
+   URL SEED INPUT (S3-FE4)
+   ========================================================= */
+
+.url-input-container {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.url-input-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background-color: var(--surface-container-low);
+  padding: 0 14px;
+  border-radius: var(--radius-default);
+  border: 1px solid transparent;
+  transition: all 0.15s ease;
+}
+
+.url-input-wrapper:focus-within {
+  background-color: #ffffff;
+  border-color: var(--primary-container);
+  box-shadow: 0 0 0 1px var(--primary-container);
+}
+
+.url-input-wrapper.has-error {
+  border-color: #ba1a1a;
+  background-color: #fff9f9;
+}
+
+.url-input-icon {
+  font-size: 20px;
+  color: var(--outline);
+  flex-shrink: 0;
+}
+
+.url-input-wrapper:focus-within .url-input-icon {
+  color: var(--primary);
+}
+
+.url-text-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  padding: 13px 0;
+  color: var(--on-surface);
+  font-family: var(--font-body);
+  font-size: 15px;
+}
+
+.url-text-input::placeholder {
+  color: var(--outline);
+}
+
+.btn-clear-url {
+  background: none;
+  border: none;
+  color: var(--outline);
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: color 0.15s ease;
+}
+
+.btn-clear-url:hover {
+  color: #ba1a1a;
+}
+
+.url-error-message {
+  display: flex;
+  align-items: center;
+  font-size: 12px;
+  color: #ba1a1a;
+  margin-top: 4px;
+  font-weight: 500;
 }
 
 /* Form Action Footer */

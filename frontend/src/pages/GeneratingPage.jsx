@@ -36,6 +36,12 @@ export default function GeneratingPage({ initialPhase }) {
   const detailLevel = location.state?.detailLevel || draftMap?.detailLevel || 'overview'
   const purpose = location.state?.purpose || draftMap?.purpose || 'general'
   const files = useMemo(() => location.state?.files || [], [location.state?.files])
+  const seedUrl =
+    location.state?.seed_url ||
+    location.state?.seedUrl ||
+    draftMap?.seed_url ||
+    draftMap?.seedUrl ||
+    null
 
   // Graph state (nodes & edges directly from backend)
   const [graphNodes, setGraphNodes] = useState([])
@@ -211,6 +217,7 @@ export default function GeneratingPage({ initialPhase }) {
               detail_level: detailLevel,
               purpose,
               files,
+              seed_url: seedUrl,
             }
       }
       mapTitle={mapTitle}

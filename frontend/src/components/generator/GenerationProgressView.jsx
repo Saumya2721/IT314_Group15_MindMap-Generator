@@ -84,6 +84,7 @@ export function GenerationProgressView({
           detail_level: initialParams.detail_level || 'overview',
           purpose: initialParams.purpose || 'general',
           files: initialParams.files || [],
+          seed_url: initialParams.seed_url || initialParams.seedUrl || null,
         })
 
         if (!isMountedRef.current) return
