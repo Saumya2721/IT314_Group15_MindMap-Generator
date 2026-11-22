@@ -2,6 +2,27 @@ import React, { useState, useMemo } from 'react'
 import './MapSourcesSidebar.css'
 
 /**
+ * Safely detects source type from a URL using hostname parsing.
+ * Avoids substring checks that could match attacker-controlled URLs.
+ */
+function detectSourceTypeFromUrl(url) {
+  if (!url) return null
+  try {
+    const hostname = new URL(url).hostname
+    if (hostname === 'arxiv.org' || hostname.endsWith('.arxiv.org')) return 'arxiv'
+    if (
+      hostname === 'wikipedia.org' ||
+      hostname === 'en.wikipedia.org' ||
+      hostname.endsWith('.wikipedia.org')
+    )
+      return 'wikipedia'
+  } catch {
+    /* ignore malformed URLs */
+  }
+  return null
+}
+
+/**
  * Aggregates all sources from the nodes of the current mind map.
  */
 export function aggregateMapSources(nodes = []) {
@@ -14,8 +35,7 @@ export function aggregateMapSources(nodes = []) {
       node.sourceType ||
       node.data?.source_type ||
       node.data?.sourceType ||
-      (node.source_url?.includes('arxiv.org') ? 'arxiv' : null) ||
-      (node.source_url?.includes('wikipedia.org') ? 'wikipedia' : null)
+      detectSourceTypeFromUrl(node.source_url)
 
     const url =
       node.source_url || node.sourceUrl || node.data?.source_url || node.data?.sourceUrl || null
