@@ -21,12 +21,18 @@ services:
       REDIS_URL: redis://redis:6379/0
       SUPABASE_URL: http://host.docker.internal:54321
       CORS_ORIGINS: http://localhost:5173
+      BACKEND_INTERNAL_URL: http://pipeline-backend:8000
+      PIPELINE_CONFIG_WORKER_IPS: 172.29.171.2
       # U7/M4: Export converter service endpoint (see docs/export_service.md)
       EXPORT_CONVERTER_URL: ${EXPORT_CONVERTER_URL:-http://localhost:3001/convert}
       EXPORT_TIMEOUT_SECONDS: "15.0"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports: ["8000:8000"]
+    networks:
+      default:
+      worker_config:
+        aliases: [pipeline-backend]
     depends_on:
       redis:
         condition: service_healthy
@@ -41,9 +47,13 @@ services:
       REDIS_PORT: 6379
       REDIS_URL: redis://redis:6379/0
       SUPABASE_URL: http://host.docker.internal:54321
-      BACKEND_INTERNAL_URL: http://backend:8000
+      BACKEND_INTERNAL_URL: http://pipeline-backend:8000
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    networks:
+      default:
+      worker_config:
+        ipv4_address: 172.29.171.2
     depends_on:
       redis:
         condition: service_healthy
@@ -54,3 +64,10 @@ services:
     build: ./frontend
     depends_on: [backend]
     ports: ["5173:80"]
+
+networks:
+  worker_config:
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.29.171.0/29

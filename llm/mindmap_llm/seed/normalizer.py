@@ -83,6 +83,7 @@ async def normalize_seed(
     *,
     submission: SeedSubmission,
     decision_model: DecisionModel | None = None,
+    image_extractor: str | None = None,
 ) -> NormalizedSeed:
     text_parts: list[str] = []
     seed_assets: list[SeedAssetDraft] = []
@@ -107,7 +108,12 @@ async def normalize_seed(
             if not await _classify_is_supported_upload(decision_model, f.file_name, f.mime_type, len(f.data)):
                 raise SeedExtractionError("This file doesn't look like a valid PDF or image.")
 
-            extracted, spec = registry.extract_with_spec(f.data, mime_type=f.mime_type, filename=f.file_name)
+            options = {}
+            if image_extractor is not None:
+                matching_spec = registry.get(f.mime_type, f.file_name)
+                if matching_spec is not None and matching_spec.asset_type == "image":
+                    options["extractor"] = image_extractor
+            extracted, spec = registry.extract_with_spec(f.data, mime_type=f.mime_type, filename=f.file_name, **options)
             if spec.asset_type == "pdf":
                 asset_type = SeedAssetType.PDF
             elif spec.asset_type == "image":

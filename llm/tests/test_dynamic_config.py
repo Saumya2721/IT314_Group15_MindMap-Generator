@@ -239,6 +239,8 @@ async def test_periodic_configuration_refresh():
         "version": "1.0.2",
         "llm": {"provider": "openai", "model": "gpt-4o"},
         "refresh_interval_s": 5,
+        "flags": {"enable_two_pass": True, "research_engine": "inline", "image_extractor": "tesseract"},
+        "prompts": {"version": "v2.0"},
     }
 
     mock_client.get.side_effect = [
@@ -249,12 +251,17 @@ async def test_periodic_configuration_refresh():
     manager = DynamicConfigManager(http_client=mock_client)
     await manager.load_initial()
     assert manager.get_config().version == "1.0.1"
+    assert manager.get_config().flags is None
 
     # Refresh tick
     refreshed = await manager.refresh()
     assert refreshed is True
     assert manager.get_config().version == "1.0.2"
     assert manager.get_config().llm.provider == "openai"
+    flags = manager.get_config().flags
+    assert flags is not None
+    assert flags.model_dump() == config_v2["flags"]
+    assert manager.get_active_prompt_version() == "v2.0"
 
 
 @pytest.mark.asyncio

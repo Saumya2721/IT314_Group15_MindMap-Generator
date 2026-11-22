@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, StrictBool, field_validator, model_validator
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +53,14 @@ class PromptTemplatesConfig(BaseModel):
     templates: dict[str, str] = Field(default_factory=dict)
 
 
+class PipelineFlags(BaseModel):
+    """Runtime overrides supplied by the backend."""
+
+    enable_two_pass: StrictBool
+    research_engine: Literal["subgraph", "inline"]
+    image_extractor: Literal["gemini", "openrouter", "tesseract"]
+
+
 class DynamicPipelineConfig(BaseModel):
     """Full dynamic pipeline configuration payload received from backend GET /internal/config."""
 
@@ -60,6 +68,7 @@ class DynamicPipelineConfig(BaseModel):
     llm: LLMProviderConfig
     prompts: PromptTemplatesConfig = Field(default_factory=PromptTemplatesConfig)
     refresh_interval_s: int = Field(default=60, gt=0)
+    flags: PipelineFlags | None = None
 
     @model_validator(mode="before")
     @classmethod

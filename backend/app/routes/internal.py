@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import secrets
 from typing import Any
 from uuid import UUID
@@ -18,6 +19,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field, model_validator
 from services.generator import compute_layout
+from services.pipeline_config import effective_config, pipeline_pool, read_config_overrides
 
 from db.connection import transaction
 from db.models import EdgeRecord, NodeRecord, SeedAssetType
@@ -638,17 +640,24 @@ async def report_chat_complete(
 config_router = APIRouter(prefix="/internal/config", tags=["Internal Pipeline Config"])
 
 
-@config_router.get("", status_code=200)
-async def get_internal_pipeline_config() -> dict[str, Any]:
+@config_router.get("", status_code=200, include_in_schema=False)
+async def get_internal_pipeline_config(request: Request) -> dict[str, Any]:
     """Expose active LLM pipeline configuration and versioned prompt templates (S3-BE8).
 
     Security Invariant: Never exposes API keys, credentials, or provider secrets.
     Only exposes model identifiers, provider selections, hyperparameters, and prompt templates.
     """
-    import os
-
+    client = request.client
+    allowed_ips = os.getenv("PIPELINE_CONFIG_WORKER_IPS", "127.0.0.1,::1").split(",")
+    if client is None or client.host not in {ip.strip() for ip in allowed_ips}:
+        raise HTTPException(403, "Pipeline configuration is restricted to the worker network")
+    if any(header in request.headers for header in ("forwarded", "x-forwarded-for")):
+        raise HTTPException(403, "Pipeline configuration requires a direct connection")
+    overrides = await read_config_overrides(pipeline_pool(request))
+    active = effective_config(overrides)
     return {
         "version": "1.0.0",
+        "flags": active.model_dump(exclude={"prompt_template_version"}),
         "llm": {
             "provider": os.environ.get("LLM_PROVIDER", "groq"),
             "model": os.environ.get("LLM_MODEL", "llama-3.3-70b-versatile"),
@@ -660,7 +669,7 @@ async def get_internal_pipeline_config() -> dict[str, Any]:
             },
         },
         "prompts": {
-            "version": "v1.0",
+            "version": active.prompt_template_version,
             "templates": {
                 "generation_system": (
                     "You are the synthesis engine of a mind-mapping tool. You turn raw user input "

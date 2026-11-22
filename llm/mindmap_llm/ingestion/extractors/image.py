@@ -142,7 +142,9 @@ def extract_text_with_openrouter(
         return str(text or "").strip()
 
 
-def extract_text_from_image(data: bytes, mime_type: str | None = None, **kwargs: Any) -> str:
+def extract_text_from_image(
+    data: bytes, mime_type: str | None = None, *, extractor: str | None = None, **kwargs: Any
+) -> str:
     """Extract structured text from image using Gemini Flash / OpenRouter vision with Tesseract fallback.
 
     Feature flag:
@@ -162,7 +164,7 @@ def extract_text_from_image(data: bytes, mime_type: str | None = None, **kwargs:
 
     resolved_mime = mime_type or sniff_image_mime(data)
     settings = get_settings()
-    extractor_choice = (settings.vision.extractor or "gemini").lower()
+    extractor_choice = (extractor or settings.vision.extractor or "gemini").lower()
 
     extracted_text = ""
 
