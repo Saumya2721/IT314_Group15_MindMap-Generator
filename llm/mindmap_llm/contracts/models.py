@@ -360,6 +360,7 @@ class CreateNodeParam(BaseModel):
     description: str | None = None
     pos_x: float = 0.0
     pos_y: float = 0.0
+    sources: list[str] = Field(default_factory=list, description="Source URLs or citations")
 
 
 class CreateEdgeParam(BaseModel):

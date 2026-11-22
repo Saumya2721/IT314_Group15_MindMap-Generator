@@ -27,11 +27,19 @@ from chat.prompts import (
     build_small_talk_system_prompt,
     build_small_talk_user_prompt,
 )
+from chat.research import (
+    RESEARCH_TOOL_SPEC,
+    ResearchInvocationGuard,
+    format_research_context,
+    invoke_chat_research,
+    should_conduct_research,
+)
 from chat.token_budget import TokenBudget, estimate_tokens
 from contracts.models import ChatIntent, ChatTurnRequest, ChatTurnResponse
 from orchestration.deps import GenerationDeps
 from providers.base import Message
 from rag.retrieval import rerank_context, retrieve_context
+from research.models import ResearchSource
 
 logger = logging.getLogger(__name__)
 
@@ -49,9 +57,11 @@ async def answer_question(
     *,
     deps: GenerationDeps,
     request: ChatTurnRequest,
+    guard: ResearchInvocationGuard | None = None,
 ) -> ChatTurnResponse:
     """Return a grounded answer for a 'question' intent turn."""
     namespace = str(request.map_id)
+    inv_guard = guard or ResearchInvocationGuard(max_invocations=1)
 
     # Stage 1 — retrieve
     try:
@@ -79,6 +89,22 @@ async def answer_question(
         logger.exception("Rerank failed; using raw retrieval order")
         top_records = raw_chunks[:_QA_TOP_K_RERANK]
 
+    # Stage 2.5 — Check if fresh external research is warranted
+    research_sources: list[ResearchSource] = []
+    research_refs: list[str] = []
+    needs_research = await should_conduct_research(deps.decision_model, request.message, request.map_snapshot)
+    if needs_research and inv_guard.can_invoke:
+        user_id = (request.memory_context or {}).get("user_id") if request.memory_context else None
+        res_sources, res_refs, _warnings = await invoke_chat_research(
+            deps=deps,
+            query=request.message,
+            map_id=request.map_id,
+            guard=inv_guard,
+            user_id=user_id,
+        )
+        research_sources.extend(res_sources)
+        research_refs.extend(res_refs)
+
     # Stage 3 — generate
     system = build_chat_qa_system_prompt(request.map_snapshot)
 
@@ -95,7 +121,9 @@ async def answer_question(
             model=deps.settings.llm.model,
         )
 
-    chunks_overhead = sum(estimate_tokens(c.chunk_text) for c in top_records)
+    research_context = format_research_context(research_sources) if research_sources else None
+    research_overhead = estimate_tokens(research_context) if research_context else 0
+    chunks_overhead = sum(estimate_tokens(c.chunk_text) for c in top_records) + research_overhead
     budget = TokenBudget(
         max_context_tokens=deps.settings.llm.max_output_tokens,
         reserved_response_tokens=_QA_MAX_TOKENS,
@@ -114,16 +142,53 @@ async def answer_question(
         assembled.recent_messages,
         top_records,
         summary=assembled.summary,
+        research_context=research_context,
     )
+
+    tools_to_offer = [RESEARCH_TOOL_SPEC] if inv_guard.can_invoke else None
 
     try:
         response = await deps.llm.generate(
             [Message(role="user", content=user_msg)],
             system=system,
+            tools=tools_to_offer,
             max_tokens=_QA_MAX_TOKENS,
             temperature=0.3,
         )
         answer_text = response.text or ""
+
+        # Handle tool call if model requests research dynamically
+        if response.tool_calls:
+            for tc in response.tool_calls:
+                if tc.name == "research_topic" and inv_guard.can_invoke:
+                    tool_query = str(tc.arguments.get("query", request.message))
+                    user_id = (request.memory_context or {}).get("user_id") if request.memory_context else None
+                    tc_sources, tc_refs, _ = await invoke_chat_research(
+                        deps=deps,
+                        query=tool_query,
+                        map_id=request.map_id,
+                        guard=inv_guard,
+                        user_id=user_id,
+                    )
+                    if tc_sources:
+                        research_sources.extend(tc_sources)
+                        research_refs.extend(tc_refs)
+                        research_context = format_research_context(research_sources)
+                        follow_up_user_msg = build_chat_qa_user_prompt(
+                            request.message,
+                            assembled.recent_messages,
+                            top_records,
+                            summary=assembled.summary,
+                            research_context=research_context,
+                        )
+                        follow_up_resp = await deps.llm.generate(
+                            [Message(role="user", content=follow_up_user_msg)],
+                            system=system,
+                            max_tokens=_QA_MAX_TOKENS,
+                            temperature=0.3,
+                        )
+                        answer_text = follow_up_resp.text or answer_text
+                    break
     except Exception:
         logger.exception("LLM generation failed during QA")
         answer_text = "I encountered an error while generating an answer. Please try again."
@@ -141,8 +206,13 @@ async def answer_question(
     for i, record in enumerate(top_records, 1):
         if i in source_indices:
             ref = record.source_url or record.source_title or record.source or f"source-{i}"
-            if ref:
+            if ref and ref not in source_refs:
                 source_refs.append(ref)
+
+    # Add citations from external research
+    for ref in research_refs:
+        if ref and ref not in source_refs:
+            source_refs.append(ref)
 
     return ChatTurnResponse(
         intent=ChatIntent.QUESTION,
