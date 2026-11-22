@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
+import { Link } from 'react-router-dom'
 import { adminService } from '../../services/adminService'
 import { AppHeader } from '../../components/layout/AppHeader'
 import { AppFooter } from '../../components/layout/AppFooter'
@@ -113,12 +114,33 @@ export function AdminDashboardContent() {
       <main className="admin-main">
         {/* Header & Page Title */}
         <div className="admin-header">
-          <span className="admin-badge">
-            <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>
-              shield_person
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span className="admin-badge">
+              <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>
+                shield_person
+              </span>
+              Platform Administration
             </span>
-            Platform Administration
-          </span>
+            <Link
+              to="/admin/config"
+              className="admin-badge"
+              style={{
+                textDecoration: 'none',
+                backgroundColor: 'var(--surface-dim, #e8f5e9)',
+                color: 'var(--accent-sage, #2d5a47)',
+                fontWeight: 600,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                cursor: 'pointer',
+              }}
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>
+                tune
+              </span>
+              Pipeline Runtime Settings
+            </Link>
+          </div>
           <h1 className="admin-title">Management &amp; Analytics</h1>
           <p className="admin-subtitle">
             System health metrics, user governance, and action audit logs. Strict zero-access
