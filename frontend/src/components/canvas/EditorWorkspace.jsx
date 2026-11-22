@@ -131,7 +131,6 @@ export function EditorWorkspace({
   const [deleteConfirmNode, setDeleteConfirmNode] = useState(null)
   const hasUserEditedRef = useRef(false)
 
-  // S3-FE3: Research Sources Sidebar & Research Degradation Notice
   const [showSourcesSidebar, setShowSourcesSidebar] = useState(false)
   const [researchNoticeDismissed, setResearchNoticeDismissed] = useState(false)
   const isResearchDegraded =
@@ -1255,7 +1254,6 @@ export function EditorWorkspace({
           </div>
         </div>
       )}
-      {/* S3-FE3: Web Research Degradation Notice Banner */}
       {isResearchDegraded && (
         <ResearchDegradedBanner
           reason={initialMetadata?.degraded_reason || 'Web research degraded during generation.'}
@@ -1263,7 +1261,6 @@ export function EditorWorkspace({
         />
       )}
 
-      {/* S3-FE3: Aggregated Map Sources & Research Transparency Sidebar */}
       <MapSourcesSidebar
         isOpen={showSourcesSidebar}
         onClose={() => setShowSourcesSidebar(false)}
