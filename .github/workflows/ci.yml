@@ -120,9 +120,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: supabase/setup-cli@v1
+      - uses: supabase/setup-cli@v3
         with:
-          version: latest
+          version: '3.2.0'
       - run: supabase start
       - run: supabase db reset
       - run: supabase test db
