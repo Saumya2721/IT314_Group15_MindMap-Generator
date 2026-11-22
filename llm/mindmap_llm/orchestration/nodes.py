@@ -77,6 +77,8 @@ def _chunk_source_for_tool(tool_name: str) -> ChunkSource:
         return ChunkSource.WEB_SEARCH
     if tool_name == "arxiv_search":
         return ChunkSource.ARXIV
+    if tool_name == "scholar":
+        return ChunkSource.SCHOLAR
     return ChunkSource.WIKIPEDIA
 
 
@@ -182,6 +184,8 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
             logger.info("Inferred detail_level=%s (confidence=%.2f)", resolved_detail, result.confidence)
 
         routing: dict[str, bool] = {"web_search": False, "arxiv_search": False, "wikipedia": False}
+        if "scholar" in deps.tools:
+            routing["scholar"] = state.get("purpose") == "research"
 
         if not enable_dynamic:
             # Legacy Sprint 1 routing and sizing
@@ -250,9 +254,6 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
             else:
                 routing["wikipedia"] = routing.get("web_search", True)
 
-        if "scholar" in available_tools:
-            routing["scholar"] = routing.get("arxiv_search", False) or routing.get("web_search", False)
-
         targets = size_targets(
             resolved_detail,
             seed_tokens=estimate_tokens(state["seed_text"]),
@@ -275,6 +276,7 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
         tool_call_log: list[dict] = []
         enable_dynamic = deps.settings.generation.enable_dynamic_prompts
         wikipedia_sections: list[str] = []
+        scholar_requested = state.get("purpose") == "research" and deps.tools.get("scholar") is not None
 
         research_warnings: list[str] = list(state.get("research_warnings", []))
         research_engine = getattr(deps.settings.tools, "research_engine", "subgraph").lower()
@@ -284,9 +286,11 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
             # S3-A2: Bounded Multi-Step Research Agent Subgraph with Redis caching and canonical dedup
             subgraph_tools = [
                 t
-                for t in ("web_search", "wikipedia", "scholar", "arxiv_search")
+                for t in ("web_search", "wikipedia", "arxiv_search")
                 if state.get("routing_decision", {}).get(t, True) and deps.tools.get(t) is not None
             ]
+            if scholar_requested:
+                subgraph_tools.append("scholar")
             if subgraph_tools:
                 cache = ResearchCache(
                     redis_client=getattr(deps, "redis_client", None),
@@ -323,6 +327,8 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
                         source=chunk_source,
                         source_title=src.source_title,
                         source_url=src.source_url,
+                        attribution=src.metadata.get("attribution"),
+                        paper_metadata=src.metadata.get("paper"),
                         embedding_provider=deps.embedding_provider,
                     )
         else:
@@ -332,6 +338,8 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
                 for t in ("web_search", "arxiv_search", "wikipedia")
                 if state["routing_decision"].get(t) and deps.tools.get(t) is not None
             ]
+            if scholar_requested:
+                active_tools.append("scholar")
 
             if not active_tools:
                 pass
@@ -340,7 +348,8 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
                 for tool_name in active_tools:
                     tool = deps.tools[tool_name]
                     try:
-                        results = await tool.invoke(query=query)
+                        options = {"user_id": state.get("user_id")} if tool_name == "scholar" else {}
+                        results = await tool.invoke(query=query, **options)
                     except ToolError as exc:
                         logger.warning("Tool %s failed, continuing without it: %s", tool_name, exc)
                         tool_call_log.append({"tool": tool_name, "status": "failed", "error": str(exc)})
@@ -367,11 +376,12 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
                             source_url=r.source_url,
                             license=r.license,
                             attribution=r.attribution,
+                            paper_metadata=r.metadata.get("paper"),
                             embedding_provider=deps.embedding_provider,
                         )
                         if tool_name == "wikipedia":
                             wikipedia_sections.extend(s for s in (r.sections or []) if s and s.strip())
-                tool_call_log.append({"tool": tool_name, "status": "ok", "result_count": len(results)})
+                    tool_call_log.append({"tool": tool_name, "status": "ok", "result_count": len(results)})
             else:
                 # S2-L16 / S3-L1: Multi-query research planner with parallel execution, quota protection & research time budget (S3-A2)
                 sub_queries = await plan_research_queries(
@@ -389,6 +399,7 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
                         queries=sub_queries,
                         max_queries=deps.settings.generation.max_search_queries_per_tool,
                         budget=research_budget,
+                        user_id=state.get("user_id") if tool_name == "scholar" else None,
                     )
 
                     source = _chunk_source_for_tool(tool_name)
@@ -403,6 +414,7 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
                             source_url=r.source_url,
                             license=r.license,
                             attribution=r.attribution,
+                            paper_metadata=r.metadata.get("paper"),
                             embedding_provider=deps.embedding_provider,
                         )
                         if tool_name == "wikipedia":

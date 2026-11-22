@@ -129,9 +129,37 @@ async def test_pinecone_metadata_and_breadcrumb_bm25(monkeypatch):
         def upsert(self, **kwargs):
             records.extend(kwargs["vectors"])
 
+        def query(self, **kwargs):
+            return {"matches": [dict(record, score=1.0) for record in records]}
+
     pinecone._index = Index()
     await pinecone.upsert_chunks(namespace="map", chunks=store.records)
     assert called == ["Heading\nBody text"]
     assert records[0]["metadata"]["heading_level"] == 1
     assert records[0]["metadata"]["char_length"] == len("Body text")
     assert records[0]["metadata"]["chunk_index"] == 0
+
+    paper = {
+        "title": "Diffusion study",
+        "abstract": "We measured gas diffusion.",
+        "year": 2023,
+        "citation_count": 0,
+        "doi_url": "https://doi.org/10.5555/diffusion",
+    }
+    await ingest_tool_result(
+        vector_store=pinecone,
+        namespace="map",
+        generation_job_id=uuid4(),
+        text=paper["abstract"],
+        source=ChunkSource.SCHOLAR,
+        source_title=paper["title"],
+        source_url=paper["doi_url"],
+        paper_metadata=paper,
+        embedding_provider=Embeddings(),
+    )
+    old_chunk, scholar_chunk = await pinecone.query(
+        namespace="map", query_text="gas diffusion", query_embedding=[0.2, 0.8], top_k=2
+    )
+    assert old_chunk.paper_metadata is None
+    assert scholar_chunk.source == ChunkSource.SCHOLAR
+    assert scholar_chunk.paper_metadata == paper
