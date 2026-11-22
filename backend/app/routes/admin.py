@@ -16,7 +16,10 @@ from uuid import UUID
 from auth.dependencies import require_admin_role
 from core.supabase import admin
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from services.pipeline_config import PipelineConfig, PipelineConfigPatch, effective_config, read_config_overrides
 from uploads.service import delete_user_storage_files
+
+from db.connection import transaction
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +68,40 @@ async def record_audit_log(
             exc,
         )
         raise HTTPException(500, "Failed to record audit log")
+
+
+@router.get("/config")
+async def get_pipeline_config(request: Request) -> PipelineConfig:
+    return effective_config(await read_config_overrides(_get_pool(request)))
+
+
+@router.patch("/config")
+async def update_pipeline_config(
+    patch: PipelineConfigPatch,
+    request: Request,
+    admin_user: Any = Depends(require_admin_role),
+) -> PipelineConfig:
+    changes = patch.model_dump(exclude_unset=True)
+    async with transaction(_get_pool(request)) as conn:
+        overrides = await conn.fetchval(
+            """
+            UPDATE public.pipeline_config
+            SET settings = settings || $1::jsonb
+            WHERE singleton
+            RETURNING settings
+            """,
+            json.dumps(changes),
+        )
+        if overrides is None:
+            raise HTTPException(503, "Pipeline configuration is not initialized")
+        updated = effective_config(overrides)
+        await record_audit_log(
+            conn,
+            actor_id=admin_user.id,
+            action="pipeline_config.update",
+            metadata={"changes": changes},
+        )
+    return updated
 
 
 # ------------------------------------------------------------------ Dashboard

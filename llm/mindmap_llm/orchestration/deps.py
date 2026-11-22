@@ -5,6 +5,7 @@ from typing import Any
 
 from callback.client import JobCallbackClient
 from config import Settings
+from dynamic_config.schema import PipelineFlags
 from embeddings.base import EmbeddingProvider
 from providers.base import LLMProvider
 from providers.decision_model import DecisionModel
@@ -30,3 +31,4 @@ class GenerationDeps:
     redis_client: Any = None
     prompt_manager: Any = None
     dynamic_config: Any = None
+    pipeline_flags: PipelineFlags | None = None

@@ -10,11 +10,13 @@ Verifies:
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
+import pytest_asyncio
 from fastapi import FastAPI
-from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 
 
 @asynccontextmanager
@@ -36,20 +38,30 @@ def _patch_infrastructure():
 
 
 @pytest.fixture()
-def app() -> FastAPI:
+def app(monkeypatch: pytest.MonkeyPatch) -> FastAPI:
     from main import app as real_app
 
     real_app.router.lifespan_context = _noop_lifespan
+    monkeypatch.setattr(
+        real_app.state,
+        "pool",
+        SimpleNamespace(fetchval=AsyncMock(return_value={"enable_two_pass": True, "prompt_template_version": "v2"})),
+        raising=False,
+    )
+    monkeypatch.setenv("PIPELINE_CONFIG_WORKER_IPS", "127.0.0.1,::1")
     return real_app
 
 
-@pytest.fixture()
-def client(app: FastAPI) -> TestClient:
-    return TestClient(app)
+@pytest_asyncio.fixture()
+async def client(app: FastAPI):
+    transport = ASGITransport(app=app, client=("127.0.0.1", 50000))
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        yield client
 
 
-def test_get_internal_config_success(client: TestClient):
-    resp = client.get("/internal/config")
+@pytest.mark.asyncio
+async def test_get_internal_config_success(client: AsyncClient):
+    resp = await client.get("/internal/config")
     assert resp.status_code == 200
     data = resp.json()
 
@@ -67,12 +79,23 @@ def test_get_internal_config_success(client: TestClient):
     assert "request_timeout_s" in llm["hyperparameters"]
 
     prompts = data["prompts"]
-    assert "version" in prompts
+    assert prompts["version"] == "v2"
     assert "templates" in prompts
+    assert data["flags"]["enable_two_pass"] is True
 
 
-def test_get_internal_config_no_secrets_exposed(client: TestClient):
-    resp = client.get("/internal/config")
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["/internal/config", "/api/internal/config"])
+async def test_internal_config_rejects_external_clients(app: FastAPI, path: str):
+    transport = ASGITransport(app=app, client=("203.0.113.10", 50000))
+    async with AsyncClient(transport=transport, base_url="http://test") as external:
+        assert (await external.get(path)).status_code == 403
+        assert (await external.get(path, headers={"X-Forwarded-For": "127.0.0.1"})).status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_get_internal_config_no_secrets_exposed(client: AsyncClient):
+    resp = await client.get("/internal/config")
     assert resp.status_code == 200
     data = resp.json()
 
@@ -87,9 +110,10 @@ def test_get_internal_config_no_secrets_exposed(client: TestClient):
         assert f'"{forbidden}"' not in raw_text
 
 
-def test_get_internal_config_api_prefix(client: TestClient):
-    resp1 = client.get("/internal/config")
-    resp2 = client.get("/api/internal/config")
+@pytest.mark.asyncio
+async def test_get_internal_config_api_prefix(client: AsyncClient):
+    resp1 = await client.get("/internal/config")
+    resp2 = await client.get("/api/internal/config")
     assert resp1.status_code == 200
     assert resp2.status_code == 200
     assert resp1.json() == resp2.json()

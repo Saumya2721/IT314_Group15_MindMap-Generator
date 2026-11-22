@@ -279,6 +279,8 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
         research_warnings: list[str] = list(state.get("research_warnings", []))
         research_engine = getattr(deps.settings.tools, "research_engine", "subgraph").lower()
         engine_mode = os.environ.get("RESEARCH_ENGINE", research_engine).lower()
+        if deps.pipeline_flags:
+            engine_mode = deps.pipeline_flags.research_engine
 
         if engine_mode == "subgraph" and enable_dynamic:
             # S3-A2: Bounded Multi-Step Research Agent Subgraph with Redis caching and canonical dedup
@@ -494,7 +496,10 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
 
     @trace_span("generate_node", run_type="chain")
     async def generate_node(state: GenerationState) -> dict:
-        use_two_pass = state.get("two_pass_enabled", deps.settings.generation.enable_two_pass)
+        two_pass_default = (
+            deps.pipeline_flags.enable_two_pass if deps.pipeline_flags else deps.settings.generation.enable_two_pass
+        )
+        use_two_pass = state.get("two_pass_enabled", two_pass_default)
         if use_two_pass:
             targets = state.get("targets")
             target_node_range = state.get("target_node_range") or (

@@ -87,6 +87,7 @@ async def generate_mindmap(ctx: dict, request_payload: dict) -> dict:
         redis_client=ctx.get("redis"),
         prompt_manager=prompt_mgr,
         dynamic_config=dynamic_cfg,
+        pipeline_flags=dynamic_cfg.get_config().flags if dynamic_cfg else None,
     )
 
     # S3-L3: Retrieve user memories before generation and inject into initial state.
@@ -468,6 +469,7 @@ async def _run(
         normalized = await normalize_seed(
             submission=SeedSubmission(topic=request.topic, ideas=request.ideas, files=fetched_files),
             decision_model=deps.decision_model,
+            image_extractor=deps.pipeline_flags.image_extractor if deps.pipeline_flags else None,
         )
         seed_assets = normalized.seed_assets
         rejected_files += [RejectedFile(file_name=n, reason=r) for n, r in normalized.rejected_files]
