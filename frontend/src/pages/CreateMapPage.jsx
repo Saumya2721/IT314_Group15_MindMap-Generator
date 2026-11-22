@@ -4,6 +4,12 @@ import { useMindMap } from '../context/MindMapContext'
 import { mindMapService } from '../services/mindMapService'
 import { AppHeader } from '../components/layout/AppHeader'
 import { AppFooter } from '../components/layout/AppFooter'
+import {
+  validateFile,
+  validateSeedUrl,
+  formatFileSize,
+  SUPPORTED_EXTENSIONS,
+} from '../utils/uploadValidation'
 import './CreateMapPage.css'
 
 export default function CreateMapPage() {
@@ -16,7 +22,28 @@ export default function CreateMapPage() {
   const [thoughts, setThoughts] = useState(draftMap?.thoughts || '')
   const [detailLevel, setDetailLevel] = useState(draftMap?.detailLevel || 'overview')
   const [purpose, setPurpose] = useState(draftMap?.purpose || 'general')
-  const [attachedFiles, setAttachedFiles] = useState(draftMap?.filePreviews || [])
+  const [seedUrl, setSeedUrl] = useState(draftMap?.seed_url || draftMap?.seedUrl || '')
+  const [urlError, setUrlError] = useState('')
+  const [attachedFiles, setAttachedFiles] = useState(() => {
+    if (draftMap?.filePreviews && draftMap.filePreviews.length > 0) {
+      return draftMap.filePreviews.map((p, i) => {
+        const fileObj = draftMap?.files?.[i] || null
+        const validation = fileObj ? validateFile(fileObj) : { isValid: true, error: null }
+        return {
+          id: `draft-file-${i}-${p.name}`,
+          name: p.name,
+          size: p.size || (fileObj ? formatFileSize(fileObj.size) : '0 KB'),
+          sizeFormatted: p.size || (fileObj ? formatFileSize(fileObj.size) : '0 KB'),
+          bytes: fileObj?.size || 0,
+          type: p.type || fileObj?.type || '',
+          file: fileObj,
+          error: p.error || validation.error,
+          isValid: p.error ? false : validation.isValid,
+        }
+      })
+    }
+    return []
+  })
   const [rawFiles, setRawFiles] = useState(draftMap?.files || [])
   const [error, setError] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -75,24 +102,66 @@ export default function CreateMapPage() {
     if (error) setError('')
   }
 
-  // Handle file attachment selection (stores actual binary File objects)
+  // Handle file attachment selection (validates each file individually without silently discarding)
   const handleFileChange = (e) => {
     const selected = Array.from(e.target.files || [])
-    if (selected.length > 0) {
-      const newPreviews = selected.map((f) => ({
+    if (selected.length === 0) return
+
+    const newItems = selected.map((f, i) => {
+      const validation = validateFile(f)
+      const formattedSize = formatFileSize(f.size)
+      return {
+        id: `${Date.now()}-${i}-${f.name}`,
         name: f.name,
-        size: (f.size / 1024).toFixed(1) + ' KB',
+        size: formattedSize,
+        sizeFormatted: formattedSize,
+        bytes: f.size,
         type: f.type,
-      }))
-      setAttachedFiles((prev) => [...prev, ...newPreviews])
-      setRawFiles((prev) => [...prev, ...selected])
+        file: f,
+        error: validation.error,
+        isValid: validation.isValid,
+      }
+    })
+
+    setAttachedFiles((prev) => [...prev, ...newItems])
+    setRawFiles((prev) => [...prev, ...selected])
+
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
     }
+    if (error) setError('')
   }
 
-  // Remove attached file
+  // Remove attached file (valid or invalid)
   const handleRemoveFile = (indexToRemove) => {
     setAttachedFiles((prev) => prev.filter((_, idx) => idx !== indexToRemove))
     setRawFiles((prev) => prev.filter((_, idx) => idx !== indexToRemove))
+    if (error) setError('')
+  }
+
+  // URL input handlers
+  const handleUrlChange = (e) => {
+    const val = e.target.value
+    setSeedUrl(val)
+    if (urlError) {
+      const validation = validateSeedUrl(val)
+      setUrlError(validation.isValid ? '' : validation.error)
+    }
+    if (error) setError('')
+  }
+
+  const handleUrlBlur = () => {
+    if (!seedUrl.trim()) {
+      setUrlError('')
+      return
+    }
+    const validation = validateSeedUrl(seedUrl)
+    setUrlError(validation.isValid ? '' : validation.error)
+  }
+
+  const handleClearUrl = () => {
+    setSeedUrl('')
+    setUrlError('')
   }
 
   // Form submission / Generate Mind Map
@@ -101,11 +170,40 @@ export default function CreateMapPage() {
 
     const trimmedTopic = topic.trim()
     const trimmedThoughts = thoughts.trim()
+    const trimmedSeedUrl = seedUrl.trim()
     const finalTitle = title.trim() || trimmedTopic || 'Untitled Mind Map'
 
-    // Client-side validation: Topic, ideas, or file required
-    if (!trimmedTopic && !trimmedThoughts && rawFiles.length === 0) {
-      setError('Please provide a topic, some thoughts, or attach a document for synthesis.')
+    // Validate seed URL if provided
+    if (trimmedSeedUrl) {
+      const urlValidation = validateSeedUrl(trimmedSeedUrl)
+      if (!urlValidation.isValid) {
+        setUrlError(urlValidation.error)
+        return
+      }
+    }
+
+    // Check for invalid files: do not proceed while invalid files are present
+    const invalidFiles = attachedFiles.filter((f) => !f.isValid)
+    if (invalidFiles.length > 0) {
+      setError('Please remove invalid files before generating.')
+      return
+    }
+
+    const validFiles = attachedFiles
+      .filter((f) => f.isValid && f.file instanceof File)
+      .map((f) => f.file)
+
+    const validPreviews = attachedFiles
+      .filter((f) => f.isValid)
+      .map((f) => ({
+        name: f.name,
+        size: f.sizeFormatted || f.size,
+        type: f.type,
+      }))
+
+    // Client-side validation: Topic, ideas, file, or seed URL required
+    if (!trimmedTopic && !trimmedThoughts && validFiles.length === 0 && !trimmedSeedUrl) {
+      setError('Please provide a topic, some thoughts, attach a document, or paste a URL for synthesis.')
       return
     }
 
@@ -118,7 +216,7 @@ export default function CreateMapPage() {
         title: finalTitle,
       })
 
-      // Save draft data into context
+      // Save draft data into context (providing both seed_url and seedUrl for consistency)
       const updatedDraft = {
         mapId: newMap.id,
         title: finalTitle,
@@ -126,8 +224,10 @@ export default function CreateMapPage() {
         thoughts: trimmedThoughts,
         detailLevel,
         purpose,
-        files: rawFiles,
-        filePreviews: attachedFiles,
+        files: validFiles,
+        filePreviews: validPreviews,
+        seed_url: trimmedSeedUrl || undefined,
+        seedUrl: trimmedSeedUrl || undefined,
       }
       setDraftMap(updatedDraft)
 
@@ -346,7 +446,7 @@ export default function CreateMapPage() {
                 ref={fileInputRef}
                 style={{ display: 'none' }}
                 multiple
-                accept=".pdf,.png,.jpg,.jpeg,.webp,.txt"
+                accept=".pdf,.png,.jpg,.jpeg,.webp,.txt,.docx,.pptx"
                 onChange={handleFileChange}
               />
               <div
@@ -359,24 +459,48 @@ export default function CreateMapPage() {
                     <p className="dropzone-heading">
                       Attach source documents <span className="field-label-detail">(Optional)</span>
                     </p>
-                    <p className="dropzone-subtext">Drop academic PDFs, images, or notes</p>
+                    <p className="dropzone-subtext">
+                      Drop academic PDFs, images, notes, Word (.docx), or slides (.pptx)
+                    </p>
                   </div>
                 </div>
                 <span className="dropzone-browse-trigger">Browse files</span>
               </div>
 
-              {/* List of Attached Files */}
+              {/* List of Attached Files (both valid & invalid with individual error feedback) */}
               {attachedFiles.length > 0 && (
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '6px' }}>
+                <div className="attached-files-list">
                   {attachedFiles.map((file, idx) => (
-                    <div key={idx} className="attached-file-pill">
+                    <div
+                      key={file.id || idx}
+                      className={`attached-file-pill ${file.error ? 'has-error' : ''}`}
+                      data-testid={file.error ? 'file-error-item' : 'attached-file-item'}
+                    >
                       <div className="attached-file-info">
-                        <span className="material-symbols-outlined" style={{ fontSize: '15px' }}>
-                          description
+                        <span
+                          className="material-symbols-outlined attached-file-icon"
+                          style={{
+                            fontSize: '16px',
+                            color: file.error ? 'var(--error, #ba1a1a)' : 'var(--primary)',
+                          }}
+                        >
+                          {file.error ? 'error' : 'description'}
                         </span>
-                        <span>
-                          {file.name} ({file.size})
-                        </span>
+                        <div className="attached-file-details">
+                          <span className="attached-file-name">{file.name}</span>
+                          {file.sizeFormatted && (
+                            <span className="attached-file-size"> ({file.sizeFormatted})</span>
+                          )}
+                          {file.error && (
+                            <div
+                              className="attached-file-error-msg"
+                              role="alert"
+                              data-testid="file-error-message"
+                            >
+                              {file.error}
+                            </div>
+                          )}
+                        </div>
                       </div>
                       <button
                         type="button"
@@ -385,7 +509,7 @@ export default function CreateMapPage() {
                           e.stopPropagation()
                           handleRemoveFile(idx)
                         }}
-                        aria-label="Remove attachment"
+                        aria-label={`Remove ${file.name}`}
                       >
                         <span className="material-symbols-outlined" style={{ fontSize: '15px' }}>
                           close
@@ -395,6 +519,58 @@ export default function CreateMapPage() {
                   ))}
                 </div>
               )}
+            </div>
+
+            {/* Field 4: Paste a URL (S3-FE4) directly below file picker */}
+            <div className="form-field-group">
+              <label htmlFor="seed-url-input" className="field-title-label">
+                Paste a URL <span className="field-label-detail">(Optional)</span>
+              </label>
+              <div className="url-input-container">
+                <div className={`url-input-wrapper ${urlError ? 'has-error' : ''}`}>
+                  <span className="material-symbols-outlined url-input-icon">link</span>
+                  <input
+                    id="seed-url-input"
+                    type="url"
+                    className="url-text-input"
+                    placeholder="https://example.com/article-or-document"
+                    value={seedUrl}
+                    onChange={handleUrlChange}
+                    onBlur={handleUrlBlur}
+                    aria-label="Paste a URL"
+                    aria-invalid={Boolean(urlError)}
+                    aria-describedby={urlError ? 'seed-url-error' : undefined}
+                  />
+                  {seedUrl && (
+                    <button
+                      type="button"
+                      className="btn-clear-url"
+                      onClick={handleClearUrl}
+                      aria-label="Clear URL"
+                    >
+                      <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>
+                        close
+                      </span>
+                    </button>
+                  )}
+                </div>
+                {urlError && (
+                  <div
+                    id="seed-url-error"
+                    className="input-error-text url-error-message"
+                    role="alert"
+                    data-testid="url-error-message"
+                  >
+                    <span
+                      className="material-symbols-outlined"
+                      style={{ fontSize: '14px', marginRight: '4px' }}
+                    >
+                      error
+                    </span>
+                    <span>{urlError}</span>
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Footer Action & Security Badge */}

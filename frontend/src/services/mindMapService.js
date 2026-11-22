@@ -115,13 +115,17 @@ export const mindMapService = {
     detail_level = 'overview',
     purpose = 'general',
     map_id = null,
+    seed_url = null,
+    seedUrl = null,
   }) {
+    const effectiveSeedUrl = (seed_url || seedUrl || '').trim() || undefined
     const payload = {
       topic: topic?.trim() || undefined,
       ideas: ideas?.trim() || undefined,
       detail_level,
       purpose,
       map_id: map_id || undefined,
+      ...(effectiveSeedUrl ? { seed_url: effectiveSeedUrl } : {}),
     }
 
     const res = await apiClient.post('/api/maps/quick-generate', payload)
@@ -132,18 +136,23 @@ export const mindMapService = {
   },
 
   /**
-   * Multipart/form-data generation supporting text + file uploads
+   * Multipart/form-data generation supporting text + file uploads + seed URL (S3-FE4)
    * Endpoint: POST /api/maps/{map_id}/generate
    */
   async generateMap(
     mapId,
-    { topic, ideas, detail_level = 'overview', purpose = 'general', files = [] },
+    { topic, ideas, detail_level = 'overview', purpose = 'general', files = [], seed_url = null, seedUrl = null },
   ) {
     const formData = new FormData()
     if (topic) formData.append('topic', topic.trim())
     if (ideas) formData.append('ideas', ideas.trim())
     if (detail_level) formData.append('detail_level', detail_level)
     if (purpose) formData.append('purpose', purpose)
+
+    const effectiveSeedUrl = (seed_url || seedUrl || '').trim()
+    if (effectiveSeedUrl) {
+      formData.append('seed_url', effectiveSeedUrl)
+    }
 
     if (files && files.length > 0) {
       for (const f of files) {
