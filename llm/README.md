@@ -151,6 +151,23 @@ python mindmap_llm/scripts/run_local.py regenerate <map-uuid> --instruction "Exp
 
 ---
 
+## Academic research (S3-T3)
+
+The worker runs `scholar` for generation requests with `purpose: "research"`.
+It stores the title, available abstract, publication year, citation count,
+and DOI link alongside each resulting chunk. Set `TOOL_SCHOLAR_ENABLED=false`
+to disable it. The existing tool policy supplies the timeout and per-user
+quota. Set an optional `SCHOLAR_API_KEY` in the worker environment.
+
+| Provider | Rate limits | Abstracts | API terms |
+| --- | --- | --- | --- |
+| Semantic Scholar | Introductory keys get 1 request per second. Keyless traffic shares a limit. | Plain text when available. | The standard terms limit use and require attribution for public displays. Expanded use requires a separate agreement. [API access](https://www.semanticscholar.org/product/api) · [API license](https://api.semanticscholar.org/license/) |
+| OpenAlex | Search costs count toward a daily budget. Free keys allow up to 30 requests per second overall. | Inverted index when available. Text must be reconstructed in order. | The catalog is CC0. Individual works may have their own licenses. [Rate limits](https://help.openalex.org/api/authentication/) · [Catalog terms](https://openalex.org/transparency) · [Work licenses](https://help.openalex.org/data/licenses/) |
+
+The worker uses Semantic Scholar's direct abstract field and the project's
+existing client. Missing abstracts fall back to the paper title for retrieval.
+Check the linked license before making API-derived content publicly available.
+
 ## Testing
 
 Run the automated test suite:

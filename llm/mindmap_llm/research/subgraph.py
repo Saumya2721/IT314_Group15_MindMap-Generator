@@ -85,7 +85,7 @@ async def execute_tool_query(
                 doi=r.doi,
                 authors=r.metadata.get("authors", []),
                 published_date=str(r.metadata.get("year")) if r.metadata.get("year") else None,
-                metadata=r.metadata,
+                metadata=r.metadata | ({"attribution": r.attribution} if r.attribution else {}),
             )
             sources.append(src)
 

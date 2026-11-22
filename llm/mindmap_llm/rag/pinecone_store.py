@@ -31,6 +31,7 @@ fetch_all_for_source() approach below.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from dataclasses import dataclass, field
 from uuid import UUID, uuid4
@@ -63,6 +64,7 @@ class VectorChunk:
     page_number: int | None = None
     char_length: int | None = None
     chunk_index: int | None = None
+    paper_metadata: dict[str, str | int | None] | None = None
 
 
 @dataclass
@@ -84,6 +86,7 @@ class RetrievedChunkRecord:
     page_number: int | None = None
     char_length: int | None = None
     chunk_index: int | None = None
+    paper_metadata: dict[str, str | int | None] | None = None
 
 
 class PineconeVectorStore:
@@ -172,6 +175,8 @@ class PineconeVectorStore:
             metadata["char_length"] = c.char_length if c.char_length is not None else len(c.chunk_text)
             if c.chunk_index is not None:
                 metadata["chunk_index"] = c.chunk_index
+            if c.paper_metadata:
+                metadata["paper_metadata"] = json.dumps(c.paper_metadata, ensure_ascii=False)
             entry = {
                 "id": c.id,
                 "values": dense,
@@ -225,6 +230,7 @@ class PineconeVectorStore:
                 page_number=match["metadata"].get("page_number"),
                 char_length=match["metadata"].get("char_length"),
                 chunk_index=match["metadata"].get("chunk_index"),
+                paper_metadata=json.loads(match["metadata"].get("paper_metadata", "null")),
             )
             for match in result.get("matches", [])
         ]
@@ -265,6 +271,7 @@ class PineconeVectorStore:
                 page_number=match["metadata"].get("page_number"),
                 char_length=match["metadata"].get("char_length"),
                 chunk_index=match["metadata"].get("chunk_index"),
+                paper_metadata=json.loads(match["metadata"].get("paper_metadata", "null")),
             )
             for match in result.get("matches", [])
         ]

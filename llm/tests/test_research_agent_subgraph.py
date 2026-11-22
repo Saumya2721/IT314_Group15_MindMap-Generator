@@ -37,6 +37,7 @@ import pytest
 from config import Settings
 from orchestration.deps import GenerationDeps
 from orchestration.graph import run_generation
+from orchestration.nodes import make_nodes
 from providers.base import ToolSpec
 from research.cache import ResearchCache, make_cache_key
 from research.dedup import (
@@ -740,7 +741,7 @@ async def test_wikipedia_tool_direct_invocation():
 
 @pytest.mark.asyncio
 async def test_scholar_tool_direct_invocation():
-    scholar_tool = ScholarTool()
+    scholar_tool = ScholarTool(api_base="https://api.semanticscholar.org/graph/v1", api_key="test-key")
 
     fake_scholar_data = {
         "data": [
@@ -751,7 +752,9 @@ async def test_scholar_tool_direct_invocation():
                 "url": "https://arxiv.org/abs/1706.03762",
                 "authors": [{"name": "Ashish Vaswani"}, {"name": "Noam Shazeer"}],
                 "year": 2017,
-            }
+                "citationCount": 120,
+            },
+            {"title": "Metadata-only paper", "abstract": None, "authors": None, "citationCount": 0},
         ]
     }
 
@@ -759,11 +762,71 @@ async def test_scholar_tool_direct_invocation():
     mock_resp.json.return_value = fake_scholar_data
     mock_resp.raise_for_status = MagicMock()
 
-    with patch("httpx.AsyncClient.get", new_callable=AsyncMock, return_value=mock_resp):
+    with patch("httpx.AsyncClient.get", new_callable=AsyncMock, return_value=mock_resp) as get:
         results = await scholar_tool.invoke(query="Attention Is All You Need")
 
-    assert len(results) == 1
+    assert get.await_args.args[0].endswith("/graph/v1/paper/search")
+    assert "citationCount" in get.await_args.kwargs["params"]["fields"]
+    assert get.await_args.kwargs["headers"]["x-api-key"] == "test-key"
+    assert len(results) == 2
     assert results[0].source_title == "Attention Is All You Need"
     assert results[0].doi == "10.5555/3295222.3295349"
     assert results[0].metadata["year"] == 2017
     assert "Ashish Vaswani" in results[0].metadata["authors"]
+    assert results[0].metadata["paper"] == {
+        "title": "Attention Is All You Need",
+        "abstract": results[0].content,
+        "year": 2017,
+        "citation_count": 120,
+        "doi_url": "https://doi.org/10.5555/3295222.3295349",
+    }
+    assert results[1].content == "Metadata-only paper"
+    assert results[1].metadata["paper"]["abstract"] is None
+    assert results[1].metadata["paper"]["citation_count"] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("engine", "dynamic"), [("inline", True), ("subgraph", True), ("inline", False)])
+@pytest.mark.parametrize("purpose", ["research", "exam", None])
+async def test_scholar_requires_research_purpose(monkeypatch, engine, dynamic, purpose):
+    monkeypatch.setenv("RESEARCH_ENGINE", engine)
+    monkeypatch.setenv("ENABLE_DYNAMIC_PROMPTS", str(dynamic).lower())
+    monkeypatch.setenv("RESEARCH_MAX_ROUNDS", "1")
+    paper_metadata = {"title": "Literature", "citation_count": 5}
+    scholar = MockTool(
+        "scholar",
+        [
+            ToolResult(
+                "Review of published measurements.",
+                "Literature",
+                "https://doi.org/10.5555/example",
+                metadata={"paper": paper_metadata},
+            )
+        ],
+    )
+    store = FakeVectorStore()
+    deps = GenerationDeps(
+        llm=FakeLLMProvider(['{"scholar":["empirical paper"]}']),
+        decision_model=FakeDecisionModel(),
+        embedding_provider=FakeEmbeddingProvider(),
+        vector_store=store,
+        tools={"scholar": scholar},
+        settings=Settings(),
+        callback=FakeCallbackClient(),
+    )
+    user_id = uuid.uuid4()
+    await make_nodes(deps)["retrieve"](
+        {
+            "seed_text": "Chemical diffusion",
+            "namespace": "test-map",
+            "job_id": uuid.uuid4(),
+            "user_id": user_id,
+            "purpose": purpose,
+            "routing_decision": {},
+        }
+    )
+
+    assert bool(scholar.invocations) == (purpose == "research")
+    if purpose == "research":
+        assert scholar.invocations[0]["user_id"] == user_id
+        assert store._store["test-map"][0].paper_metadata == paper_metadata

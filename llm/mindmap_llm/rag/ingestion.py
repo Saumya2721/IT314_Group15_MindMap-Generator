@@ -68,6 +68,7 @@ async def ingest_tool_result(
     embedding_provider: EmbeddingProvider,
     license: str | None = None,
     attribution: str | None = None,
+    paper_metadata: dict[str, str | int | None] | None = None,
 ) -> int:
     """Same as ingest_seed_text but for web_search/arxiv/wikipedia tool output,
     where source_url is always populated (mirrors the old
@@ -88,6 +89,7 @@ async def ingest_tool_result(
             source_url=source_url,
             license=license,
             attribution=attribution,
+            paper_metadata=paper_metadata,
             section_path=chunk.section_path,
             heading_level=chunk.heading_level,
             page_number=getattr(chunk, "page_number", None),
