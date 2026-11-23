@@ -66,6 +66,7 @@ class LLMProvider(ABC):
         tools: list[ToolSpec] | None = None,
         max_tokens: int | None = None,
         temperature: float = 0.2,
+        response_format: dict[str, Any] | None = None,
     ) -> LLMResponse:
         """Single generation turn. Callers handle any tool-call loop —
         this method does not loop internally, keeping it easy to mock
@@ -76,6 +77,11 @@ class LLMProvider(ABC):
     @abstractmethod
     def name(self) -> str:
         raise NotImplementedError
+
+    @property
+    def supports_structured_output(self) -> bool:
+        """Indicates whether this provider supports passing a response_format parameter."""
+        return False
 
 
 class SupportsHealthCheck(Protocol):

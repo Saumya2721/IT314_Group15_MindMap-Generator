@@ -21,7 +21,7 @@ import logging
 import os
 import re
 from collections.abc import Callable
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 from contracts.models import ChunkSource
 from orchestration.context_budget import ContextBudgetManager
@@ -584,9 +584,10 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
         seed_for_prompt = format_seed_content(state["seed_text"], mode=state.get("mode", "document"))
 
         def render_context(context):
+            detail_level_str: str = state.get("resolved_detail_level") or state.get("detail_level") or "balanced"
             result = build_generation_user_prompt(
                 seed_text=context.seed,
-                detail_level=state["resolved_detail_level"],
+                detail_level=detail_level_str,
                 target_node_range=target_node_range,
                 target_max_depth=target_max_depth,
                 supporting_context=context.rag_chunks,
@@ -616,11 +617,17 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
         annotate_current_span(metadata={"token_budget": breakdown, "token_pruning": budgeted.pruned})
         logger.info("Prompt token budget for job %s: %s", state.get("job_id"), breakdown)
 
+        gen_kwargs: dict[str, Any] = {
+            "system": system_prompt,
+            "max_tokens": budgeted.max_output_tokens,
+            "temperature": 0.3,
+        }
+        if getattr(deps.llm, "supports_structured_output", False):
+            gen_kwargs["response_format"] = {"type": "json_object"}
+
         response = await deps.llm.generate(
             [Message(role="user", content=prompt)],
-            system=system_prompt,
-            max_tokens=budgeted.max_output_tokens,
-            temperature=0.3,
+            **gen_kwargs,
         )
         try:
             payload = extract_json_object(response.text or "")

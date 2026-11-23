@@ -44,6 +44,26 @@ class GroqProvider(LLMProvider):
     def name(self) -> str:
         return f"groq:{self._model}"
 
+    @property
+    def supports_structured_output(self) -> bool:
+        return True
+
+    async def validate_model_availability(self, model: str | None = None) -> bool:
+        """Validate whether the specified model (or self._model) is currently available on Groq."""
+        target_model = model or self._model
+        try:
+            models_page = await self._client.models.list()
+            available = {m.id for m in getattr(models_page, "data", [])}
+            if target_model not in available:
+                raise ValueError(
+                    f"Model {target_model!r} is not available on Groq. Available models: {sorted(available)}"
+                )
+            return True
+        except Exception as exc:
+            if isinstance(exc, ValueError):
+                raise
+            raise RuntimeError(f"Failed to query Groq model availability for {target_model!r}: {exc}") from exc
+
     def _to_groq_messages(self, messages: list[Message], system: str | None = None) -> list[dict[str, Any]]:
         """Convert vendor-neutral Messages to Groq/OpenAI chat format."""
         out: list[dict[str, Any]] = []
@@ -87,6 +107,7 @@ class GroqProvider(LLMProvider):
         tools: list[ToolSpec] | None = None,
         max_tokens: int | None = None,
         temperature: float = 0.2,
+        response_format: dict[str, Any] | None = None,
     ) -> LLMResponse:
         import json as _json
 
@@ -102,6 +123,9 @@ class GroqProvider(LLMProvider):
             "temperature": temperature,
             "messages": self._to_groq_messages(messages, system=system),
         }
+        if response_format is not None:
+            kwargs["response_format"] = response_format
+
         groq_tools = self._to_groq_tools(tools)
         if groq_tools:
             kwargs["tools"] = groq_tools

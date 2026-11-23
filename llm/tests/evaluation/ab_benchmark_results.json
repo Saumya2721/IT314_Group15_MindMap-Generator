@@ -1,0 +1,41 @@
+{
+  "metadata": {
+    "timestamp": "2026-11-23T13:00:00Z",
+    "models_evaluated": [
+      "openai/gpt-oss-120b",
+      "openai/gpt-oss-20b",
+      "qwen/qwen3.8-27b"
+    ],
+    "benchmark_seed_count": 12,
+    "repetitions": 1,
+    "mode": "pending_live_api",
+    "notes": {
+      "original_baseline": "llama-3.3-70b-versatile",
+      "status": "Retired on Groq developer tier; substituted with current documented models: openai/gpt-oss-120b, openai/gpt-oss-20b, and qwen/qwen3.8-27b.",
+      "structured_output_mode": "json_object (universal Groq compatibility without strict schema grammar constraints)"
+    }
+  },
+  "models": {
+    "openai/gpt-oss-120b": {
+      "aggregate": {
+        "status": "pending_live_execution",
+        "description": "Large-parameter flagship OSS model for complex hierarchical reasoning and detailed concept breakdown."
+      },
+      "runs": []
+    },
+    "openai/gpt-oss-20b": {
+      "aggregate": {
+        "status": "pending_live_execution",
+        "description": "Lightweight high-throughput model optimized for ultra-low latency interactive mind map generation."
+      },
+      "runs": []
+    },
+    "qwen/qwen3.8-27b": {
+      "aggregate": {
+        "status": "pending_live_execution",
+        "description": "Mid-tier 27B model balanced between token generation speed, instruction following, and structured formatting."
+      },
+      "runs": []
+    }
+  }
+}

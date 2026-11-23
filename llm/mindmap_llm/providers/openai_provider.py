@@ -36,6 +36,10 @@ class OpenAIProvider(LLMProvider):
     def name(self) -> str:
         return f"openai:{self._model}"
 
+    @property
+    def supports_structured_output(self) -> bool:
+        return True
+
     def _to_openai_messages(self, messages: list[Message], system: str | None = None) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
         if system:
@@ -71,6 +75,7 @@ class OpenAIProvider(LLMProvider):
         tools: list[ToolSpec] | None = None,
         max_tokens: int | None = None,
         temperature: float | None = None,
+        response_format: dict[str, Any] | None = None,
     ) -> LLMResponse:
         effective_max_tokens = max_tokens or self._default_max_tokens
         effective_temp = temperature if temperature is not None else self._default_temperature
@@ -81,6 +86,8 @@ class OpenAIProvider(LLMProvider):
             "max_tokens": effective_max_tokens,
             "temperature": effective_temp,
         }
+        if response_format is not None:
+            payload["response_format"] = response_format
         openai_tools = self._to_openai_tools(tools)
         if openai_tools:
             payload["tools"] = openai_tools

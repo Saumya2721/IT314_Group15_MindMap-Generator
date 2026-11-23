@@ -61,10 +61,20 @@ class MockProvider(LLMProvider):
         self._scripted_tool_calls: list[list[ToolCall]] = [list(tcs) for tcs in self._initial_scripted_tool_calls]
         self._index = 0
         self.calls: list[list[Message]] = []
+        self.last_response_format: dict[str, Any] | None = None
+        self._supports_structured_output: bool = True
 
     @property
     def name(self) -> str:
         return f"mock:{self._model}"
+
+    @property
+    def supports_structured_output(self) -> bool:
+        return self._supports_structured_output
+
+    @supports_structured_output.setter
+    def supports_structured_output(self, value: bool) -> None:
+        self._supports_structured_output = value
 
     def reset(self) -> None:
         """Reset call history, response counter, and restore scripted tool calls."""
@@ -89,8 +99,10 @@ class MockProvider(LLMProvider):
         tools: list[ToolSpec] | None = None,
         max_tokens: int | None = None,
         temperature: float = 0.2,
+        response_format: dict[str, Any] | None = None,
     ) -> LLMResponse:
         self.calls.append(messages)
+        self.last_response_format = response_format
 
         # Check for scripted sequence of tool calls first
         if self._scripted_tool_calls:
