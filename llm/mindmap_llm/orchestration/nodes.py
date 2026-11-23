@@ -584,9 +584,10 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
         seed_for_prompt = format_seed_content(state["seed_text"], mode=state.get("mode", "document"))
 
         def render_context(context):
+            detail_level_str: str = state.get("resolved_detail_level") or state.get("detail_level") or "balanced"
             result = build_generation_user_prompt(
                 seed_text=context.seed,
-                detail_level=state.get("resolved_detail_level") or state.get("detail_level", "balanced"),
+                detail_level=detail_level_str,
                 target_node_range=target_node_range,
                 target_max_depth=target_max_depth,
                 supporting_context=context.rag_chunks,
