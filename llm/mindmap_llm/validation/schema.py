@@ -88,6 +88,33 @@ class DraftMindMap(BaseModel):
         return self
 
 
+# S3-L4: Alias for external / evaluation consumers
+MindMapDraft = DraftMindMap
+
+
+def get_mindmap_response_format(mode: str = "json_object") -> dict[str, Any]:
+    """Return a response_format dictionary for structured output.
+
+    Modes:
+      - 'json_object' (default & recommended): Enforces that the model outputs valid JSON.
+        Compatible with all Groq and OpenAI models without strict schema limitations.
+      - 'json_schema': Best-effort JSON schema mode using DraftMindMap schema.
+        Note: Strict schema mode (strict=True) requires additionalProperties=False,
+        all properties listed in `required`, and no unsupported length/regex keywords.
+    """
+    if mode == "json_schema":
+        schema = DraftMindMap.model_json_schema()
+        return {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "mindmap_generation",
+                "strict": False,
+                "schema": schema,
+            },
+        }
+    return {"type": "json_object"}
+
+
 def _validate_unique_ids(nodes: list[_DraftNode]) -> list[str]:
     seen: set[str] = set()
     errors = []

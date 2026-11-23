@@ -237,12 +237,17 @@ async def expand_branch(
         prompt = render_branch(budgeted)
         annotate_current_span(metadata={"token_budget": budgeted.breakdown, "token_pruning": budgeted.pruned})
 
+        gen_kwargs: dict[str, Any] = {
+            "system": system_prompt,
+            "max_tokens": budgeted.max_output_tokens,
+            "temperature": 0.3,
+        }
+        if getattr(deps.llm, "supports_structured_output", False):
+            gen_kwargs["response_format"] = {"type": "json_object"}
         try:
             response = await deps.llm.generate(
                 [Message(role="user", content=prompt)],
-                system=system_prompt,
-                max_tokens=budgeted.max_output_tokens,
-                temperature=0.3,
+                **gen_kwargs,
             )
             payload = extract_json_object(response.text or "")
         except (JSONExtractionError, Exception) as exc:
@@ -422,12 +427,17 @@ async def generate_outline(
         prompt = render_outline(budgeted)
         annotate_current_span(metadata={"token_budget": budgeted.breakdown, "token_pruning": budgeted.pruned})
 
+        gen_kwargs: dict[str, Any] = {
+            "system": system_prompt,
+            "max_tokens": budgeted.max_output_tokens,
+            "temperature": 0.3,
+        }
+        if getattr(deps.llm, "supports_structured_output", False):
+            gen_kwargs["response_format"] = {"type": "json_object"}
         try:
             response = await deps.llm.generate(
                 [Message(role="user", content=prompt)],
-                system=system_prompt,
-                max_tokens=budgeted.max_output_tokens,
-                temperature=0.3,
+                **gen_kwargs,
             )
             payload = extract_json_object(response.text or "")
         except (JSONExtractionError, Exception) as exc:

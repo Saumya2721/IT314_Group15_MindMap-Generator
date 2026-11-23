@@ -14,6 +14,7 @@ removed — JobTracker is gone; the worker uses JobCallbackClient instead.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Any
 
 import pytest
 from callback.client import CallbackAlreadySent
@@ -53,6 +54,8 @@ class FakeLLMProvider(LLMProvider):
         tools: list[ToolSpec] | None = None,
         max_tokens: int | None = None,
         temperature: float = 0.2,
+        response_format: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> LLMResponse:
         self.calls.append(messages)
         if not self._responses:
