@@ -222,7 +222,7 @@ export default function CreateMapPage() {
       const updatedDraft = {
         mapId: newMap.id,
         title: finalTitle,
-        topic: trimmedTopic || finalTitle,
+        topic: trimmedTopic,
         thoughts: trimmedThoughts,
         detailLevel,
         purpose,

@@ -163,6 +163,39 @@ async def test_report_complete_skips_when_map_version_changed():
         main.app.state.pool = orig_pool
 
 
+def test_full_regeneration_uses_the_stored_base_version(monkeypatch):
+    job_id, map_id = uuid4(), uuid4()
+    token = "test-full-regeneration"
+    pool = MagicMock()
+    conn = MagicMock()
+    pool.acquire.return_value.__aenter__.return_value = conn
+    pool.fetchrow = AsyncMock(
+        return_value={
+            "map_id": map_id,
+            "status": "running",
+            "job_type": "regenerate_full",
+            "callback_token_hash": hashlib.sha256(token.encode()).hexdigest(),
+        }
+    )
+    conn.fetchrow = AsyncMock(side_effect=[{"version": 3}, {"status": "running", "base_map_version": 2}])
+    conn.execute = AsyncMock()
+    replace_graph = AsyncMock()
+    monkeypatch.setattr(main.app.state, "pool", pool, raising=False)
+    monkeypatch.setattr("routes.internal.replace_map_graph", replace_graph)
+
+    result = GenerationResult(job_id=job_id, map_id=map_id, status="completed", expected_map_version=3)
+    response = TestClient(main.app).post(
+        f"/internal/jobs/{job_id}/complete",
+        json=result.model_dump(mode="json"),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "conflict_skipped"
+    replace_graph.assert_not_awaited()
+    assert "status = 'failed'" in conn.execute.await_args.args[0]
+
+
 @pytest.mark.asyncio
 async def test_replace_node_branch_raises_when_expected_version_mismatched():
     """Direct test of repository replace_node_branch optimistic guard."""

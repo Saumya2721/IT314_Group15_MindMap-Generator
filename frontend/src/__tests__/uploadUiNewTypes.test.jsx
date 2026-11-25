@@ -594,8 +594,8 @@ describe('S3-FE4: Upload UI for New Types (DOCX, PPTX, Seed URL)', () => {
         ).toBeDefined()
       })
 
-      // Cleaned up empty draft map
-      expect(deleteSpy).toHaveBeenCalledWith('map-unreachable-1')
+      // Dispatch failure must preserve the draft.
+      expect(deleteSpy).not.toHaveBeenCalled()
 
       // Displays Back to Create button
       const backBtn = screen.getByRole('button', { name: /back to create/i })
@@ -630,7 +630,7 @@ describe('S3-FE4: Upload UI for New Types (DOCX, PPTX, Seed URL)', () => {
         ).toBeDefined()
       })
 
-      expect(deleteSpy).toHaveBeenCalledWith('map-rejected-1')
+      expect(deleteSpy).not.toHaveBeenCalled()
       expect(screen.getByRole('button', { name: /back to create/i })).toBeDefined()
     })
   })

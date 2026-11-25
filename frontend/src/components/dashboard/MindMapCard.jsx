@@ -53,8 +53,8 @@ export function MindMapCard({ map, onClick, onToggleBookmark, onDelete }) {
             type="button"
             className={`card-bookmark-btn ${bookmarked ? 'active' : ''}`}
             onClick={handleBookmarkClick}
-            aria-label={bookmarked ? 'Remove bookmark' : 'Bookmark map'}
-            title={bookmarked ? 'Bookmarked' : 'Add to bookmarks'}
+            aria-label={bookmarked ? 'Remove from archive' : 'Save to archive'}
+            title={bookmarked ? 'In Archive (Click to remove)' : 'Save to Archive'}
           >
             <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>
               {bookmarked ? 'bookmark' : 'bookmark_border'}

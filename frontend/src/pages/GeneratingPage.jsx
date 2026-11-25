@@ -31,11 +31,14 @@ export default function GeneratingPage({ initialPhase }) {
       draftMap?.topic ||
       'Mind Map',
   )
-  const topic = location.state?.topic || draftMap?.topic || mapTitle
+  const topic = location.state?.topic ?? draftMap?.topic ?? ''
   const thoughts = location.state?.thoughts || draftMap?.thoughts || ''
   const detailLevel = location.state?.detailLevel || draftMap?.detailLevel || 'overview'
   const purpose = location.state?.purpose || draftMap?.purpose || 'general'
-  const files = useMemo(() => location.state?.files || [], [location.state?.files])
+  const files = useMemo(
+    () => location.state?.files ?? draftMap?.files ?? [],
+    [location.state?.files, draftMap?.files],
+  )
   const seedUrl =
     location.state?.seed_url ||
     location.state?.seedUrl ||
@@ -47,6 +50,7 @@ export default function GeneratingPage({ initialPhase }) {
   const [graphNodes, setGraphNodes] = useState([])
   const [rawEdges, setRawEdges] = useState([])
   const [mapVersion, setMapVersion] = useState(null)
+  const [researchWarnings, setResearchWarnings] = useState([])
 
   // Toast feedback
   const [toastMessage, setToastMessage] = useState('')
@@ -65,26 +69,32 @@ export default function GeneratingPage({ initialPhase }) {
 
     const loadMapData = async () => {
       try {
-        const mapData = await mindMapService.getMapById(routeMapId)
+        const [mapData, graphData] = await Promise.all([
+          mindMapService.getMapById(routeMapId),
+          mindMapService.getMapGraph(routeMapId).catch(() => ({ nodes: [], edges: [] })),
+        ])
         if (mapData?.title) {
           setMapTitle(mapData.title)
+        }
+        if (graphData?.nodes) {
+          setGraphNodes(graphData.nodes || [])
+        }
+        if (graphData?.edges) {
+          setRawEdges(graphData.edges || [])
+        }
+        if (graphData?.version != null) {
+          setMapVersion(graphData.version)
         }
 
         // If map is currently being synthesized, switch to generating/progress view
         if (mapData?.latest_job_status === 'running' || mapData?.latest_job_status === 'pending') {
           setJobId(mapData.latest_job_id)
+          setIsRegeneration(mapData.latest_job_type?.startsWith('regenerate') ?? false)
           setPhase('generating')
           setIsLoadingMap(false)
           return
         }
 
-        // Otherwise load graph nodes and edges
-        const graphData = await mindMapService.getMapGraph(routeMapId)
-        setGraphNodes(graphData?.nodes || [])
-        setRawEdges(graphData?.edges || [])
-        if (graphData?.version != null) {
-          setMapVersion(graphData.version)
-        }
         setPhase('editor')
       } catch (err) {
         console.error('Failed to load map graph:', err)
@@ -99,7 +109,7 @@ export default function GeneratingPage({ initialPhase }) {
 
   // Handle generation completion from GenerationProgressView
   const handleGenerationComplete = useCallback(
-    ({ mapId: completedMapId, graphData, mapData }) => {
+    ({ mapId: completedMapId, graphData, mapData, job }) => {
       if (mapData?.title) {
         setMapTitle(mapData.title)
       }
@@ -107,6 +117,9 @@ export default function GeneratingPage({ initialPhase }) {
       setRawEdges(graphData?.edges || [])
       if (graphData?.version != null) {
         setMapVersion(graphData.version)
+      }
+      if (mapData?.research_warnings || job?.result?.research_warnings) {
+        setResearchWarnings(mapData?.research_warnings || job?.result?.research_warnings || [])
       }
       setPhase('editor')
       setIsLoadingMap(false)
@@ -199,6 +212,7 @@ export default function GeneratingPage({ initialPhase }) {
         onRegenerate={handleRegenerate}
         toastMessage={toastMessage}
         onClearToast={() => setToastMessage('')}
+        researchWarnings={researchWarnings}
       />
     )
   }

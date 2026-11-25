@@ -517,6 +517,7 @@ def test_node_regeneration_resolves_instruction_from_comment(auth_client):
     mock_pool.fetch = AsyncMock(return_value=[])
 
     mock_redis = MagicMock()
+    mock_redis.eval = AsyncMock(return_value=[1, 0])
     mock_job = MagicMock()
     mock_job.job_id = "arq-job-123"
     mock_redis.enqueue_job = AsyncMock(return_value=mock_job)

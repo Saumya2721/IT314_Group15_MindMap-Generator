@@ -79,7 +79,7 @@ export function GenerationProgressView({
 
       try {
         const genRes = await mindMapService.generateMap(mapId, {
-          topic: initialParams.topic || mapTitle,
+          topic: initialParams.topic,
           ideas: initialParams.ideas || '',
           detail_level: initialParams.detail_level || 'overview',
           purpose: initialParams.purpose || 'general',
@@ -91,10 +91,7 @@ export function GenerationProgressView({
         setCurrentJobId(genRes.job_id)
       } catch (err) {
         if (!isMountedRef.current) return
-        // Automatically clean up empty draft on immediate dispatch failure
-        await mindMapService.deleteMap(mapId).catch(() => null)
-        const msg =
-          err.message || 'Unable to start synthesis. The empty draft was removed. Please try again.'
+        const msg = err.message || 'Unable to start synthesis. Please try again.'
         setGenerationError(msg)
         if (onError) onError(msg)
       } finally {
@@ -103,7 +100,7 @@ export function GenerationProgressView({
     }
 
     dispatch()
-  }, [mapId, currentJobId, initialParams, mapTitle, onError])
+  }, [mapId, currentJobId, initialParams, onError])
 
   // Bounded exponential backoff polling (React StrictMode & unmount safe)
   useEffect(() => {
@@ -186,11 +183,7 @@ export function GenerationProgressView({
             return
           }
 
-          // Initial uncompleted empty draft cleanup only
-          await mindMapService.deleteMap(mapId).catch(() => null)
-          const errMsg =
-            job.error_message ||
-            'Generation could not be completed. The empty draft has been cleaned up.'
+          const errMsg = job.error_message || 'Generation could not be completed.'
           if (isMountedRef.current) {
             setGenerationError(errMsg)
           }
@@ -237,7 +230,7 @@ export function GenerationProgressView({
   }, [mapId, currentJobId, onComplete, onError])
 
   // Cancel generation handler
-  const handleCancelGeneration = useCallback(async () => {
+  const handleCancelGeneration = useCallback(() => {
     if (pollTimerRef.current) {
       clearTimeout(pollTimerRef.current)
       pollTimerRef.current = null
@@ -253,16 +246,7 @@ export function GenerationProgressView({
       return
     }
 
-    // Destructive cancel ONLY for empty initial drafts
     setIsCancelling(true)
-    try {
-      if (mapId) {
-        await mindMapService.deleteMap(mapId)
-      }
-    } catch (err) {
-      console.warn('Failed to delete cancelled map:', err)
-    }
-
     if (onCancel) {
       onCancel()
     } else {
@@ -480,7 +464,7 @@ export function GenerationProgressView({
                 borderColor: '#ffdad6',
                 backgroundColor: '#fff8f7',
               }}
-              title="Cancel synthesis and remove the draft from database"
+              title="Return to Create and leave the draft on your dashboard"
             >
               {isCancelling ? (
                 <>
@@ -490,14 +474,14 @@ export function GenerationProgressView({
                   >
                     sync
                   </span>
-                  <span>Cancelling &amp; removing...</span>
+                  <span>Returning to Create...</span>
                 </>
               ) : (
                 <>
                   <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>
-                    delete_outline
+                    close
                   </span>
-                  <span>Cancel draft</span>
+                  <span>Cancel generation</span>
                 </>
               )}
             </button>

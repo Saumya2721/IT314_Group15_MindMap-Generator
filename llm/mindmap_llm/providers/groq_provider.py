@@ -11,10 +11,13 @@ never needs to change.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from providers.base import LLMProvider, LLMResponse, Message, ToolCall, ToolSpec
 from tracing import trace_span
+
+logger = logging.getLogger(__name__)
 
 
 class GroqProvider(LLMProvider):
@@ -130,10 +133,28 @@ class GroqProvider(LLMProvider):
         if groq_tools:
             kwargs["tools"] = groq_tools
 
-        resp = await self._client.chat.completions.create(**kwargs)
+        try:
+            resp = await self._client.chat.completions.create(**kwargs)
+        except Exception as exc:
+            if response_format is not None and "json_validate_failed" in str(exc).lower():
+                logger.warning(
+                    "Groq strict JSON validation failed (%s). Retrying without response_format constraint...",
+                    exc,
+                )
+                fallback_kwargs = dict(kwargs)
+                fallback_kwargs.pop("response_format", None)
+                resp = await self._client.chat.completions.create(**fallback_kwargs)
+            else:
+                raise
 
         choice = resp.choices[0]
         text = choice.message.content
+        if choice.finish_reason == "length":
+            logger.warning(
+                "Groq completion reached max_tokens limit (%s completion tokens generated, max_tokens=%s)",
+                getattr(resp.usage, "completion_tokens", None),
+                effective_max_tokens,
+            )
 
         tool_calls: list[ToolCall] = []
         if choice.message.tool_calls:

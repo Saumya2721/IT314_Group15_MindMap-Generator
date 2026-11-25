@@ -41,3 +41,9 @@ uv run python tests/evaluation/harness.py --results real_outputs.json --output f
 ```
 
 For a complete run, remove `--limit 2`; rerun after a prompt/pipeline change and compare reports with `--baseline`. Each case uses its own namespace to prevent mixing retrieval results. PDF fixtures are real small PDFs and are parsed before ingestion. These fixtures are not a realistic 20-page NFR performance workload; see NFR notes above.
+
+### Sprint 3: LangSmith Evaluation Dataset Integration (S3-OBS / S3-L4)
+
+In Sprint 3, the evaluation benchmark seeds were integrated into LangSmith dataset tracking:
+- With `LANGSMITH_TRACING=true` and `LANGSMITH_API_KEY` set, test evaluation runs are automatically captured in the `mindweave-dev` LangSmith project.
+- Model A/B evaluations (`llama-3.3-70b-versatile` vs alternate Groq models) can be triggered and tracked directly through the LangSmith dashboard to inspect schema validity, latency, and node depth.

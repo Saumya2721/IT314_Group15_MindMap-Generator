@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useMindMap } from '../context/MindMapContext'
 import { useAuth } from '../context/AuthContext'
 import { AppHeader } from '../components/layout/AppHeader'
@@ -20,6 +20,9 @@ import './DashboardPage.css'
  */
 export default function DashboardPage() {
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const isArchive = searchParams.get('view') === 'archive'
+
   const {
     maps,
     loading,
@@ -75,18 +78,26 @@ export default function DashboardPage() {
   const [sortBy, setSortBy] = useState('recent') // 'recent' | 'title' | 'nodes'
   const [actionError, setActionError] = useState('')
 
+  // Count bookmarked/archived maps
+  const bookmarkedCount = useMemo(() => {
+    return maps.filter((m) => Boolean(m.bookmarked)).length
+  }, [maps])
+
   // Determine which list to render: server search results or full maps list
   const isSearching = searchResults !== null && debouncedQuery.trim()
 
   // Filter out orphaned empty drafts (that are not actively generating)
   const sourceMaps = useMemo(() => {
-    const baseMaps = isSearching ? searchResults || [] : maps
+    let baseMaps = isSearching ? searchResults || [] : maps
+    if (isArchive) {
+      baseMaps = baseMaps.filter((m) => Boolean(m.bookmarked))
+    }
     return baseMaps.filter((m) => {
       const isGenerating = m.latest_job_status === 'running' || m.latest_job_status === 'pending'
       const hasNodes = (Number(m.node_count) || 0) > 0
       return hasNodes || isGenerating
     })
-  }, [maps, searchResults, isSearching])
+  }, [maps, searchResults, isSearching, isArchive])
 
   // Sort maps
   const filteredAndSortedMaps = useMemo(() => {
@@ -221,21 +232,51 @@ export default function DashboardPage() {
         {/* Section Header: Recent Maps & Sorting Control */}
         <section className="dashboard-section-header">
           <div className="section-titles">
-            <h2 className="section-heading">Recent maps</h2>
-            <span className="section-tagline">Curated thought records</span>
+            <h2 className="section-heading">{isArchive ? 'Archived maps' : 'Recent maps'}</h2>
+            <span className="section-tagline">
+              {isArchive
+                ? 'Your bookmarked and saved knowledge repositories'
+                : 'Curated thought records'}
+            </span>
           </div>
 
-          <div className="sort-control">
-            <select
-              className="sort-select"
-              value={sortBy}
-              onChange={(e) => setSortBy(e.target.value)}
-              aria-label="Sort mind maps"
-            >
-              <option value="recent">Sort by last edited</option>
-              <option value="title">Sort by title</option>
-            </select>
-            <span className="material-symbols-outlined sort-icon">expand_more</span>
+          <div className="dashboard-controls-right">
+            {/* View switcher tabs: All Maps vs Archive */}
+            <div className="dashboard-view-tabs" role="tablist">
+              <button
+                type="button"
+                className={`dashboard-tab-btn ${!isArchive ? 'active' : ''}`}
+                onClick={() => setSearchParams({})}
+                role="tab"
+                aria-selected={!isArchive}
+              >
+                <span>All Maps</span>
+                <span className="dashboard-tab-badge">{maps.length}</span>
+              </button>
+              <button
+                type="button"
+                className={`dashboard-tab-btn ${isArchive ? 'active' : ''}`}
+                onClick={() => setSearchParams({ view: 'archive' })}
+                role="tab"
+                aria-selected={isArchive}
+              >
+                <span>Archive</span>
+                <span className="dashboard-tab-badge">{bookmarkedCount}</span>
+              </button>
+            </div>
+
+            <div className="sort-control">
+              <select
+                className="sort-select"
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value)}
+                aria-label="Sort mind maps"
+              >
+                <option value="recent">Sort by last edited</option>
+                <option value="title">Sort by title</option>
+              </select>
+              <span className="material-symbols-outlined sort-icon">expand_more</span>
+            </div>
           </div>
         </section>
 
@@ -262,6 +303,21 @@ export default function DashboardPage() {
               />
             ))}
           </section>
+        ) : isArchive ? (
+          <div className="dashboard-archive-empty">
+            <span className="material-symbols-outlined empty-archive-icon">bookmark_border</span>
+            <h3 className="empty-archive-title">Your Archive is empty</h3>
+            <p className="empty-archive-desc">
+              Save any mind map to your archive by clicking the bookmark icon on its card for quick access anytime.
+            </p>
+            <button
+              type="button"
+              className="btn-view-all-maps"
+              onClick={() => setSearchParams({})}
+            >
+              View All Maps
+            </button>
+          </div>
         ) : (
           <DashboardSearchSkeleton
             showingSkeleton={isSearchLoading && filteredAndSortedMaps.length === 0}
