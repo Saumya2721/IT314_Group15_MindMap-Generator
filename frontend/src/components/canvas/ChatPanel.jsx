@@ -36,7 +36,11 @@ export function renderMarkdown(text, context = {}) {
 
   const isTableRow = (l) => {
     const trimmed = l.trim()
-    return trimmed.startsWith('|') && trimmed.length > 2 && (trimmed.endsWith('|') || trimmed.includes('|'))
+    return (
+      trimmed.startsWith('|') &&
+      trimmed.length > 2 &&
+      (trimmed.endsWith('|') || trimmed.includes('|'))
+    )
   }
 
   const isTableSeparator = (l) => {
@@ -48,9 +52,7 @@ export function renderMarkdown(text, context = {}) {
     let clean = l.trim()
     if (clean.startsWith('|')) clean = clean.slice(1)
     if (clean.endsWith('|')) clean = clean.slice(0, -1)
-    return clean
-      .split(/(?<!\\)\|/)
-      .map((c) => c.trim())
+    return clean.split(/(?<!\\)\|/).map((c) => c.trim())
   }
 
   const flushTable = (key) => {
@@ -133,7 +135,10 @@ export function renderMarkdown(text, context = {}) {
     }
 
     // Multi-line display math block ($$ ... $$)
-    if (line.trim().startsWith('$$') && (line.trim() === '$$' || !line.trim().slice(2).includes('$$'))) {
+    if (
+      line.trim().startsWith('$$') &&
+      (line.trim() === '$$' || !line.trim().slice(2).includes('$$'))
+    ) {
       if (inMathBlock) {
         elements.push(
           <div key={`math-block-${index}`} className="chat-math-block">

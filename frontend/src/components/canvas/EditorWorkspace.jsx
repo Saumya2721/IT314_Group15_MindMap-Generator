@@ -936,7 +936,9 @@ export function EditorWorkspace({
       {/* S3-FE3: Research Degraded Banner */}
       {!dismissedBanner && researchWarnings && (
         <ResearchDegradedBanner
-          reason={Array.isArray(researchWarnings) ? researchWarnings.join(' ') : String(researchWarnings)}
+          reason={
+            Array.isArray(researchWarnings) ? researchWarnings.join(' ') : String(researchWarnings)
+          }
           onDismiss={() => setDismissedBanner(true)}
         />
       )}

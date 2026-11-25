@@ -24,7 +24,7 @@ import logging
 import re
 
 from contracts.models import ChatIntent, MapSnapshot
-from providers.base import LLMProvider, Message
+from providers.base import LLMProvider
 from providers.decision_model import DecisionModel, DecisionModelUnavailable
 from providers.registry import SafeDecisionModel
 
@@ -94,9 +94,7 @@ def _matches_node_regeneration(message: str, map_snapshot: MapSnapshot) -> bool:
     msg_lower = message.lower()
     if _EXPLAIN_CONVERSATIONAL_RE.search(msg_lower):
         return False
-    has_regen_verb = bool(
-        re.search(r"\b(re-?generate|redo|re-?create|re-?write|expand|flesh\s*out)\b", msg_lower)
-    )
+    has_regen_verb = bool(re.search(r"\b(re-?generate|redo|re-?create|re-?write|expand|flesh\s*out)\b", msg_lower))
     if not has_regen_verb:
         return False
     for node in map_snapshot.nodes:
@@ -152,7 +150,7 @@ async def classify_intent(
     # ── 1. Deterministic pattern checks ──────────────────────────────────────
     retry = _MAP_RETRY_RE.match(clean_msg)
     if retry:
-        instructions = clean_msg[retry.end():].strip()
+        instructions = clean_msg[retry.end() :].strip()
         if instructions.rstrip(".!? ").lower() in {"", "with more detail", "in more detail", "from scratch"}:
             return ChatIntent.REGEN_WHOLE
         if _MORE_BRANCHES_RE.fullmatch(instructions):

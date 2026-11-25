@@ -221,7 +221,10 @@ export function AdminDashboardContent() {
           <div className="analytics-card">
             <div className="analytics-card-header">
               <span className="analytics-card-label">Active Users (7 Days)</span>
-              <span className="material-symbols-outlined analytics-card-icon" style={{ color: 'var(--accent-sage, #899b72)' }}>
+              <span
+                className="material-symbols-outlined analytics-card-icon"
+                style={{ color: 'var(--accent-sage, #899b72)' }}
+              >
                 group
               </span>
             </div>
@@ -246,14 +249,19 @@ export function AdminDashboardContent() {
                 ? `${analytics.performance.avg_chat_turn_latency_seconds.toFixed(2)}s`
                 : 'Unavailable'}
             </div>
-            <span className="analytics-card-footnote">Turnaround for conversational RAG queries</span>
+            <span className="analytics-card-footnote">
+              Turnaround for conversational RAG queries
+            </span>
           </div>
 
           {/* Widget 6: Completed Jobs */}
           <div className="analytics-card">
             <div className="analytics-card-header">
               <span className="analytics-card-label">Completed Jobs</span>
-              <span className="material-symbols-outlined analytics-card-icon" style={{ color: 'var(--accent-sage, #899b72)' }}>
+              <span
+                className="material-symbols-outlined analytics-card-icon"
+                style={{ color: 'var(--accent-sage, #899b72)' }}
+              >
                 task_alt
               </span>
             </div>

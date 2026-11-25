@@ -30,8 +30,10 @@ export function AdminPipelineConfigContent() {
       prompt_template_version: data.prompt_template_version ?? 'v1.0',
       llm_provider: data.llm_provider ?? data.llm?.provider ?? 'groq',
       llm_model: data.llm_model ?? data.llm?.model ?? 'openai/gpt-oss-20b',
-      temperature: data.temperature ?? data.llm?.temperature ?? data.llm?.hyperparameters?.temperature ?? 0.2,
-      max_output_tokens: data.max_output_tokens ?? data.llm?.hyperparameters?.max_output_tokens ?? 8000,
+      temperature:
+        data.temperature ?? data.llm?.temperature ?? data.llm?.hyperparameters?.temperature ?? 0.2,
+      max_output_tokens:
+        data.max_output_tokens ?? data.llm?.hyperparameters?.max_output_tokens ?? 8000,
       langsmith_tracing: data.langsmith_tracing ?? data.flags?.langsmith_tracing ?? false,
     }
   }
@@ -224,7 +226,8 @@ export function AdminPipelineConfigContent() {
                   <div>
                     <h2 className="pipeline-card-title">LLM Provider &amp; Model Selection</h2>
                     <p className="pipeline-card-desc">
-                      Configure the active inference provider, model target, and generation hyperparameters.
+                      Configure the active inference provider, model target, and generation
+                      hyperparameters.
                     </p>
                   </div>
                 </div>
@@ -240,7 +243,9 @@ export function AdminPipelineConfigContent() {
                     id="pipeline-provider"
                     className="pipeline-select"
                     value={config?.llm_provider || 'groq'}
-                    onChange={(e) => setConfig((prev) => ({ ...prev, llm_provider: e.target.value }))}
+                    onChange={(e) =>
+                      setConfig((prev) => ({ ...prev, llm_provider: e.target.value }))
+                    }
                   >
                     <option value="groq">Groq (Ultra-Fast Inference)</option>
                     <option value="openai">OpenAI (GPT-4o / GPT-4o-mini)</option>
@@ -287,7 +292,9 @@ export function AdminPipelineConfigContent() {
                         setConfig((prev) => ({ ...prev, temperature: parseFloat(e.target.value) }))
                       }
                     />
-                    <span className="pipeline-slider-val">{Number(config?.temperature ?? 0.2).toFixed(2)}</span>
+                    <span className="pipeline-slider-val">
+                      {Number(config?.temperature ?? 0.2).toFixed(2)}
+                    </span>
                   </div>
                 </div>
 
@@ -305,7 +312,10 @@ export function AdminPipelineConfigContent() {
                     className="pipeline-input"
                     value={config?.max_output_tokens ?? 8000}
                     onChange={(e) =>
-                      setConfig((prev) => ({ ...prev, max_output_tokens: parseInt(e.target.value, 10) }))
+                      setConfig((prev) => ({
+                        ...prev,
+                        max_output_tokens: parseInt(e.target.value, 10),
+                      }))
                     }
                   />
                 </div>
@@ -320,7 +330,8 @@ export function AdminPipelineConfigContent() {
                   <div>
                     <h2 className="pipeline-card-title">LangSmith Observability &amp; Tracing</h2>
                     <p className="pipeline-card-desc">
-                      Telemetry, execution trace capture, and quality-gate evaluation instrumentation (S3-OBS).
+                      Telemetry, execution trace capture, and quality-gate evaluation
+                      instrumentation (S3-OBS).
                     </p>
                   </div>
                 </div>
@@ -333,8 +344,9 @@ export function AdminPipelineConfigContent() {
                       LANGSMITH_TRACING
                     </label>
                     <p className="flag-description">
-                      Stream graph node transitions, research agent telemetry, and execution spans to
-                      the LangSmith observability dashboard. When disabled, tracing runs in zero-overhead no-op mode.
+                      Stream graph node transitions, research agent telemetry, and execution spans
+                      to the LangSmith observability dashboard. When disabled, tracing runs in
+                      zero-overhead no-op mode.
                     </p>
                   </div>
                   <label className="toggle-switch">
@@ -359,7 +371,8 @@ export function AdminPipelineConfigContent() {
                   <div>
                     <h2 className="pipeline-card-title">Runtime Feature Toggles &amp; Grounding</h2>
                     <p className="pipeline-card-desc">
-                      Modify orchestrator behavior, multimodal extractors, and research grounding engines dynamically.
+                      Modify orchestrator behavior, multimodal extractors, and research grounding
+                      engines dynamically.
                     </p>
                   </div>
                 </div>
@@ -394,8 +407,9 @@ export function AdminPipelineConfigContent() {
                   <div className="flag-info">
                     <span className="flag-name">RESEARCH_ENGINE</span>
                     <p className="flag-description">
-                      Selects grounding engine architecture. <strong>subgraph</strong> runs autonomous parallel
-                      research agents, while <strong>inline</strong> executes prompt grounding in-thread.
+                      Selects grounding engine architecture. <strong>subgraph</strong> runs
+                      autonomous parallel research agents, while <strong>inline</strong> executes
+                      prompt grounding in-thread.
                     </p>
                   </div>
                   <div

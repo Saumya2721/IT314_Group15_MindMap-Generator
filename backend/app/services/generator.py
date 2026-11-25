@@ -8,7 +8,6 @@ orchestration prompts, provider abstraction, and validation schema.
 from __future__ import annotations
 
 import logging
-import math
 import sys
 from pathlib import Path
 from typing import Any
@@ -272,14 +271,9 @@ def compute_incremental_layout(
             sibling_xs = [
                 float(n["pos_x"])
                 for s_id, n in node_by_id.items()
-                if s_id != nid
-                and parent_map.get(s_id) == parent_id
-                and _has_valid_coords(n)
+                if s_id != nid and parent_map.get(s_id) == parent_id and _has_valid_coords(n)
             ]
-            if sibling_xs:
-                target_x = max(sibling_xs) + _CARD_WIDTH + _SIBLING_GAP_X
-            else:
-                target_x = float(parent_node["pos_x"])
+            target_x = max(sibling_xs) + _CARD_WIDTH + _SIBLING_GAP_X if sibling_xs else float(parent_node["pos_x"])
 
             # Check for collision against any existing placed nodes at target (x, y)
             collision = True

@@ -147,6 +147,7 @@ async def test_classify_question():
     Uses the LLM classifier path (no regex fast-path for questions).
     """
     from tests.conftest import FakeLLMProvider
+
     dm = ConfigurableDecisionModel("question")
     llm = FakeLLMProvider(["question"])
     snap = _make_snapshot()
@@ -158,6 +159,7 @@ async def test_classify_question():
 async def test_classify_edit_proposal():
     """edit_proposal classified by LLM (old _EDIT_PROPOSAL_RE removed)."""
     from tests.conftest import FakeLLMProvider
+
     dm = ConfigurableDecisionModel("edit_proposal")
     llm = FakeLLMProvider(["edit_proposal"])
     snap = _make_snapshot()
@@ -166,12 +168,15 @@ async def test_classify_edit_proposal():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("message, expected", [
-    ("Generate again keeping in mind that you should create more subbranches", ChatIntent.EDIT_PROPOSAL),
-    ("Regenerate the whole map with more sub-branches", ChatIntent.EDIT_PROPOSAL),
-    ("Generate again", ChatIntent.REGEN_WHOLE),
-    ("Regenerate the whole mind map with more detail", ChatIntent.REGEN_WHOLE),
-])
+@pytest.mark.parametrize(
+    "message, expected",
+    [
+        ("Generate again keeping in mind that you should create more subbranches", ChatIntent.EDIT_PROPOSAL),
+        ("Regenerate the whole map with more sub-branches", ChatIntent.EDIT_PROPOSAL),
+        ("Generate again", ChatIntent.REGEN_WHOLE),
+        ("Regenerate the whole mind map with more detail", ChatIntent.REGEN_WHOLE),
+    ],
+)
 async def test_classify_map_retry_without_model(message, expected):
     assert await classify_intent(ConfigurableDecisionModel("question"), message, _make_snapshot()) == expected
 
@@ -196,6 +201,7 @@ async def test_classify_regen_whole():
 async def test_classify_regen_node():
     """regen_node classified by LLM (old _REGEN_NODE_RE removed)."""
     from tests.conftest import FakeLLMProvider
+
     dm = ConfigurableDecisionModel("regen_node")
     llm = FakeLLMProvider(["regen_node"])
     snap = _make_snapshot()
@@ -216,7 +222,9 @@ async def test_classify_small_talk():
 async def test_classify_regen_node_multi_clause():
     """Compound request 'regenerate X and explain' → REGEN_NODE via LLM classifier."""
     from contracts.models import NodeDraft
+
     from tests.conftest import FakeLLMProvider
+
     dm = ConfigurableDecisionModel("question")  # DM never reached; LLM handles it
     llm = FakeLLMProvider(["regen_node"])
     snap = _make_snapshot(
@@ -238,6 +246,7 @@ async def test_classify_regen_node_multi_clause():
 async def test_classify_regen_node_typo():
     """Typo in action verb ('exppand') → misses regex, reaches DecisionModel which classifies REGEN_NODE."""
     from contracts.models import NodeDraft
+
     dm = ConfigurableDecisionModel("regen_node")
     snap = _make_snapshot(
         nodes=[

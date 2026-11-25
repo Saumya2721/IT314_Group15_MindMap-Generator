@@ -403,7 +403,9 @@ async def chat_turn_task(ctx: dict, request_payload: dict) -> dict:
         elif response.intent in (ChatIntent.REGEN_NODE, ChatIntent.REGEN_WHOLE, ChatIntent.EDIT_PROPOSAL):
             assistant_message = "I could not determine the specific changes to apply. Please specify which branch or node you would like to modify."
         else:
-            assistant_message = "I received your message but could not generate a response. Please try asking again or rephrasing."
+            assistant_message = (
+                "I received your message but could not generate a response. Please try asking again or rephrasing."
+            )
 
         action_proposal_dict = response.action_proposal.model_dump(mode="json") if response.action_proposal else None
 
@@ -611,4 +613,3 @@ def __getattr__(name: str) -> Any:
 
         return WorkerSettings
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-

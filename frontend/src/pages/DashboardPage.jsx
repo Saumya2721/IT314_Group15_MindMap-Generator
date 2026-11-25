@@ -308,13 +308,10 @@ export default function DashboardPage() {
             <span className="material-symbols-outlined empty-archive-icon">bookmark_border</span>
             <h3 className="empty-archive-title">Your Archive is empty</h3>
             <p className="empty-archive-desc">
-              Save any mind map to your archive by clicking the bookmark icon on its card for quick access anytime.
+              Save any mind map to your archive by clicking the bookmark icon on its card for quick
+              access anytime.
             </p>
-            <button
-              type="button"
-              className="btn-view-all-maps"
-              onClick={() => setSearchParams({})}
-            >
+            <button type="button" className="btn-view-all-maps" onClick={() => setSearchParams({})}>
               View All Maps
             </button>
           </div>
