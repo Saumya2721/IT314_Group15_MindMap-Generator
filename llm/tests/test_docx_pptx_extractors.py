@@ -5,9 +5,10 @@ from __future__ import annotations
 import io
 import zipfile
 
-import docx
-import pptx
 import pytest
+
+docx = pytest.importorskip("docx")
+pptx = pytest.importorskip("pptx")
 from ingestion.extractors import (
     FileSizeLimitExceededError,
     SeedExtractionError,

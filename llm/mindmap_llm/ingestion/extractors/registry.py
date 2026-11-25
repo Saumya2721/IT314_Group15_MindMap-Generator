@@ -26,6 +26,7 @@ from ingestion.extractors.docx import extract_text_from_docx
 from ingestion.extractors.image import extract_text_from_image, extract_text_with_tesseract
 from ingestion.extractors.pdf import extract_text_from_pdf
 from ingestion.extractors.pptx import extract_text_from_pptx
+from tracing import trace_span
 
 logger = logging.getLogger(__name__)
 
@@ -193,6 +194,7 @@ class ExtractorRegistry:
         text, _ = self.extract_with_spec(data, mime_type=mime_type, filename=filename, **kwargs)
         return text
 
+    @trace_span("extract_seed_content", run_type="chain")
     def extract_with_spec(
         self,
         data: bytes,
@@ -239,6 +241,7 @@ class ExtractorRegistry:
         text, _ = await self.aextract_with_spec(data, mime_type=mime_type, filename=filename, **kwargs)
         return text
 
+    @trace_span("aextract_seed_content", run_type="chain")
     async def aextract_with_spec(
         self,
         data: bytes,
@@ -348,7 +351,7 @@ def get_default_registry() -> ExtractorRegistry:
                 handler=extract_text_from_docx,
                 max_size_bytes=20 * 1024 * 1024,
                 timeout_seconds=30.0,
-                asset_type="text",
+                asset_type="docx",
                 description="Extracts headings and paragraphs from Microsoft Word .docx files.",
             )
         )
@@ -364,7 +367,7 @@ def get_default_registry() -> ExtractorRegistry:
                 handler=extract_text_from_pptx,
                 max_size_bytes=50 * 1024 * 1024,
                 timeout_seconds=30.0,
-                asset_type="text",
+                asset_type="pptx",
                 description="Extracts slide titles, bullet points and shapes from Microsoft PowerPoint .pptx files.",
             )
         )

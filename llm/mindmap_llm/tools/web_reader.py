@@ -10,17 +10,23 @@ Fetches web pages or URL seeds with strict SSRF protections:
 
 from __future__ import annotations
 
-import html
+import asyncio
 import ipaddress
 import logging
 import socket
 import urllib.parse
+from html.parser import HTMLParser
 from typing import Any
 
 import httpx
-import lxml.html
+
+try:
+    import lxml.html
+except ImportError:
+    lxml = None
 from providers.base import ToolSpec
 from tools.base import Tool, ToolError, ToolResult
+from tracing import trace_span
 
 logger = logging.getLogger(__name__)
 
@@ -140,10 +146,110 @@ def validate_url_and_resolve_ip(url: str) -> list[ipaddress.IPv4Address | ipaddr
     return resolved_ips
 
 
+class _SimpleHTMLToMarkdownParser(HTMLParser):
+    """Fallback standard-library parser when lxml is not installed."""
+
+    def __init__(self):
+        super().__init__()
+        self.title: str | None = None
+        self.lines: list[str] = []
+        self._current_tag: str | None = None
+        self._ignore_stack: list[str] = []
+        self._table_rows: list[list[str]] = []
+        self._current_row: list[str] = []
+        self._current_cell: list[str] = []
+        self._in_title = False
+        self._in_table = False
+        self._in_cell = False
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        t = tag.lower()
+        if t in UNWANTED_HTML_TAGS:
+            self._ignore_stack.append(t)
+            return
+        if self._ignore_stack:
+            return
+        if t == "title":
+            self._in_title = True
+        elif t in ("h1", "h2", "h3", "h4", "h5", "h6"):
+            self._current_tag = t
+            self.lines.append("\n" + "#" * int(t[1]) + " ")
+        elif t == "p":
+            self.lines.append("\n")
+        elif t == "li":
+            self.lines.append("\n- ")
+        elif t == "blockquote":
+            self.lines.append("\n> ")
+        elif t == "table":
+            self._in_table = True
+            self._table_rows = []
+        elif t == "tr" and self._in_table:
+            self._current_row = []
+        elif t in ("th", "td") and self._in_table:
+            self._in_cell = True
+            self._current_cell = []
+
+    def handle_endtag(self, tag: str) -> None:
+        t = tag.lower()
+        if self._ignore_stack:
+            if self._ignore_stack[-1] == t:
+                self._ignore_stack.pop()
+            return
+        if t == "title":
+            self._in_title = False
+        elif t in ("h1", "h2", "h3", "h4", "h5", "h6"):
+            self.lines.append("\n")
+            self._current_tag = None
+        elif t == "p":
+            self.lines.append("\n")
+        elif t in ("th", "td") and self._in_table:
+            self._in_cell = False
+            self._current_row.append("".join(self._current_cell).strip())
+        elif t == "tr" and self._in_table:
+            if any(self._current_row):
+                self._table_rows.append(self._current_row)
+        elif t == "table" and self._in_table:
+            self._in_table = False
+            if self._table_rows:
+                table_lines = []
+                for r_idx, row in enumerate(self._table_rows):
+                    table_lines.append("| " + " | ".join(row) + " |")
+                    if r_idx == 0:
+                        table_lines.append("| " + " | ".join(["---"] * len(row)) + " |")
+                self.lines.append("\n" + "\n".join(table_lines) + "\n")
+
+    def handle_data(self, data: str) -> None:
+        if self._ignore_stack:
+            return
+        if self._in_title:
+            t = (self.title or "") + data
+            self.title = t.strip()
+        elif self._in_cell:
+            self._current_cell.append(data.replace("\n", " "))
+        elif not self._in_table:
+            self.lines.append(data)
+
+
 def html_to_markdown(html_content: str, base_url: str | None = None) -> tuple[str, str | None]:
     """Convert HTML content into clean Markdown, stripping scripts, styles, and boilerplate navigation."""
     if not html_content or not html_content.strip():
         return "", None
+
+    if lxml is None:
+        import html.parser
+        import re
+
+        parser = _SimpleHTMLToMarkdownParser()
+        parser.feed(html_content)
+        fallback_title = parser.title
+        full_lines: list[str] = []
+        if fallback_title:
+            full_lines.append(f"# {fallback_title}\n")
+        full_lines.append("".join(parser.lines))
+        md = re.sub(r"\n{3,}", "\n\n", "".join(full_lines)).strip()
+        # Clean extra leading spaces on heading/quote lines
+        md = re.sub(r"\n\s+([#>-])", r"\n\1", md)
+        return md, fallback_title
 
     try:
         doc = lxml.html.fromstring(html_content)
@@ -253,6 +359,7 @@ def html_to_markdown(html_content: str, base_url: str | None = None) -> tuple[st
     return cleaned, title
 
 
+@trace_span("fetch_web_page_async", run_type="tool")
 async def fetch_web_page_async(
     url: str,
     timeout_s: float = DEFAULT_TIMEOUT_S,
@@ -264,39 +371,58 @@ async def fetch_web_page_async(
     redirect_count = 0
 
     try:
-        async with httpx.AsyncClient(
-            timeout=timeout_s,
-            follow_redirects=False,
-            verify=True,
-        ) as client:
+        async with (
+            asyncio.timeout(timeout_s),
+            httpx.AsyncClient(
+                timeout=timeout_s,
+                follow_redirects=False,
+                trust_env=False,
+                limits=httpx.Limits(max_keepalive_connections=0),
+            ) as client,
+        ):
             while True:
-                validate_url_and_resolve_ip(current_url)
+                origin = httpx.URL(current_url)
+                if origin.username or origin.password or origin.port not in (None, 80, 443):
+                    raise SSRFProtectionError("The page URL has unsupported credentials or port.")
+                addresses = await asyncio.to_thread(validate_url_and_resolve_ip, str(origin))
+                address = addresses[0]
+                pinned = origin.copy_with(host=str(address))
+                async with client.stream(
+                    "GET",
+                    pinned,
+                    headers={
+                        "Host": origin.netloc.decode("ascii"),
+                        "Accept-Encoding": "identity",
+                        "User-Agent": "MindMap-Reader/1.0",
+                    },
+                    extensions={"sni_hostname": origin.raw_host.decode("ascii")},
+                ) as resp:
+                    if resp.is_redirect:
+                        redirect_count += 1
+                        if redirect_count > max_redirects:
+                            raise SSRFProtectionError("Redirect limit exceeded.")
+                        location = resp.headers.get("location")
+                        if not location:
+                            raise ToolError("Redirect response missing Location header.")
+                        current_url = urllib.parse.urljoin(current_url, location)
+                        continue
 
-                resp = await client.get(
-                    current_url,
-                    headers={"User-Agent": "MindMap-Reader/1.0 (SSRF-Guarded)"},
-                )
-                if resp.is_redirect or resp.status_code in (301, 302, 303, 307, 308):
-                    redirect_count += 1
-                    if redirect_count > max_redirects:
-                        raise SSRFProtectionError(
-                            f"Redirect limit exceeded (maximum {max_redirects} redirects allowed)."
-                        )
-                    location = resp.headers.get("location")
-                    if not location:
-                        raise ToolError("Redirect response missing Location header.")
-                    current_url = urllib.parse.urljoin(current_url, location)
-                    continue
+                    resp.raise_for_status()
+                    if resp.headers.get("content-encoding", "identity").lower() != "identity":
+                        raise ToolError("The page returned an unsupported content encoding.")
+                    body = bytearray()
+                    async for chunk in resp.aiter_raw(chunk_size=8192):
+                        if len(body) + len(chunk) > max_bytes:
+                            raise ToolError("The page exceeds the response size limit.")
+                        body.extend(chunk)
+                    return await asyncio.to_thread(
+                        html_to_markdown, body.decode("utf-8", errors="replace"), current_url
+                    )
 
-                resp.raise_for_status()
-
-                raw_bytes = resp.content[:max_bytes]
-                raw_html = raw_bytes.decode("utf-8", errors="replace")
-                markdown, title = html_to_markdown(raw_html, base_url=current_url)
-                return markdown, title
-
-    except httpx.TimeoutException as exc:
-        raise ToolError(f"Request timed out after {timeout_s}s: {exc}") from exc
+    except (TimeoutError, httpx.TimeoutException) as exc:
+        raise ToolError(f"Page request exceeded {timeout_s}s.") from exc
+    except (httpx.InvalidURL, ValueError) as exc:
+        raise ToolError("Invalid page URL.") from exc
     except httpx.HTTPStatusError as exc:
         raise ToolError(f"HTTP request failed with status {exc.response.status_code}: {exc}") from exc
     except httpx.RequestError as exc:
@@ -358,6 +484,7 @@ class WebPageReaderTool(Tool):
             },
         )
 
+    @trace_span("web_page_reader_invoke", run_type="tool")
     async def invoke(self, *, url: str = "", **kwargs: Any) -> list[ToolResult]:
         target_url = url or str(kwargs.get("url", ""))
         if not target_url:

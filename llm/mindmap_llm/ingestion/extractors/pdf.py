@@ -10,6 +10,7 @@ from ingestion.extractors.base import (
     SeedExtractionError,
     detect_structural_cues,
 )
+from tracing import trace_span
 
 if TYPE_CHECKING:
     from pypdf import PdfReader
@@ -59,6 +60,7 @@ def extract_pdf_outline(reader: PdfReader) -> str:
     return ""
 
 
+@trace_span("extract_text_from_pdf", run_type="parser")
 def extract_text_from_pdf(data: bytes, **kwargs: Any) -> str:
     """Extract text from PDF bytes with outline and page-marker headings for StructureAwareChunker."""
     try:

@@ -10,8 +10,10 @@ from ingestion.extractors.base import (
     detect_structural_cues,
 )
 from ingestion.extractors.office_security import validate_office_archive
+from tracing import trace_span
 
 
+@trace_span("extract_text_from_pptx", run_type="parser")
 def extract_text_from_pptx(data: bytes, **kwargs: Any) -> str:
     """Extract text from a PowerPoint presentation (.pptx) converting slide titles into Markdown headings.
 

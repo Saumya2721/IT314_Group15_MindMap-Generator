@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import socket
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import httpx
 import pytest
@@ -148,90 +148,64 @@ def test_ssrf_allows_public_ips():
         assert str(resolved[0]) == "93.184.216.34"
 
 
+class _Body(httpx.AsyncByteStream):
+    async def __aiter__(self):
+        yield b"<html><body>" + b"A" * 500 + b"</body></html>"
+
+
+def _reader_transport(handler):
+    original_client = httpx.AsyncClient
+    return patch(
+        "httpx.AsyncClient", side_effect=lambda **kw: original_client(transport=httpx.MockTransport(handler), **kw)
+    )
+
+
 @pytest.mark.asyncio
 async def test_redirect_limit_enforced():
-    # Simulate a redirect loop exceeding 3 redirects
-    def create_redirect_response(target_url: str):
-        resp = MagicMock()
-        resp.is_redirect = True
-        resp.status_code = 302
-        resp.headers = {"location": target_url}
-        return resp
+    def redirect(request):
+        assert request.url.host == "93.184.216.34"
+        assert request.headers["host"] == "example.com"
+        assert request.extensions["sni_hostname"] == "example.com"
+        return httpx.Response(302, headers={"Location": "/step2"})
 
-    mock_resp = create_redirect_response("https://example.com/step2")
-    mock_client = AsyncMock()
-    mock_client.get = AsyncMock(return_value=mock_resp)
-    mock_client.__aenter__.return_value = mock_client
-    mock_client.__aexit__.return_value = None
-
-    with patch("tools.web_reader.validate_url_and_resolve_ip"):
-        with patch("httpx.AsyncClient", return_value=mock_client):
+    with patch("socket.getaddrinfo", return_value=[(2, 1, 0, "", ("93.184.216.34", 80))]):
+        with _reader_transport(redirect):
             with pytest.raises(SSRFProtectionError, match="Redirect limit exceeded"):
                 await fetch_web_page_async("https://example.com/step1", max_redirects=3)
 
 
 @pytest.mark.asyncio
 async def test_redirect_to_private_ip_blocked():
-    # First response redirects to private IP http://127.0.0.1:8000/admin
-    redirect_resp = MagicMock()
-    redirect_resp.is_redirect = True
-    redirect_resp.status_code = 301
-    redirect_resp.headers = {"location": "http://127.0.0.1:8000/admin"}
+    def dns(host, *_):
+        ip = "93.184.216.34" if host == "example.com" else host
+        return [(2, 1, 0, "", (ip, 80))]
 
-    mock_client = AsyncMock()
-    mock_client.get = AsyncMock(return_value=redirect_resp)
-    mock_client.__aenter__.return_value = mock_client
-    mock_client.__aexit__.return_value = None
+    def redirect(request):
+        assert request.url.host == "93.184.216.34"
+        return httpx.Response(302, headers={"Location": "http://127.0.0.1/"})
 
-    def mock_getaddrinfo(host, port, *args, **kwargs):
-        if host == "example.com":
-            return [(2, 1, 0, "", ("93.184.216.34", 0))]
-        return [(2, 1, 0, "", (host, 0))]
-
-    with patch("socket.getaddrinfo", side_effect=mock_getaddrinfo):
-        with patch("httpx.AsyncClient", return_value=mock_client):
-            # Allow first URL validation, but second URL validation should fail because of 127.0.0.1
-            with pytest.raises(SSRFProtectionError, match="Blocked access to"):
-                await fetch_web_page_async("https://example.com/initial")
+    with patch("socket.getaddrinfo", side_effect=dns), _reader_transport(redirect):
+        with pytest.raises(SSRFProtectionError):
+            await fetch_web_page_async("https://example.com/initial")
 
 
 @pytest.mark.asyncio
 async def test_response_payload_capped_at_1mb():
-    html_sample = "<html><body><h1>Title</h1><p>" + ("A" * 500) + "</p></body></html>"
-    raw_bytes = html_sample.encode("utf-8")
-
-    resp = MagicMock()
-    resp.is_redirect = False
-    resp.status_code = 200
-    resp.raise_for_status = MagicMock()
-    resp.content = raw_bytes
-
-    mock_client = AsyncMock()
-    mock_client.get = AsyncMock(return_value=resp)
-    mock_client.__aenter__.return_value = mock_client
-    mock_client.__aexit__.return_value = None
-
-    with patch("tools.web_reader.validate_url_and_resolve_ip"):
-        with patch("httpx.AsyncClient", return_value=mock_client):
-            # Test capping at 100 bytes
-            markdown, title = await fetch_web_page_async(
-                "https://example.com/large",
-                max_bytes=100,
-            )
-            assert len(markdown.encode("utf-8")) <= 100 or "Title" in markdown
+    with patch("socket.getaddrinfo", return_value=[(2, 1, 0, "", ("93.184.216.34", 80))]):
+        with _reader_transport(lambda request: httpx.Response(200, stream=_Body())):
+            with pytest.raises(ToolError, match="response size limit"):
+                await fetch_web_page_async("https://example.com/large", max_bytes=100)
 
 
 @pytest.mark.asyncio
 async def test_request_timeout_raises_tool_error():
-    mock_client = AsyncMock()
-    mock_client.get = AsyncMock(side_effect=httpx.TimeoutException("Connection timed out"))
-    mock_client.__aenter__.return_value = mock_client
-    mock_client.__aexit__.return_value = None
+    def timeout(request):
+        raise httpx.ReadTimeout("Timed out", request=request)
 
-    with patch("tools.web_reader.validate_url_and_resolve_ip"):
-        with patch("httpx.AsyncClient", return_value=mock_client):
-            with pytest.raises(ToolError, match="timed out"):
-                await fetch_web_page_async("https://example.com/slow", timeout_s=5.0)
+    with patch("socket.getaddrinfo", return_value=[(2, 1, 0, "", ("93.184.216.34", 80))]):
+        with _reader_transport(timeout):
+            with pytest.raises(ToolError, match="exceeded"):
+                await fetch_web_page_async("https://example.com/slow")
 
 
 @pytest.mark.asyncio

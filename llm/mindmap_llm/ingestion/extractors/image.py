@@ -16,6 +16,7 @@ from ingestion.extractors.base import (
     SeedExtractionError,
     detect_structural_cues,
 )
+from tracing import trace_span
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,7 @@ def sniff_image_mime(data: bytes) -> str:
     return "image/png"
 
 
+@trace_span("extract_text_with_tesseract", run_type="tool")
 def extract_text_with_tesseract(data: bytes) -> str:
     """Extract text from image bytes using pytesseract OCR (explicit fallback)."""
     try:
@@ -71,6 +73,7 @@ def extract_text_with_tesseract(data: bytes) -> str:
     return text.strip()
 
 
+@trace_span("extract_text_with_gemini", run_type="llm")
 def extract_text_with_gemini(
     data: bytes,
     mime_type: str,
@@ -82,23 +85,45 @@ def extract_text_with_gemini(
     if not api_key:
         raise ValueError("GEMINI_API_KEY is not configured.")
 
+    import sys
+
     try:
-        from google import genai
-        from google.genai import types
+        genai = sys.modules.get("google.genai")
+        types = sys.modules.get("google.genai.types") or getattr(genai, "types", None)
+        if genai is None or types is None:
+            from google import genai
+            from google.genai import types
+        assert genai is not None and types is not None
     except ImportError as exc:  # pragma: no cover
         raise RuntimeError("google-genai not installed. Run `uv add google-genai`.") from exc
 
     client = genai.Client(api_key=api_key)
     part = types.Part.from_bytes(data=data, mime_type=mime_type)
 
-    response = client.models.generate_content(
-        model=model,
-        contents=[part, VISION_PROMPT],  # type: ignore[arg-type]
-    )
-    text = response.text or ""
-    return text.strip()
+    models_to_try = [model]
+    for fallback in ["gemini-3.5-flash", "gemini-3.6-flash", "gemini-3.8-flash"]:
+        if fallback not in models_to_try:
+            models_to_try.append(fallback)
+
+    last_exc = None
+    for target_model in models_to_try:
+        try:
+            response = client.models.generate_content(
+                model=target_model,
+                contents=[part, VISION_PROMPT],  # type: ignore[arg-type]
+            )
+            text = response.text or ""
+            return text.strip()
+        except Exception as exc:
+            last_exc = exc
+            logger.warning("Gemini model %s extraction failed (%s), trying next fallback...", target_model, exc)
+
+    if last_exc:
+        raise last_exc
+    return ""
 
 
+@trace_span("extract_text_with_openrouter", run_type="llm")
 def extract_text_with_openrouter(
     data: bytes,
     mime_type: str,
@@ -142,6 +167,7 @@ def extract_text_with_openrouter(
         return str(text or "").strip()
 
 
+@trace_span("extract_text_from_image", run_type="chain")
 def extract_text_from_image(
     data: bytes, mime_type: str | None = None, *, extractor: str | None = None, **kwargs: Any
 ) -> str:

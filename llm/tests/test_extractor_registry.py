@@ -273,3 +273,16 @@ async def test_normalizer_integrates_seamlessly_with_registry():
         assert "## OVERVIEW" in pdf_asset.content_text
         assert "PDF page 1 details." in pdf_asset.content_text
         assert "Project Alpha" in normalized.combined_text
+
+
+@pytest.mark.asyncio
+async def test_url_only_seed_keeps_extracted_text_and_provenance():
+    url = "https://example.test/document"
+    with patch("seed.normalizer.fetch_web_page_async", return_value=("# Seed heading", "Seed title")):
+        normalized = await normalize_seed(submission=SeedSubmission(topic=None, ideas=None, seed_url=url))
+
+    [asset] = normalized.seed_assets
+    assert asset.asset_type == SeedAssetType.URL
+    assert asset.file_name == url
+    assert asset.storage_key is None
+    assert "# Seed heading" in normalized.combined_text

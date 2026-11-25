@@ -11,6 +11,7 @@ from ingestion.extractors.base import (
     detect_structural_cues,
 )
 from ingestion.extractors.office_security import validate_office_archive
+from tracing import trace_span
 
 
 def _map_docx_heading_level(style_name: str) -> int | None:
@@ -29,6 +30,7 @@ def _map_docx_heading_level(style_name: str) -> int | None:
     return None
 
 
+@trace_span("extract_text_from_docx", run_type="parser")
 def extract_text_from_docx(data: bytes, **kwargs: Any) -> str:
     """Extract text from a Word document (.docx) converting styles to Markdown for StructureAwareChunker.
 
