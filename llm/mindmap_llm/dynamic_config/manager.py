@@ -139,9 +139,11 @@ class DynamicConfigManager:
         """Fetch raw JSON configuration from GET /internal/config."""
         endpoint = f"{self._backend_url}/internal/config"
         timeout = float(os.environ.get("CONFIG_FETCH_TIMEOUT_S", "10.0"))
+        key = os.getenv("PIPELINE_CONFIG_SERVICE_KEY") or os.getenv("INTERNAL_SERVICE_KEY") or ""
+        headers = {"X-Internal-Service-Key": key}
 
         if self._custom_client:
-            resp = await self._custom_client.get(endpoint, timeout=timeout)
+            resp = await self._custom_client.get(endpoint, timeout=timeout, headers=headers)
             resp.raise_for_status()
             data = resp.json()
             if not isinstance(data, dict):
@@ -149,7 +151,7 @@ class DynamicConfigManager:
             return data
 
         async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.get(endpoint)
+            resp = await client.get(endpoint, headers=headers)
             resp.raise_for_status()
             data = resp.json()
             if not isinstance(data, dict):

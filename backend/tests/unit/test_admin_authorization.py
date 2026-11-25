@@ -38,7 +38,7 @@ def _make_fake_user(user_id: str = "aaa-bbb-ccc", email: str = "admin@example.co
 def _supabase_profile_response(role: str = "admin") -> MagicMock:
     """Return an object matching ``supabase_admin.table(...).select(...).eq(...).execute()``."""
     mock_resp = MagicMock()
-    mock_resp.data = [{"role": role}]
+    mock_resp.data = [{"role": role, "suspended_at": None}]
     return mock_resp
 
 
@@ -153,7 +153,7 @@ class TestRegularUserForbidden:
         class _Ctx:
             def __enter__(self_ctx):
                 self_ctx.p1 = patch("core.supabase.anon_client")
-                self_ctx.p2 = patch("auth.dependencies.supabase_admin")
+                self_ctx.p2 = patch("core.supabase.admin")
                 mock_anon = self_ctx.p1.__enter__()
                 mock_admin = self_ctx.p2.__enter__()
 
@@ -219,7 +219,7 @@ class TestOtherRolesForbidden:
     def test_non_admin_role_forbidden(self, client: TestClient, role: str):
         with (
             patch("core.supabase.anon_client") as mock_anon,
-            patch("auth.dependencies.supabase_admin") as mock_admin,
+            patch("core.supabase.admin") as mock_admin,
         ):
             mock_client = MagicMock()
             mock_client.auth.get_user.return_value = SimpleNamespace(user=_make_fake_user())
@@ -248,7 +248,7 @@ class TestAdminAccess:
         class _Ctx:
             def __enter__(self_ctx):
                 self_ctx.p1 = patch("core.supabase.anon_client")
-                self_ctx.p2 = patch("auth.dependencies.supabase_admin")
+                self_ctx.p2 = patch("core.supabase.admin")
                 mock_anon = self_ctx.p1.__enter__()
                 mock_admin_client = self_ctx.p2.__enter__()
 
@@ -271,11 +271,23 @@ class TestAdminAccess:
         with self._patch_admin_auth():
             # Mock the DB pool for the dashboard query
             mock_pool = MagicMock()
+            mock_pool.execute = AsyncMock()
+            mock_pool.acquire.return_value.__aenter__.return_value = mock_pool
 
             async def fake_fetchval(sql, *a, **kw):
                 return 42
 
+            async def fake_fetchrow(sql, *a, **kw):
+                return {
+                    "total_users": 42,
+                    "active_users_last_30_days": 42,
+                    "total_generations": 42,
+                    "maps_generated_last_30_days": 42,
+                    "failed_jobs": 0,
+                }
+
             mock_pool.fetchval = fake_fetchval
+            mock_pool.fetchrow = fake_fetchrow
 
             cast(FastAPI, client.app).state.pool = mock_pool
             resp = client.get(
@@ -290,6 +302,8 @@ class TestAdminAccess:
     def test_users_list_success_for_admin(self, client: TestClient):
         with self._patch_admin_auth():
             mock_pool = MagicMock()
+            mock_pool.execute = AsyncMock()
+            mock_pool.acquire.return_value.__aenter__.return_value = mock_pool
 
             async def fake_fetch(sql, *a, **kw):
                 return []
@@ -307,6 +321,8 @@ class TestAdminAccess:
     def test_audit_log_success_for_admin(self, client: TestClient):
         with self._patch_admin_auth():
             mock_pool = MagicMock()
+            mock_pool.execute = AsyncMock()
+            mock_pool.acquire.return_value.__aenter__.return_value = mock_pool
 
             async def fake_fetch(sql, *a, **kw):
                 return []
@@ -360,7 +376,7 @@ class TestAllAdminEndpointsProtected:
 
         with (
             patch("core.supabase.anon_client") as mock_anon,
-            patch("auth.dependencies.supabase_admin") as mock_admin,
+            patch("core.supabase.admin") as mock_admin,
         ):
             mock_client = MagicMock()
             mock_client.auth.get_user.return_value = SimpleNamespace(user=_make_fake_user())
@@ -403,7 +419,7 @@ class TestEdgeCases:
         """If the user has no profile row, access is denied (403)."""
         with (
             patch("core.supabase.anon_client") as mock_anon,
-            patch("auth.dependencies.supabase_admin") as mock_admin,
+            patch("core.supabase.admin") as mock_admin,
         ):
             mock_client = MagicMock()
             mock_client.auth.get_user.return_value = SimpleNamespace(user=_make_fake_user())
@@ -419,11 +435,11 @@ class TestEdgeCases:
             )
             assert resp.status_code == 403
 
-    def test_profile_lookup_error_returns_403(self, client: TestClient):
-        """If the profile lookup fails, access is denied (403)."""
+    def test_profile_lookup_error_returns_503(self, client: TestClient):
+        """If the profile lookup fails, access is denied (503)."""
         with (
             patch("core.supabase.anon_client") as mock_anon,
-            patch("auth.dependencies.supabase_admin") as mock_admin,
+            patch("core.supabase.admin") as mock_admin,
         ):
             mock_client = MagicMock()
             mock_client.auth.get_user.return_value = SimpleNamespace(user=_make_fake_user())
@@ -437,4 +453,4 @@ class TestEdgeCases:
                 "/api/admin/dashboard",
                 headers={"Authorization": "Bearer valid-token"},
             )
-            assert resp.status_code == 403
+            assert resp.status_code == 503

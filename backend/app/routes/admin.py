@@ -13,10 +13,12 @@ import logging
 from typing import Any
 from uuid import UUID
 
+from arq.jobs import Job
 from auth.dependencies import require_admin_role
 from core.supabase import admin
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from services.pipeline_config import PipelineConfig, PipelineConfigPatch, effective_config, read_config_overrides
+from services.queue import get_redis_pool
 from uploads.service import delete_user_storage_files
 
 from db.connection import transaction
@@ -106,25 +108,38 @@ async def update_pipeline_config(
 
 # ------------------------------------------------------------------ Dashboard
 @router.get("/dashboard", status_code=200)
-async def admin_dashboard(request: Request) -> dict[str, Any]:
-    """Return aggregate platform statistics for the admin dashboard."""
+async def admin_dashboard(request: Request, admin_user: Any = Depends(require_admin_role)) -> dict[str, Any]:
+    """Return aggregate platform statistics strictly from aggregate database views (AUD-06 / S3-BE3).
+
+    Privacy & Security Invariant: Never queries raw application tables (profiles, mind_maps, generation_jobs).
+    """
     pool = _get_pool(request)
 
-    total_users = await pool.fetchval("SELECT count(*)::int FROM public.profiles")
-    total_maps = await pool.fetchval("SELECT count(*)::int FROM public.mind_maps")
-    total_jobs = await pool.fetchval("SELECT count(*)::int FROM public.generation_jobs")
-    failed_jobs = await pool.fetchval("SELECT count(*)::int FROM public.generation_jobs WHERE status = 'failed'")
-    active_users_30d = await pool.fetchval(
-        "SELECT count(DISTINCT user_id)::int FROM public.mind_maps WHERE updated_at >= now() - interval '30 days'"
-    )
+    try:
+        async with transaction(pool) as conn:
+            await conn.execute("SELECT set_config('request.jwt.claim.sub', $1, true)", str(admin_user.id))
+            user_row = await conn.fetchrow(
+                "SELECT total_users, active_users_last_30_days FROM public.admin_active_users"
+            )
+            gen_row = await conn.fetchrow(
+                "SELECT total_generations, maps_generated_last_30_days, total_maps FROM public.admin_generation_counts"
+            )
+            failure_row = await conn.fetchrow("SELECT failed_jobs FROM public.admin_generation_failure_rates")
 
-    return {
-        "total_users": total_users or 0,
-        "total_maps": total_maps or 0,
-        "total_jobs": total_jobs or 0,
-        "failed_jobs": failed_jobs or 0,
-        "active_users_last_30_days": active_users_30d or 0,
-    }
+        user_dict = dict(user_row) if user_row else {}
+        gen_dict = dict(gen_row) if gen_row else {}
+        failure_dict = dict(failure_row) if failure_row else {}
+
+        return {
+            "total_users": int(user_dict.get("total_users") or 0),
+            "total_maps": int(gen_dict.get("total_maps") or 0),
+            "total_jobs": int(gen_dict.get("total_generations") or 0),
+            "failed_jobs": int(failure_dict.get("failed_jobs") or 0),
+            "active_users_last_30_days": int(user_dict.get("active_users_last_30_days") or 0),
+        }
+    except Exception as exc:
+        logger.error("Failed to query aggregate views in admin_dashboard: %s", exc)
+        raise HTTPException(500, "Failed to retrieve dashboard aggregate analytics") from exc
 
 
 # ------------------------------------------------------------------ User management
@@ -142,14 +157,20 @@ async def list_users(
     pool = _get_pool(request)
     query = """
         SELECT
-            p.id,
+            COALESCE(p.id, d.user_id) AS id,
             u.email,
-            p.created_at,
-            CASE WHEN p.suspended_at IS NOT NULL THEN 'suspended' ELSE 'active' END AS status,
+            COALESCE(p.created_at, d.created_at) AS created_at,
+            CASE
+                WHEN d.user_id IS NOT NULL THEN 'deletion_pending'
+                WHEN p.suspended_at IS NOT NULL THEN 'suspended'
+                ELSE 'active'
+            END AS status,
             (SELECT count(*)::int FROM public.mind_maps m WHERE m.user_id = p.id) AS map_count
         FROM public.profiles p
-        LEFT JOIN auth.users u ON u.id = p.id
-        ORDER BY p.created_at DESC
+        FULL JOIN (SELECT user_id, created_at FROM public.account_deletion_requests WHERE completed_at IS NULL) d
+            ON d.user_id = p.id
+        LEFT JOIN auth.users u ON u.id = COALESCE(p.id, d.user_id)
+        ORDER BY created_at DESC, id
         LIMIT $1 OFFSET $2
     """
     rows = await pool.fetch(query, limit, offset)
@@ -197,26 +218,22 @@ async def suspend_user(
     """Suspend the specified user."""
     pool = _get_pool(request)
 
-    existing = await pool.fetchrow("SELECT id FROM public.profiles WHERE id = $1", user_id)
-    if not existing:
-        raise HTTPException(404, "User not found")
-
-    actor_id = getattr(admin_user, "id", None)
-    if actor_id and str(actor_id) == str(user_id):
+    actor_id = UUID(str(admin_user.id))
+    if actor_id == user_id:
         raise HTTPException(400, "Cannot suspend your own admin account")
-
-    await pool.execute(
-        "UPDATE public.profiles SET suspended_at = now() WHERE id = $1",
-        user_id,
-    )
-
-    await record_audit_log(
-        pool=pool,
-        actor_id=UUID(str(actor_id)) if actor_id else user_id,
-        action="user.suspend",
-        target_user_id=user_id,
-        metadata={"target_user_id": str(user_id), "status": "suspended"},
-    )
+    async with transaction(pool) as conn:
+        await conn.execute("SELECT pg_advisory_xact_lock(hashtext('account_delete:' || $1::text))", str(user_id))
+        if await conn.fetchval("SELECT 1 FROM public.account_deletion_requests WHERE user_id = $1", user_id):
+            raise HTTPException(409, "Account deletion is already in progress")
+        updated = await conn.fetchval(
+            "UPDATE public.profiles SET suspended_at = COALESCE(suspended_at, now()) WHERE id = $1 RETURNING id",
+            user_id,
+        )
+        if updated is None:
+            raise HTTPException(404, "User not found")
+        await record_audit_log(
+            conn, actor_id=actor_id, action="user.suspend", target_user_id=user_id, metadata={"status": "suspended"}
+        )
 
     return {
         "message": "User suspended successfully",
@@ -234,24 +251,19 @@ async def unsuspend_user(
     """Restore access to a suspended user."""
     pool = _get_pool(request)
 
-    existing = await pool.fetchrow("SELECT id FROM public.profiles WHERE id = $1", user_id)
-    if not existing:
-        raise HTTPException(404, "User not found")
-
-    actor_id = getattr(admin_user, "id", None)
-
-    await pool.execute(
-        "UPDATE public.profiles SET suspended_at = NULL WHERE id = $1",
-        user_id,
-    )
-
-    await record_audit_log(
-        pool=pool,
-        actor_id=UUID(str(actor_id)) if actor_id else user_id,
-        action="user.unsuspend",
-        target_user_id=user_id,
-        metadata={"target_user_id": str(user_id), "status": "active"},
-    )
+    actor_id = UUID(str(admin_user.id))
+    async with transaction(pool) as conn:
+        await conn.execute("SELECT pg_advisory_xact_lock(hashtext('account_delete:' || $1::text))", str(user_id))
+        if await conn.fetchval("SELECT 1 FROM public.account_deletion_requests WHERE user_id = $1", user_id):
+            raise HTTPException(409, "Account deletion is already in progress")
+        updated = await conn.fetchval(
+            "UPDATE public.profiles SET suspended_at = NULL WHERE id = $1 RETURNING id", user_id
+        )
+        if updated is None:
+            raise HTTPException(404, "User not found")
+        await record_audit_log(
+            conn, actor_id=actor_id, action="user.unsuspend", target_user_id=user_id, metadata={"status": "active"}
+        )
 
     return {
         "message": "User unsuspended successfully",
@@ -269,42 +281,113 @@ async def delete_user(
     """Permanently delete a user account with cascade cleanup of storage and database records."""
     pool = _get_pool(request)
 
-    existing = await pool.fetchrow("SELECT id FROM public.profiles WHERE id = $1", user_id)
-    if not existing:
-        raise HTTPException(404, "User not found")
-
-    actor_id = getattr(admin_user, "id", None)
-    if actor_id and str(actor_id) == str(user_id):
+    actor_id = UUID(str(admin_user.id))
+    if actor_id == user_id:
         raise HTTPException(400, "Cannot delete your own admin account")
 
-    # 1. Clean up associated Supabase Storage files
+    async with transaction(pool) as conn:
+        await conn.execute("SELECT pg_advisory_xact_lock(hashtext('account_delete:' || $1::text))", str(user_id))
+        operation = await conn.fetchrow("SELECT * FROM public.account_deletion_requests WHERE user_id = $1", user_id)
+        if operation is None:
+            suspended = await conn.fetchval(
+                "UPDATE public.profiles SET suspended_at = COALESCE(suspended_at, now()) WHERE id = $1 RETURNING id",
+                user_id,
+            )
+            if suspended is None:
+                raise HTTPException(404, "User not found")
+            await conn.execute(
+                """
+                INSERT INTO public.account_deletion_requests (user_id, actor_id, map_ids)
+                VALUES ($1, $2, ARRAY(SELECT id FROM public.mind_maps WHERE user_id = $1))
+                """,
+                user_id,
+                actor_id,
+            )
+            await record_audit_log(conn, actor_id=actor_id, action="user.delete.requested", target_user_id=user_id)
+
+    phase = "storage cleanup"
     try:
-        await delete_user_storage_files(user_id=user_id, pool=pool)
-    except Exception as exc:
-        logger.warning("Storage cleanup failed for user %s: %s", user_id, exc)
+        async with transaction(pool) as conn:
+            operation = await conn.fetchrow(
+                "SELECT * FROM public.account_deletion_requests WHERE user_id = $1 FOR UPDATE", user_id
+            )
+            if operation["storage_cleaned_at"] is None:
+                if operation.get("map_ids") and await conn.fetchval(
+                    """
+                    SELECT EXISTS (
+                        SELECT 1 FROM public.generation_jobs
+                        WHERE map_id = ANY($1::uuid[]) AND status IN ('pending', 'running')
+                    )
+                    """,
+                    operation["map_ids"],
+                ):
+                    return {
+                        "success": False,
+                        "user_id": str(user_id),
+                        "message": "Deletion is waiting for active jobs. Retry after they finish.",
+                    }
+                await delete_user_storage_files(user_id=user_id, pool=conn)
+                await conn.execute(
+                    "UPDATE public.account_deletion_requests SET storage_cleaned_at = now() WHERE user_id = $1",
+                    user_id,
+                )
 
-    # 2. Immutable audit log: Record before deleting target database records
-    await record_audit_log(
-        pool=pool,
-        actor_id=UUID(str(actor_id)) if actor_id else user_id,
-        action="user.delete",
-        target_user_id=user_id,
-        metadata={"target_user_id": str(user_id), "action": "delete"},
-    )
+        phase = "vector cleanup"
+        async with transaction(pool) as conn:
+            operation = await conn.fetchrow(
+                "SELECT * FROM public.account_deletion_requests WHERE user_id = $1 FOR UPDATE", user_id
+            )
+            if operation.get("map_ids") and operation["vectors_cleaned_at"] is None:
+                redis = get_redis_pool(request)
+                if redis is None:
+                    raise RuntimeError("Queue unavailable")
+                job_id = f"account-vectors:{user_id}:{operation['vector_attempt']}"
+                await redis.enqueue_job(
+                    "delete_account_map_vectors", [str(m) for m in operation["map_ids"]], _job_id=job_id
+                )
+                result = await Job(job_id, redis=redis).result_info()
+                if result is None or not result.success:
+                    if result is not None:
+                        await conn.execute(
+                            "UPDATE public.account_deletion_requests SET vector_attempt = vector_attempt + 1 "
+                            "WHERE user_id = $1",
+                            user_id,
+                        )
+                    return {
+                        "success": False,
+                        "user_id": str(user_id),
+                        "message": "Vector cleanup is pending. Retry deletion to check its progress.",
+                    }
+                await conn.execute(
+                    "UPDATE public.account_deletion_requests SET vectors_cleaned_at = now() WHERE user_id = $1",
+                    user_id,
+                )
 
-    # 3. Database cascade deletion
-    await pool.execute("DELETE FROM public.profiles WHERE id = $1", user_id)
+        phase = "account removal"
+        async with transaction(pool) as conn:
+            operation = await conn.fetchrow(
+                "SELECT * FROM public.account_deletion_requests WHERE user_id = $1 FOR UPDATE", user_id
+            )
+            if operation["completed_at"] is None:
+                auth_exists = await conn.fetchval("SELECT EXISTS(SELECT 1 FROM auth.users WHERE id = $1)", user_id)
+                if auth_exists:
+                    await asyncio.to_thread(admin.auth.admin.delete_user, str(user_id))
+                await conn.execute("DELETE FROM public.profiles WHERE id = $1", user_id)
+                await record_audit_log(
+                    conn, actor_id=operation["actor_id"], action="user.delete", target_user_id=user_id
+                )
+                await conn.execute(
+                    "UPDATE public.account_deletion_requests SET completed_at = now() WHERE user_id = $1", user_id
+                )
+    except Exception:
+        logger.exception("Account deletion paused for %s during %s", user_id, phase)
+        return {
+            "success": False,
+            "user_id": str(user_id),
+            "message": f"Deletion paused during {phase}. Retry to resume.",
+        }
 
-    # 4. Remove from Supabase Auth
-    try:
-        await asyncio.to_thread(admin.auth.admin.delete_user, str(user_id))
-    except Exception as exc:
-        logger.warning("Failed to delete user %s from Supabase auth: %s", user_id, exc)
-
-    return {
-        "message": "User and associated resources deleted successfully",
-        "user_id": str(user_id),
-    }
+    return {"success": True, "user_id": str(user_id), "message": "User and associated resources deleted successfully"}
 
 
 # ------------------------------------------------------------------ Audit log
@@ -323,7 +406,7 @@ async def list_audit_log(request: Request, limit: int = 50) -> list[dict[str, An
 
 # ------------------------------------------------------------------ Aggregate Analytics
 @router.get("/stats", status_code=200)
-async def admin_stats(request: Request) -> dict[str, Any]:
+async def admin_stats(request: Request, admin_user: Any = Depends(require_admin_role)) -> dict[str, Any]:
     """Return aggregate operational analytics for platform administrators.
 
     Privacy & Security Invariants:
@@ -335,25 +418,24 @@ async def admin_stats(request: Request) -> dict[str, Any]:
     pool = _get_pool(request)
 
     try:
-        user_task = pool.fetchrow(
-            "SELECT total_users, active_users_last_7_days, active_users_last_30_days FROM public.admin_active_users"
-        )
-        gen_task = pool.fetchrow(
-            "SELECT total_generations, generations_last_7_days, generations_last_30_days, "
-            "maps_generated_last_7_days, maps_generated_last_30_days "
-            "FROM public.admin_generation_counts"
-        )
-        failure_task = pool.fetchrow(
-            "SELECT failed_jobs, completed_jobs, failure_rate FROM public.admin_generation_failure_rates"
-        )
-        error_task = pool.fetch("SELECT category, count FROM public.admin_job_error_categories")
-        perf_task = pool.fetchrow(
-            "SELECT avg_generation_latency, avg_chat_turn_latency FROM public.admin_performance_latencies"
-        )
+        async with transaction(pool) as conn:
+            await conn.execute("SELECT set_config('request.jwt.claim.sub', $1, true)", str(admin_user.id))
+            user_row = await conn.fetchrow(
+                "SELECT total_users, active_users_last_7_days, active_users_last_30_days FROM public.admin_active_users"
+            )
+            gen_row = await conn.fetchrow(
+                "SELECT total_generations, generations_last_7_days, generations_last_30_days, "
+                "maps_generated_last_7_days, maps_generated_last_30_days, maps_created_per_day "
+                "FROM public.admin_generation_counts"
+            )
+            failure_row = await conn.fetchrow(
+                "SELECT failed_jobs, completed_jobs, failure_rate FROM public.admin_generation_failure_rates"
+            )
+            error_rows = await conn.fetch("SELECT category, count FROM public.admin_job_error_categories")
+            perf_row = await conn.fetchrow(
+                "SELECT avg_generation_latency, avg_chat_turn_latency FROM public.admin_performance_latencies"
+            )
 
-        user_row, gen_row, failure_row, error_rows, perf_row = await asyncio.gather(
-            user_task, gen_task, failure_task, error_task, perf_task
-        )
     except Exception as exc:
         logger.error("Failed to query aggregate admin analytics views: %s", exc)
         raise HTTPException(500, "Failed to retrieve aggregate operational analytics") from exc
@@ -366,8 +448,8 @@ async def admin_stats(request: Request) -> dict[str, Any]:
 
     # Parse map generation metrics
     gen_data = dict(gen_row) if gen_row else {}
-    maps_7d = int(gen_data.get("maps_generated_last_7_days") or gen_data.get("generations_last_7_days") or 0)
-    maps_30d = int(gen_data.get("maps_generated_last_30_days") or gen_data.get("generations_last_30_days") or 0)
+    maps_7d = int(gen_data.get("maps_generated_last_7_days") or 0)
+    maps_30d = int(gen_data.get("maps_generated_last_30_days") or 0)
     total_gen = int(gen_data.get("total_generations") or 0)
 
     # Parse failure metrics
@@ -404,6 +486,7 @@ async def admin_stats(request: Request) -> dict[str, Any]:
             "maps_generated_last_7_days": maps_7d,
             "maps_generated_last_30_days": maps_30d,
             "total_generations": total_gen,
+            "maps_created_per_day": gen_data.get("maps_created_per_day") or [],
         },
         "job_failures": {
             "failure_rate": failure_rate,

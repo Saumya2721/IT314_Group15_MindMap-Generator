@@ -77,15 +77,7 @@ class _AdminProxy:
     """Proxy object allowing `admin.table(...)` attribute access with lazy initialization."""
 
     def __getattr__(self, name: str):
-        try:
-            client = get_admin_client()
-            return getattr(client, name)
-        except RuntimeError:
-            from unittest.mock import MagicMock
-
-            mock_sub = MagicMock()
-            setattr(self, name, mock_sub)
-            return mock_sub
+        return getattr(get_admin_client(), name)
 
 
 # Exported admin client proxy (never logs users in; for backend storage/db operations only)
@@ -104,6 +96,27 @@ def anon_client() -> Client:
     return create_client(SUPABASE_URL, ANON_KEY)
 
 
+def require_active_profile(user_id: str) -> dict[str, Any]:
+    """Return verified account metadata or reject the session."""
+    try:
+        result = admin.table("profiles").select("role, suspended_at").eq("id", user_id).execute()
+        profiles = result.data
+    except Exception as exc:
+        logger.warning("Account status lookup failed for user %s", user_id, exc_info=True)
+        raise HTTPException(503, "Account status is temporarily unavailable.") from exc
+
+    if profiles == []:
+        raise HTTPException(403, "Account profile is unavailable.")
+    if not isinstance(profiles, list) or len(profiles) != 1:
+        raise HTTPException(503, "Account status is temporarily unavailable.")
+    profile = profiles[0]
+    if not isinstance(profile, dict) or "suspended_at" not in profile or not isinstance(profile.get("role"), str):
+        raise HTTPException(503, "Account status is temporarily unavailable.")
+    if profile["suspended_at"] is not None:
+        raise HTTPException(403, "Account is suspended. Please contact support.")
+    return profile
+
+
 bearer = HTTPBearer(auto_error=False)
 
 
@@ -113,10 +126,14 @@ def get_current_user(
 ):
     """Validate token from Authorization header OR HttpOnly cookie via Supabase auth."""
     token: str | None = None
-    if creds and creds.credentials:
+    if creds and hasattr(creds, "credentials") and creds.credentials:
         token = creds.credentials
     elif request.cookies.get("access_token"):
         token = request.cookies.get("access_token")
+    elif request.headers.get("Authorization"):
+        auth_hdr = request.headers.get("Authorization", "")
+        if auth_hdr.lower().startswith("bearer "):
+            token = auth_hdr[7:].strip()
 
     if not token:
         raise HTTPException(
@@ -144,6 +161,12 @@ def get_current_user(
             detail="Invalid or expired token",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    request.state.profile = require_active_profile(str(user.id))
+
+    # Store user in request state for downstream rate limiting and logging
+    request.state.user = user
+
     return user
 
 

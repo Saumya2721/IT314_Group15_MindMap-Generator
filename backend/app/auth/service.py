@@ -2,35 +2,13 @@ import logging
 from typing import Any
 
 from core.config import settings
-from core.supabase import admin, anon_client
+from core.supabase import admin, anon_client, require_active_profile
 from fastapi import HTTPException
 
 logger = logging.getLogger(__name__)
 
 
 class AuthService:
-    @staticmethod
-    def _check_suspension(user_id: str) -> None:
-        """Verify that the user account is not suspended.
-
-        Raises HTTP 403 Forbidden if the user's profile has `suspended_at` set.
-        """
-        try:
-            profile_res = admin.table("profiles").select("suspended_at").eq("id", user_id).execute()
-            data = getattr(profile_res, "data", None)
-            if isinstance(data, list) and len(data) > 0:
-                first = data[0]
-                if isinstance(first, dict) and first.get("suspended_at") is not None:
-                    logger.warning("Suspended user attempted access: %s", user_id)
-                    raise HTTPException(
-                        status_code=403,
-                        detail="Account is suspended. Please contact support.",
-                    )
-        except HTTPException:
-            raise
-        except Exception as exc:
-            logger.warning("Could not check suspension status for user %s: %s", user_id, exc)
-
     @staticmethod
     def signup(email: str, password: str, name: str | None = None) -> dict[str, Any]:
         payload: dict[str, Any] = {"email": email, "password": password}
@@ -58,13 +36,13 @@ class AuthService:
         if not res.session or not res.user:
             logger.warning("Supabase sign-in succeeded but returned no session for %s", email)
             raise HTTPException(status_code=401, detail="Invalid Email or Password")
-        AuthService._check_suspension(str(res.user.id))
+        profile = require_active_profile(str(res.user.id))
         return {
             "access_token": res.session.access_token,
             "refresh_token": res.session.refresh_token,
             "expires_in": res.session.expires_in,
             "token_type": "bearer",
-            "user": {"id": res.user.id, "email": res.user.email},
+            "user": {"id": res.user.id, "email": res.user.email, "role": profile["role"]},
         }
 
     @staticmethod
@@ -93,13 +71,13 @@ class AuthService:
             res = anon_client().auth.exchange_code_for_session(params)  # type: ignore[typeddict-item,arg-type]
             if not res or not res.session or not res.user:
                 raise HTTPException(status_code=400, detail="Failed to exchange authorization code")
-            AuthService._check_suspension(str(res.user.id))
+            profile = require_active_profile(str(res.user.id))
             return {
                 "access_token": res.session.access_token,
                 "refresh_token": res.session.refresh_token,
                 "expires_in": res.session.expires_in,
                 "token_type": "bearer",
-                "user": {"id": res.user.id, "email": res.user.email},
+                "user": {"id": res.user.id, "email": res.user.email, "role": profile["role"]},
             }
         except HTTPException:
             raise
@@ -142,13 +120,13 @@ class AuthService:
             res = anon_client().auth.refresh_session(refresh_token)
             if not res or not res.session or not res.user:
                 raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
-            AuthService._check_suspension(str(res.user.id))
+            profile = require_active_profile(str(res.user.id))
             return {
                 "access_token": res.session.access_token,
                 "refresh_token": res.session.refresh_token,
                 "expires_in": res.session.expires_in,
                 "token_type": "bearer",
-                "user": {"id": res.user.id, "email": res.user.email},
+                "user": {"id": res.user.id, "email": res.user.email, "role": profile["role"]},
             }
         except HTTPException:
             raise

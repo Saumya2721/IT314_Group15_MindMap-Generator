@@ -91,7 +91,7 @@ def _patch_admin_auth():
     class _Ctx:
         def __enter__(self_ctx):
             self_ctx.p1 = patch("core.supabase.anon_client")
-            self_ctx.p2 = patch("auth.dependencies.supabase_admin")
+            self_ctx.p2 = patch("core.supabase.admin")
             mock_anon = self_ctx.p1.__enter__()
             mock_admin = self_ctx.p2.__enter__()
 
@@ -123,6 +123,8 @@ class TestAdminAnalyticsSuccess:
     def test_stats_success_structure_and_values(self, app: FastAPI, client: TestClient):
         """GET /api/admin/stats returns all required user, map, failure, and latency metrics."""
         mock_pool = MagicMock()
+        mock_pool.execute = AsyncMock()
+        mock_pool.acquire.return_value.__aenter__.return_value = mock_pool
 
         executed_queries: list[str] = []
 
@@ -223,6 +225,8 @@ class TestAdminAnalyticsSuccess:
     def test_stats_mounted_at_both_prefixes(self, app: FastAPI, client: TestClient):
         """Verify GET /admin/stats works without /api prefix as well."""
         mock_pool = MagicMock()
+        mock_pool.execute = AsyncMock()
+        mock_pool.acquire.return_value.__aenter__.return_value = mock_pool
         mock_pool.fetchrow = AsyncMock(return_value={})
         mock_pool.fetch = AsyncMock(return_value=[])
         app.state.pool = mock_pool
@@ -241,6 +245,8 @@ class TestAdminAnalyticsCalculations:
     def test_empty_database_no_data(self, app: FastAPI, client: TestClient):
         """When views return None or empty results, endpoint returns zeros and empty error breakdown."""
         mock_pool = MagicMock()
+        mock_pool.execute = AsyncMock()
+        mock_pool.acquire.return_value.__aenter__.return_value = mock_pool
         mock_pool.fetchrow = AsyncMock(return_value=None)
         mock_pool.fetch = AsyncMock(return_value=[])
         app.state.pool = mock_pool
@@ -269,6 +275,8 @@ class TestAdminAnalyticsCalculations:
     def test_distinct_7_and_30_day_metrics(self, app: FastAPI, client: TestClient):
         """Verify 7-day and 30-day calculations can differ appropriately."""
         mock_pool = MagicMock()
+        mock_pool.execute = AsyncMock()
+        mock_pool.acquire.return_value.__aenter__.return_value = mock_pool
 
         async def fake_fetchrow(query: str, *args):
             if "admin_active_users" in query:
@@ -304,6 +312,8 @@ class TestAdminAnalyticsCalculations:
     def test_failure_rate_zero_and_custom(self, app: FastAPI, client: TestClient):
         """Verify job failure rate handles zero completed/failed jobs and non-zero rates."""
         mock_pool = MagicMock()
+        mock_pool.execute = AsyncMock()
+        mock_pool.acquire.return_value.__aenter__.return_value = mock_pool
 
         async def fake_fetchrow(query: str, *args):
             if "admin_generation_failure_rates" in query:
@@ -329,6 +339,8 @@ class TestAdminAnalyticsCalculations:
     def test_error_categories_breakdown(self, app: FastAPI, client: TestClient):
         """Verify error category breakdown correctly maps diverse error buckets."""
         mock_pool = MagicMock()
+        mock_pool.execute = AsyncMock()
+        mock_pool.acquire.return_value.__aenter__.return_value = mock_pool
         mock_pool.fetchrow = AsyncMock(return_value={})
 
         async def fake_fetch(query: str, *args):
@@ -371,6 +383,8 @@ class TestAdminAnalyticsSecurityAndPrivacy:
         - public.agent_memories
         """
         mock_pool = MagicMock()
+        mock_pool.execute = AsyncMock()
+        mock_pool.acquire.return_value.__aenter__.return_value = mock_pool
         executed_queries: list[str] = []
 
         async def record_query(query: str, *args):
@@ -414,6 +428,8 @@ class TestAdminAnalyticsSecurityAndPrivacy:
     def test_no_private_user_content_in_response(self, app: FastAPI, client: TestClient):
         """Verify response contains only aggregate numbers and no sensitive text."""
         mock_pool = MagicMock()
+        mock_pool.execute = AsyncMock()
+        mock_pool.acquire.return_value.__aenter__.return_value = mock_pool
         mock_pool.fetchrow = AsyncMock(return_value={"total_users": 10})
         mock_pool.fetch = AsyncMock(return_value=[{"category": "rate_limit", "count": 1}])
         app.state.pool = mock_pool
@@ -456,7 +472,7 @@ class TestAdminAnalyticsAuthorization:
         """Users with role='user' return HTTP 403 Forbidden."""
         with (
             patch("core.supabase.anon_client") as mock_anon,
-            patch("auth.dependencies.supabase_admin") as mock_admin,
+            patch("core.supabase.admin") as mock_admin,
         ):
             mock_client = MagicMock()
             mock_client.auth.get_user.return_value = SimpleNamespace(user=_make_fake_user("user-1", "user@example.com"))
@@ -475,7 +491,7 @@ class TestAdminAnalyticsAuthorization:
         """Admins who have been suspended return HTTP 403 Forbidden."""
         with (
             patch("core.supabase.anon_client") as mock_anon,
-            patch("auth.dependencies.supabase_admin") as mock_admin,
+            patch("core.supabase.admin") as mock_admin,
         ):
             mock_client = MagicMock()
             mock_client.auth.get_user.return_value = SimpleNamespace(
@@ -511,6 +527,8 @@ class TestAdminAnalyticsFailureModes:
     def test_db_query_error_returns_500(self, app: FastAPI, client: TestClient):
         """When view query fails, endpoint catches error and returns HTTP 500."""
         mock_pool = MagicMock()
+        mock_pool.execute = AsyncMock()
+        mock_pool.acquire.return_value.__aenter__.return_value = mock_pool
         mock_pool.fetchrow = AsyncMock(side_effect=Exception("Database connection timeout"))
         mock_pool.fetch = AsyncMock(return_value=[])
         app.state.pool = mock_pool

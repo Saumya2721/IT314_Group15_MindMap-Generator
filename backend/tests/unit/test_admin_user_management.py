@@ -87,7 +87,7 @@ def _patch_admin_auth(admin_id: str = "00000000-0000-0000-0000-000000000099"):
     class _Ctx:
         def __enter__(self_ctx):
             self_ctx.p1 = patch("core.supabase.anon_client")
-            self_ctx.p2 = patch("auth.dependencies.supabase_admin")
+            self_ctx.p2 = patch("core.supabase.admin")
             mock_anon = self_ctx.p1.__enter__()
             mock_admin_client = self_ctx.p2.__enter__()
 
@@ -115,7 +115,7 @@ def _patch_regular_user_auth(user_id: str = "00000000-0000-0000-0000-00000000000
     class _Ctx:
         def __enter__(self_ctx):
             self_ctx.p1 = patch("core.supabase.anon_client")
-            self_ctx.p2 = patch("auth.dependencies.supabase_admin")
+            self_ctx.p2 = patch("core.supabase.admin")
             mock_anon = self_ctx.p1.__enter__()
             mock_admin_client = self_ctx.p2.__enter__()
 
@@ -255,7 +255,9 @@ class TestSuspendUser:
 
         with _patch_admin_auth(admin_id=admin_id):
             mock_pool = MagicMock()
-            mock_pool.fetchrow = AsyncMock(return_value={"id": target_id})
+            mock_pool.acquire.return_value.__aenter__.return_value = mock_pool
+            mock_pool.execute = AsyncMock()
+            mock_pool.fetchval = AsyncMock(side_effect=[None, target_id])
             mock_pool.execute = AsyncMock(return_value=None)
             cast(FastAPI, client.app).state.pool = mock_pool
 
@@ -272,8 +274,8 @@ class TestSuspendUser:
 
             # Verify profiles UPDATE was executed
             calls = mock_pool.execute.call_args_list
-            update_call = calls[0]
-            assert "UPDATE public.profiles SET suspended_at = now()" in update_call[0][0]
+            update_call = mock_pool.fetchval.call_args_list[1]
+            assert "UPDATE public.profiles SET suspended_at = COALESCE(suspended_at, now())" in update_call[0][0]
             assert update_call[0][1] == target_id
 
             # Verify immutable audit log was inserted
@@ -288,7 +290,9 @@ class TestSuspendUser:
 
         with _patch_admin_auth():
             mock_pool = MagicMock()
-            mock_pool.fetchrow = AsyncMock(return_value=None)
+            mock_pool.acquire.return_value.__aenter__.return_value = mock_pool
+            mock_pool.execute = AsyncMock()
+            mock_pool.fetchval = AsyncMock(return_value=None)
             cast(FastAPI, client.app).state.pool = mock_pool
 
             resp = client.post(
@@ -304,6 +308,8 @@ class TestSuspendUser:
 
         with _patch_admin_auth(admin_id=admin_id):
             mock_pool = MagicMock()
+            mock_pool.acquire.return_value.__aenter__.return_value = mock_pool
+            mock_pool.execute = AsyncMock()
             mock_pool.fetchrow = AsyncMock(return_value={"id": UUID(admin_id)})
             cast(FastAPI, client.app).state.pool = mock_pool
 
@@ -320,7 +326,9 @@ class TestSuspendUser:
 
         with _patch_admin_auth():
             mock_pool = MagicMock()
-            mock_pool.fetchrow = AsyncMock(return_value={"id": target_id})
+            mock_pool.acquire.return_value.__aenter__.return_value = mock_pool
+            mock_pool.execute = AsyncMock()
+            mock_pool.fetchval = AsyncMock(side_effect=[None, target_id])
             # First call (UPDATE) succeeds, second call (audit log INSERT) fails
             mock_pool.execute = AsyncMock(side_effect=[None, RuntimeError("DB write error")])
             cast(FastAPI, client.app).state.pool = mock_pool
@@ -357,7 +365,9 @@ class TestUnsuspendUser:
 
         with _patch_admin_auth(admin_id=admin_id):
             mock_pool = MagicMock()
-            mock_pool.fetchrow = AsyncMock(return_value={"id": target_id})
+            mock_pool.acquire.return_value.__aenter__.return_value = mock_pool
+            mock_pool.execute = AsyncMock()
+            mock_pool.fetchval = AsyncMock(side_effect=[None, target_id])
             mock_pool.execute = AsyncMock(return_value=None)
             cast(FastAPI, client.app).state.pool = mock_pool
 
@@ -374,7 +384,7 @@ class TestUnsuspendUser:
 
             # Verify profiles UPDATE was executed
             calls = mock_pool.execute.call_args_list
-            update_call = calls[0]
+            update_call = mock_pool.fetchval.call_args_list[1]
             assert "UPDATE public.profiles SET suspended_at = NULL" in update_call[0][0]
             assert update_call[0][1] == target_id
 
@@ -390,7 +400,9 @@ class TestUnsuspendUser:
 
         with _patch_admin_auth():
             mock_pool = MagicMock()
-            mock_pool.fetchrow = AsyncMock(return_value=None)
+            mock_pool.acquire.return_value.__aenter__.return_value = mock_pool
+            mock_pool.execute = AsyncMock()
+            mock_pool.fetchval = AsyncMock(return_value=None)
             cast(FastAPI, client.app).state.pool = mock_pool
 
             resp = client.post(
@@ -429,7 +441,17 @@ class TestDeleteUser:
             patch("routes.admin.admin") as mock_supa_admin,
         ):
             mock_pool = MagicMock()
-            mock_pool.fetchrow = AsyncMock(return_value={"id": target_id})
+            mock_pool.acquire.return_value.__aenter__.return_value = mock_pool
+            mock_pool.execute = AsyncMock()
+            mock_pool.fetchrow = AsyncMock(
+                side_effect=[
+                    None,
+                    {"storage_cleaned_at": None},
+                    {},
+                    {"completed_at": None, "actor_id": UUID(admin_id)},
+                ]
+            )
+            mock_pool.fetchval = AsyncMock(side_effect=[target_id, True])
             mock_pool.execute = AsyncMock(return_value=None)
             cast(FastAPI, client.app).state.pool = mock_pool
 
@@ -448,16 +470,15 @@ class TestDeleteUser:
             # 1. Storage cleanup called
             mock_storage.assert_called_once_with(user_id=target_id, pool=mock_pool)
 
-            # 2. Audit log recorded
+            # 2. Audit log recorded & suspension applied immediately (NEW-06, AUD-12)
             calls = mock_pool.execute.call_args_list
-            audit_call = calls[0]
-            assert "INSERT INTO public.admin_audit_log" in audit_call[0][0]
+            assert "UPDATE public.profiles SET suspended_at" in mock_pool.fetchval.call_args_list[0][0][0]
+            audit_call = next(c for c in calls if len(c[0]) > 2 and c[0][2] == "user.delete")
             assert audit_call[0][1] == UUID(admin_id)
             assert audit_call[0][2] == "user.delete"
 
             # 3. DB cascade delete executed
-            delete_call = calls[1]
-            assert "DELETE FROM public.profiles WHERE id = $1" in delete_call[0][0]
+            delete_call = next(c for c in calls if "DELETE FROM public.profiles WHERE id = $1" in c[0][0])
             assert delete_call[0][1] == target_id
 
             # 4. Supabase auth user deleted
@@ -468,7 +489,10 @@ class TestDeleteUser:
 
         with _patch_admin_auth():
             mock_pool = MagicMock()
+            mock_pool.acquire.return_value.__aenter__.return_value = mock_pool
+            mock_pool.execute = AsyncMock()
             mock_pool.fetchrow = AsyncMock(return_value=None)
+            mock_pool.fetchval = AsyncMock(return_value=None)
             cast(FastAPI, client.app).state.pool = mock_pool
 
             resp = client.delete(
@@ -484,6 +508,8 @@ class TestDeleteUser:
 
         with _patch_admin_auth(admin_id=admin_id):
             mock_pool = MagicMock()
+            mock_pool.acquire.return_value.__aenter__.return_value = mock_pool
+            mock_pool.execute = AsyncMock()
             mock_pool.fetchrow = AsyncMock(return_value={"id": UUID(admin_id)})
             cast(FastAPI, client.app).state.pool = mock_pool
 
@@ -495,8 +521,8 @@ class TestDeleteUser:
             assert resp.status_code == 400
             assert "Cannot delete your own" in resp.json()["detail"]
 
-    def test_delete_user_storage_error_handled_gracefully(self, client: TestClient):
-        """Storage failure should log warning and not abort database/auth deletion."""
+    def test_delete_user_storage_error_preserves_account(self, client: TestClient):
+        """A failed storage phase leaves the operation available for retry."""
         admin_id = "00000000-0000-0000-0000-000000000099"
         target_id = uuid4()
 
@@ -506,7 +532,10 @@ class TestDeleteUser:
             patch("routes.admin.admin") as mock_supa_admin,
         ):
             mock_pool = MagicMock()
-            mock_pool.fetchrow = AsyncMock(return_value={"id": target_id})
+            mock_pool.acquire.return_value.__aenter__.return_value = mock_pool
+            mock_pool.execute = AsyncMock()
+            mock_pool.fetchrow = AsyncMock(side_effect=[None, {"storage_cleaned_at": None}])
+            mock_pool.fetchval = AsyncMock(return_value=target_id)
             mock_pool.execute = AsyncMock(return_value=None)
             cast(FastAPI, client.app).state.pool = mock_pool
 
@@ -516,8 +545,8 @@ class TestDeleteUser:
             )
 
             assert resp.status_code == 200
-            # Database and Supabase auth deletions still proceeded
-            assert mock_supa_admin.auth.admin.delete_user.called
+            assert resp.json()["success"] is False
+            mock_supa_admin.auth.admin.delete_user.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -536,7 +565,7 @@ async def test_delete_user_storage_files_success():
         mock_admin.storage.from_().list.side_effect = [
             [{"name": "map1"}],  # list(target_id)
             [{"name": "job1"}],  # list(target_id/map1)
-            [{"name": "0_file.pdf"}],  # list(target_id/map1/job1)
+            [{"name": "0_file.pdf", "id": "file-id"}],  # list(target_id/map1/job1)
         ]
         mock_admin.storage.from_().remove = MagicMock(return_value=[])
 
@@ -564,7 +593,7 @@ class TestSuspendedUserSecurity:
 
         with (
             patch("auth.service.anon_client") as mock_anon,
-            patch("auth.service.admin") as mock_admin,
+            patch("core.supabase.admin") as mock_admin,
         ):
             mock_client = MagicMock()
             mock_client.auth.sign_in_with_password.return_value = SimpleNamespace(
@@ -593,7 +622,7 @@ class TestSuspendedUserSecurity:
 
         with (
             patch("auth.service.anon_client") as mock_anon,
-            patch("auth.service.admin") as mock_admin,
+            patch("core.supabase.admin") as mock_admin,
         ):
             mock_client = MagicMock()
             mock_client.auth.sign_in_with_password.return_value = SimpleNamespace(
@@ -624,7 +653,7 @@ class TestSuspendedUserSecurity:
 
         with (
             patch("auth.service.anon_client") as mock_anon,
-            patch("auth.service.admin") as mock_admin,
+            patch("core.supabase.admin") as mock_admin,
         ):
             mock_client = MagicMock()
             mock_client.auth.refresh_session.return_value = SimpleNamespace(
@@ -655,7 +684,7 @@ class TestSuspendedUserSecurity:
 
         with (
             patch("auth.service.anon_client") as mock_anon,
-            patch("auth.service.admin") as mock_admin,
+            patch("core.supabase.admin") as mock_admin,
         ):
             mock_client = MagicMock()
             mock_client.auth.refresh_session.return_value = SimpleNamespace(

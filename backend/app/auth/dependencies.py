@@ -13,58 +13,51 @@ forged by the caller.
 from __future__ import annotations
 
 import logging
+import os
+from secrets import compare_digest
 from typing import Any
 
-from core.supabase import admin as supabase_admin
+from core.config import settings
 from core.supabase import get_current_user
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, Header, HTTPException, Request, status
 
 logger = logging.getLogger(__name__)
 
 
-def require_admin_role(
-    user: Any = Depends(get_current_user),  # noqa: B008
-) -> Any:
-    """FastAPI dependency that enforces the ``admin`` role.
-
-    1. Delegates authentication to ``get_current_user`` (401 on failure).
-    2. Looks up ``profiles.role`` via the trusted Supabase service-role client.
-    3. Returns the user object when ``role == 'admin'``.
-    4. Raises HTTP 403 for any other role.
-    """
-    user_id = str(user.id)
-
-    # Trusted server-side lookup — never rely on client-supplied role claims.
-    try:
-        res = supabase_admin.table("profiles").select("role, suspended_at").eq("id", user_id).execute()
-        profile_data = res.data if res and hasattr(res, "data") else None
-    except Exception as exc:
-        logger.error("Failed to fetch profile for user %s: %s", user_id, exc)
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Unable to verify admin privileges.",
-        )
-
-    if not profile_data or len(profile_data) == 0:
-        logger.warning("No profile found for user %s during admin check", user_id)
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin privileges required.",
-        )
-
-    first_profile = profile_data[0]
-    role = first_profile.get("role") if isinstance(first_profile, dict) else None
-    suspended_at = first_profile.get("suspended_at") if isinstance(first_profile, dict) else None
-    if role != "admin" or suspended_at is not None:
-        logger.info(
-            "Access denied to admin endpoint for user %s (role=%s, suspended=%s)",
-            user_id,
-            role,
-            suspended_at is not None,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin privileges required.",
-        )
-
+def require_admin_role(request: Request, user: Any = Depends(get_current_user)) -> Any:
+    """Authorize administrators using the profile verified at authentication."""
+    profile = getattr(request.state, "profile", {})
+    if profile.get("role") != "admin" or profile.get("suspended_at") is not None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin privileges required.")
     return user
+
+
+def internal_key_matches(expected: str | None, supplied: str | None) -> bool:
+    return bool(
+        expected
+        and expected not in {"your-secure-internal-service-secret", "mindweave-dev-internal-secret"}
+        and supplied
+        and compare_digest(supplied.encode(), expected.encode())
+    )
+
+
+def require_internal_service(
+    request: Request,
+    x_internal_service_key: str | None = Header(None, alias="X-Internal-Service-Key"),
+) -> dict[str, str]:
+    """Authorize worker M2M calls strictly via pre-shared internal service secret (NEW-01, NEW-02).
+
+    Admin sessions and user JWTs are explicitly FORBIDDEN from accessing internal memory
+    endpoints, strictly satisfying the Sprint 3 DB2 privacy requirement.
+    """
+    expected_key = getattr(settings, "INTERNAL_SERVICE_KEY", None) or os.getenv("INTERNAL_SERVICE_KEY", "")
+    if not internal_key_matches(expected_key, x_internal_service_key):
+        logger.warning(
+            "Unauthorized internal service request from %s",
+            request.client.host if request.client else "unknown",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Unauthorized: Valid internal service key required.",
+        )
+    return {"auth": "internal_service"}
