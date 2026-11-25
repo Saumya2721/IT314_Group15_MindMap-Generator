@@ -29,6 +29,9 @@ class SeedAssetType(StrEnum):
     PDF = "pdf"
     IMAGE = "image"
     TEXT = "text"
+    DOCX = "docx"
+    PPTX = "pptx"
+    URL = "url"
 
 
 class EmbeddingSource(StrEnum):

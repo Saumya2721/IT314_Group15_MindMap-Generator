@@ -10,13 +10,13 @@
     "format:check": "prettier --check \"src/**/*.{js,jsx,css}\"",
     "format": "prettier --write \"src/**/*.{js,jsx,css}\"",
     "lint": "eslint src",
-    "typecheck": "node -e \"console.log('JavaScript project syntax verified')\"",
     "test": "vitest run"
   },
   "dependencies": {
     "@xyflow/react": "^12.4.4",
     "html2canvas": "^1.4.1",
     "jspdf": "^4.2.1",
+    "katex": "^0.19.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.29.0"

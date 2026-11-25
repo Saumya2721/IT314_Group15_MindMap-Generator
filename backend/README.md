@@ -7,11 +7,15 @@ FastAPI service powering the Mind Map Generator. Handles user authentication, da
 ## Architecture & Responsibilities
 
 The backend acts as the central orchestrator and security boundary for the system:
-- **Authentication**: Dual-Defense architecture combining secure `HttpOnly` session cookies with in-memory Bearer token fallback. Integrated with Supabase GoTrue Auth and PKCE Google OAuth with secure verifier persistence.
-- **Data Persistence**: Direct asynchronous PostgreSQL access using `asyncpg` connection pools. Manages mind maps, nodes, edges, chat threads, version snapshots, and background jobs.
+- **Authentication & RBAC**: Dual-Defense architecture combining secure `HttpOnly` session cookies with in-memory Bearer token fallback. Integrated with Supabase GoTrue Auth and PKCE Google OAuth with secure verifier persistence. Includes strict role-based access control (`profiles.role` = `user` | `admin`) via `require_admin_role()`.
+- **Admin Oversight & Zero Content Access**: Provides user governance (suspension/unsuspension/deletion) and aggregate-only analytics. Strict privacy rule guarantees admins cannot read user mind maps, nodes, edges, chat threads, or memories. All actions log to `admin_audit_log`.
+- **Long-Term Agent Memory**: Implements REST endpoints for managing `agent_memories` (global & map-scoped), enabling user sovereignty (edit, disable, delete), full GDPR JSON bundle export, and internal worker proposals with deduplication.
+- **Data Persistence**: Direct asynchronous PostgreSQL access using `asyncpg` connection pools. Manages mind maps, nodes, edges, chat threads, version snapshots, agent memories, and background jobs.
 - **Optimistic Concurrency Control (OCC)**: Map graph updates and restores validate `expected_version`, guaranteeing consistency across concurrent editors without silent overwrites.
-- **Topological Integrity**: Enforces single-root DAG invariants, blocks self-loops, checks for cycles during edge modifications, and prevents central root node deletion.
-- **Storage Management**: Handles binary uploads (PDF, images, text) into the private Supabase Storage bucket `seed-assets` under `<user_id>/<map_id>/...` and cleans them up transactionally on map deletion.
+- **Topological Integrity & Layout**: Enforces single-root DAG invariants, blocks self-loops, checks for cycles during edge modifications, prevents central root node deletion, and computes deterministic Top-to-Bottom tree coordinates with zero collisions.
+- **Redis-Backed Distributed Rate Limiting**: Enforces sliding-window rate limits across multi-instance deployments for generation, chat, and memory proposals.
+- **Dynamic Runtime Pipeline Configuration**: Hot-toggles pipeline flags (`ENABLE_TWO_PASS`, `RESEARCH_ENGINE`, `IMAGE_EXTRACTOR`, model selection) via `/admin/config` and serves them to workers via `/internal/config`.
+- **Storage Management**: Handles binary uploads (PDF, DOCX, PPTX, images, text) into the private Supabase Storage bucket `seed-assets` under `<user_id>/<map_id>/...` and cleans them up transactionally on map deletion.
 - **Queue Dispatcher**: Publishes `GenerationRequest` jobs to Upstash Redis for asynchronous execution by the detached ARQ worker service (`llm/`).
 - **Internal Callbacks**: Exposes token-protected `/internal/jobs/{job_id}/...` endpoints for progress updates, node/edge draft persistence, and job completion from the worker.
 
@@ -43,15 +47,20 @@ backend/
 
 ---
 
-## Key Endpoints (Sprint 2)
+## Key Endpoints (Sprint 3 Complete)
 
+### Authentication & Profiles
 | Method | Endpoint | Description |
 |---|---|---|
 | `POST` | `/auth/signup`, `/auth/login`, `/auth/logout` | Session management with HttpOnly cookies & Bearer tokens. |
 | `GET` | `/auth/google`, `/auth/google/callback` | Google OAuth with PKCE verifier cookie persistence. |
-| `GET` | `/me` | Hydrate profile for authenticated user session. |
+| `GET` | `/me` | Hydrate profile and role (`user` / `admin`) for authenticated session. |
+
+### Mind Maps & Canvas Operations
+| Method | Endpoint | Description |
+|---|---|---|
 | `GET` | `/api/maps` | List user-owned mind maps with search and sorting. |
-| `POST` | `/api/maps` | Create draft or manual mind map. |
+| `POST` | `/api/maps` | Create draft or manual mind map with optional `purpose` and `seed_url`. |
 | `POST` | `/api/maps/{id}/generate` | Dispatch full-map generation job to worker. |
 | `PATCH`| `/api/maps/{id}/graph` | Persist node positions & graph with `expected_version` OCC lock. |
 | `POST` | `/api/maps/{id}/nodes` | Add concept node to map. |
@@ -68,6 +77,29 @@ backend/
 | `POST` | `/api/maps/{id}/chat` | Send query or refinement instruction to assistant. |
 | `POST` | `/api/maps/{id}/chat/{message_id}/confirm` | Execute proposed graph delta modifications. |
 | `POST` | `/api/maps/{id}/chat/{message_id}/dismiss` | Reject and dismiss proposed graph action. |
+
+### Long-Term Agent Memory
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/memory` | List user memories (optional `?map_id=...` filter, paginated). |
+| `PATCH`| `/memory/{id}` | Edit memory content or toggle active/disabled state. |
+| `DELETE`| `/memory/{id}` | Permanently delete memory row. |
+| `GET` | `/memory/export` | Download full GDPR JSON export of user memories. |
+| `POST` | `/internal/memory/propose` | Internal worker proposal endpoint (validation, dedup, decay). |
+| `GET` | `/internal/memory/top` | Retrieve top-$k$ relevant memories for generation context. |
+
+### Admin Oversight & Governance (`require_admin_role`)
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/admin/users` | Paginated list of platform users (metadata only, zero user content). |
+| `POST` | `/admin/users/{user_id}/suspend` | Suspend user account and log action to `admin_audit_log`. |
+| `POST` | `/admin/users/{user_id}/unsuspend` | Restore user account access. |
+| `DELETE`| `/admin/users/{user_id}` | Cascade-delete user account and clean up storage files. |
+| `GET` | `/admin/stats` | Aggregate metrics (generation count, latency, failure rate). |
+| `GET` | `/admin/audit-logs` | Chronological administrative audit logs with JSONB details. |
+| `GET` | `/admin/config` | Read current active pipeline runtime settings. |
+| `PATCH`| `/admin/config` | Update active pipeline settings (two-pass, research engine, model). |
+| `GET` | `/internal/config` | Internal worker endpoint to fetch active pipeline settings. |
 
 ---
 

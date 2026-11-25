@@ -20,6 +20,7 @@ from chat.token_budget import (
     trim_history_to_budget,
 )
 from contracts.models import ChatMessage
+from tracing import trace_span
 
 
 @dataclass
@@ -32,6 +33,7 @@ class AssembledMemoryContext:
     estimated_tokens: int
 
 
+@trace_span("assemble_chat_context", run_type="chain")
 def assemble_chat_context(
     *,
     current_message: str,

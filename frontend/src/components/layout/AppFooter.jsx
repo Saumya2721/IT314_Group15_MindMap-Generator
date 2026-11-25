@@ -1,4 +1,5 @@
 import React from 'react'
+import { Link } from 'react-router-dom'
 
 export function AppFooter() {
   return (
@@ -28,24 +29,14 @@ export function AppFooter() {
       >
         <div>© 2026 MINDWEAVE. An intellectual sanctuary for creative ideation.</div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '24px' }}>
-          <a
-            href="#archive"
-            onClick={(e) => e.preventDefault()}
+          <Link
+            to="/dashboard?view=archive"
             style={{ color: 'var(--outline)', textDecoration: 'none' }}
             onMouseOver={(e) => (e.target.style.color = 'var(--on-surface)')}
             onMouseOut={(e) => (e.target.style.color = 'var(--outline)')}
           >
             Archive
-          </a>
-          <a
-            href="#systems"
-            onClick={(e) => e.preventDefault()}
-            style={{ color: 'var(--outline)', textDecoration: 'none' }}
-            onMouseOver={(e) => (e.target.style.color = 'var(--on-surface)')}
-            onMouseOut={(e) => (e.target.style.color = 'var(--outline)')}
-          >
-            Systems
-          </a>
+          </Link>
           <span style={{ fontSize: '11px', color: 'var(--outline)' }}>v1.0</span>
         </div>
       </div>

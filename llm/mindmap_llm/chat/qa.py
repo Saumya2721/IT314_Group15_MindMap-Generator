@@ -16,7 +16,9 @@ Small talk:
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
 import re
 from uuid import UUID
 
@@ -36,6 +38,7 @@ from chat.research import (
 )
 from chat.token_budget import TokenBudget, estimate_tokens
 from contracts.models import ChatIntent, ChatTurnRequest, ChatTurnResponse
+from orchestration.context_discovery import get_model_context_window
 from orchestration.deps import GenerationDeps
 from providers.base import Message
 from rag.retrieval import rerank_context, retrieve_context
@@ -45,7 +48,7 @@ logger = logging.getLogger(__name__)
 
 _QA_TOP_K_RETRIEVE = 10
 _QA_TOP_K_RERANK = 5
-_QA_MAX_TOKENS = 800
+_QA_MAX_TOKENS = int(os.getenv("CHAT_QA_MAX_TOKENS", "4096"))
 
 # Pattern to extract [node:<uuid>] citations from LLM output.
 _NODE_CITE_RE = re.compile(r"\[node:([0-9a-fA-F-]{36})\]")
@@ -121,33 +124,56 @@ async def answer_question(
             model=deps.settings.llm.model,
         )
 
-    research_context = format_research_context(research_sources) if research_sources else None
-    research_overhead = estimate_tokens(research_context) if research_context else 0
-    chunks_overhead = sum(estimate_tokens(c.chunk_text) for c in top_records) + research_overhead
+    active = deps.dynamic_config.get_config().llm if deps.dynamic_config else None
+    model_context = await asyncio.to_thread(
+        get_model_context_window,
+        active.model if active else deps.settings.llm.model,
+        active.provider if active else deps.settings.llm.provider,
+        api_base=active.api_base if active else None,
+    )
     budget = TokenBudget(
-        max_context_tokens=deps.settings.llm.max_output_tokens,
+        max_context_tokens=model_context,
         reserved_response_tokens=_QA_MAX_TOKENS,
     )
-    assembled = assemble_chat_context(
-        current_message=request.message,
-        history=request.history,
-        summary=request.summary,
-        budget=budget,
-        system_prompt=system,
-        overhead_tokens=chunks_overhead,
-    )
 
-    user_msg = build_chat_qa_user_prompt(
-        request.message,
-        assembled.recent_messages,
-        top_records,
-        summary=assembled.summary,
-        research_context=research_context,
-    )
+    def render_prompt():
+        research_context = format_research_context(research_sources) if research_sources else None
+        records = list(top_records)
+        history = request.history
+        summary = request.summary
+        while True:
+            assembled = assemble_chat_context(
+                current_message=request.message,
+                history=history,
+                summary=summary,
+                budget=budget,
+                system_prompt=system,
+                overhead_tokens=sum(estimate_tokens(c.chunk_text) for c in records) + estimate_tokens(research_context),
+            )
+            prompt = build_chat_qa_user_prompt(
+                request.message,
+                assembled.recent_messages,
+                records,
+                summary=assembled.summary,
+                research_context=research_context,
+                selected_node=request.effective_selected_node,
+            )
+            if estimate_tokens(system) + estimate_tokens(prompt) + 64 <= budget.available_input_tokens:
+                return prompt, records
+            if records:
+                records.pop()
+            elif history or summary:
+                history, summary = [], None
+            elif research_context:
+                research_context = None
+            else:
+                raise ValueError("The map and question exceed the provider context budget.")
 
     tools_to_offer = [RESEARCH_TOOL_SPEC] if inv_guard.can_invoke else None
 
+    cited_records = []
     try:
+        user_msg, cited_records = render_prompt()
         response = await deps.llm.generate(
             [Message(role="user", content=user_msg)],
             system=system,
@@ -173,22 +199,36 @@ async def answer_question(
                     if tc_sources:
                         research_sources.extend(tc_sources)
                         research_refs.extend(tc_refs)
-                        research_context = format_research_context(research_sources)
-                        follow_up_user_msg = build_chat_qa_user_prompt(
-                            request.message,
-                            assembled.recent_messages,
-                            top_records,
-                            summary=assembled.summary,
-                            research_context=research_context,
-                        )
-                        follow_up_resp = await deps.llm.generate(
-                            [Message(role="user", content=follow_up_user_msg)],
-                            system=system,
-                            max_tokens=_QA_MAX_TOKENS,
-                            temperature=0.3,
-                        )
-                        answer_text = follow_up_resp.text or answer_text
+
+                    # Always synthesize follow-up answer after tool invocation (even if 0 external sources)
+                    follow_up_user_msg, cited_records = render_prompt()
+                    follow_up_resp = await deps.llm.generate(
+                        [Message(role="user", content=follow_up_user_msg)],
+                        system=system,
+                        max_tokens=_QA_MAX_TOKENS,
+                        temperature=0.3,
+                    )
+                    answer_text = follow_up_resp.text or ""
                     break
+
+        # Defensive fallback: ensure answer_text is never empty
+        if not answer_text.strip():
+            logger.warning("Empty QA answer text after initial generation, forcing text generation without tools")
+            fallback_user_msg, cited_records = render_prompt()
+            fallback_resp = await deps.llm.generate(
+                [Message(role="user", content=fallback_user_msg)],
+                system=system,
+                tools=None,
+                max_tokens=_QA_MAX_TOKENS,
+                temperature=0.3,
+            )
+            answer_text = fallback_resp.text or ""
+
+        if not answer_text.strip():
+            answer_text = (
+                "I reviewed the mind map regarding your question, but could not synthesize a detailed answer. "
+                "Could you please rephrase or specify which branch you are exploring?"
+            )
     except Exception:
         logger.exception("LLM generation failed during QA")
         answer_text = "I encountered an error while generating an answer. Please try again."
@@ -203,7 +243,7 @@ async def answer_question(
 
     source_indices = {int(m.group(1)) for m in _SOURCE_CITE_RE.finditer(answer_text)}
     source_refs: list[str] = []
-    for i, record in enumerate(top_records, 1):
+    for i, record in enumerate(cited_records, 1):
         if i in source_indices:
             ref = record.source_url or record.source_title or record.source or f"source-{i}"
             if ref and ref not in source_refs:

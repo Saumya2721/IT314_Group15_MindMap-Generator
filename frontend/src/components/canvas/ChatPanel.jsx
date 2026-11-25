@@ -1,9 +1,12 @@
+import { ResearchDegradedBanner } from './ResearchDegradedBanner'
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
+import katex from 'katex'
+import 'katex/dist/katex.min.css'
 import './ChatPanel.css'
 
 /**
  * Lightweight, secure Markdown renderer for chat responses with interactive Node Reference Chips.
- * Renders bold, italics, inline code, code blocks, lists, headings, paragraphs, and clickable node pills.
+ * Renders tables, LaTeX formulae (KaTeX), bold, italics, inline code, code blocks, lists, headings, and clickable node pills.
  */
 export function renderMarkdown(text, context = {}) {
   if (!text) return null
@@ -14,6 +17,9 @@ export function renderMarkdown(text, context = {}) {
   let inCodeBlock = false
   let codeBlockLines = []
   let codeBlockLang = ''
+  let inMathBlock = false
+  let mathBlockLines = []
+  let tableLines = []
 
   const flushList = (key) => {
     if (listItems.length > 0) {
@@ -25,6 +31,74 @@ export function renderMarkdown(text, context = {}) {
         </ul>,
       )
       listItems = []
+    }
+  }
+
+  const isTableRow = (l) => {
+    const trimmed = l.trim()
+    return trimmed.startsWith('|') && trimmed.length > 2 && (trimmed.endsWith('|') || trimmed.includes('|'))
+  }
+
+  const isTableSeparator = (l) => {
+    const trimmed = l.trim()
+    return /^\|?\s*:?-+:?\s*(\|:?-+:?\s*)+\|?$/.test(trimmed)
+  }
+
+  const parseCells = (l) => {
+    let clean = l.trim()
+    if (clean.startsWith('|')) clean = clean.slice(1)
+    if (clean.endsWith('|')) clean = clean.slice(0, -1)
+    return clean
+      .split(/(?<!\\)\|/)
+      .map((c) => c.trim())
+  }
+
+  const flushTable = (key) => {
+    if (tableLines.length >= 2 && isTableSeparator(tableLines[1])) {
+      const headerCells = parseCells(tableLines[0])
+      const bodyRows = tableLines
+        .slice(2)
+        .filter((l) => !isTableSeparator(l))
+        .map((l) => {
+          const cells = parseCells(l)
+          while (cells.length < headerCells.length) {
+            cells.push('')
+          }
+          return cells
+        })
+
+      elements.push(
+        <div key={`table-wrap-${key}`} className="chat-table-container">
+          <table className="chat-markdown-table">
+            <thead>
+              <tr>
+                {headerCells.map((cell, cIdx) => (
+                  <th key={`th-${cIdx}`}>{renderInlineMarkdown(cell, context)}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {bodyRows.map((row, rIdx) => (
+                <tr key={`tr-${rIdx}`}>
+                  {row.map((cell, cIdx) => (
+                    <td key={`td-${rIdx}-${cIdx}`}>{renderInlineMarkdown(cell, context)}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>,
+      )
+      tableLines = []
+    } else if (tableLines.length > 0) {
+      tableLines.forEach((tLine, tIdx) => {
+        elements.push(
+          <p key={`table-fallback-${key}-${tIdx}`} className="chat-paragraph">
+            {renderInlineMarkdown(tLine, context)}
+          </p>,
+        )
+      })
+      tableLines = []
     }
   }
 
@@ -46,6 +120,7 @@ export function renderMarkdown(text, context = {}) {
         inCodeBlock = false
       } else {
         flushList(index)
+        flushTable(index)
         inCodeBlock = true
         codeBlockLang = line.trim().slice(3)
       }
@@ -56,6 +131,49 @@ export function renderMarkdown(text, context = {}) {
       codeBlockLines.push(line)
       return
     }
+
+    // Multi-line display math block ($$ ... $$)
+    if (line.trim().startsWith('$$') && (line.trim() === '$$' || !line.trim().slice(2).includes('$$'))) {
+      if (inMathBlock) {
+        elements.push(
+          <div key={`math-block-${index}`} className="chat-math-block">
+            {renderInlineMarkdown(`$$${mathBlockLines.join('\n')}$$`, context)}
+          </div>,
+        )
+        mathBlockLines = []
+        inMathBlock = false
+      } else {
+        flushList(index)
+        flushTable(index)
+        inMathBlock = true
+      }
+      return
+    }
+
+    if (inMathBlock) {
+      mathBlockLines.push(line)
+      return
+    }
+
+    // Single-line display math ($$ ... $$)
+    if (line.trim().startsWith('$$') && line.trim().endsWith('$$') && line.trim().length > 4) {
+      flushList(index)
+      flushTable(index)
+      elements.push(
+        <div key={`math-block-${index}`} className="chat-math-block">
+          {renderInlineMarkdown(line.trim(), context)}
+        </div>,
+      )
+      return
+    }
+
+    // Markdown table rows
+    if (isTableRow(line)) {
+      flushList(index)
+      tableLines.push(line)
+      return
+    }
+    flushTable(index)
 
     // Unordered lists
     const listMatch = line.match(/^(\*|-)\s+(.*)/)
@@ -97,6 +215,7 @@ export function renderMarkdown(text, context = {}) {
   })
 
   flushList('final')
+  flushTable('final')
 
   if (inCodeBlock && codeBlockLines.length > 0) {
     elements.push(
@@ -106,35 +225,98 @@ export function renderMarkdown(text, context = {}) {
     )
   }
 
+  if (inMathBlock && mathBlockLines.length > 0) {
+    elements.push(
+      <div key="math-unclosed" className="chat-math-block">
+        {renderInlineMarkdown(`$$${mathBlockLines.join('\n')}$$`, context)}
+      </div>,
+    )
+  }
+
   return elements
 }
 
 /**
- * Parses inline markdown: bold, italics, inline code, and clickable node reference chips.
+ * Parses inline markdown: LaTeX formulae (KaTeX), bold, italics, inline code, and clickable node reference chips.
  */
 export function renderInlineMarkdown(str, context = {}) {
   if (!str) return ''
   const { nodeMap, onSelectNode } = context
   const parts = []
 
-  // Token regex matching:
-  // 1) Explicit node tag with optional preceding bold title: (**Label** )?[node:<uuid>]
+  const renderFormula = (tex, isDisplay, key) => {
+    try {
+      const html = katex.renderToString(tex.trim(), {
+        displayMode: isDisplay,
+        throwOnError: false,
+      })
+      return (
+        <span
+          key={`math-${key}`}
+          className={isDisplay ? 'chat-math-display' : 'chat-math-inline'}
+          dangerouslySetInnerHTML={{ __html: html }}
+        />
+      )
+    } catch {
+      return (
+        <code key={`math-${key}`} className="chat-math-fallback">
+          {tex}
+        </code>
+      )
+    }
+  }
+
+  // Auto-close any trailing unclosed math delimiters from truncated stream/LLM outputs
+  let cleanStr = str
+  const lastParenOpen = cleanStr.lastIndexOf('\\(')
+  const lastParenClose = cleanStr.lastIndexOf('\\)')
+  if (lastParenOpen !== -1 && lastParenOpen > lastParenClose) {
+    cleanStr += '\\)'
+  }
+  const lastBracketOpen = cleanStr.lastIndexOf('\\[')
+  const lastBracketClose = cleanStr.lastIndexOf('\\]')
+  if (lastBracketOpen !== -1 && lastBracketOpen > lastBracketClose) {
+    cleanStr += '\\]'
+  }
+  const dollarCount = (cleanStr.match(/\$\$/g) || []).length
+  if (dollarCount % 2 !== 0) {
+    cleanStr += '$$'
+  }
+
+  // Token regex matching (Math placed BEFORE bold/italics so operators like * or _ in formulas aren't consumed):
+  // 1) Tagged node: (**Label** )?[node:<uuid>]
   // 2) Bare UUID: [a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}
-  // 3) Bold: **text**
-  // 4) Code: `code`
-  // 5) Italics: *text*
+  // 3) Display math: $$...$$
+  // 4) Bracket display math: \[...\]
+  // 5) Paren inline math: \(...\)
+  // 6) Dollar inline math: $...$ (ignoring currency like $100)
+  // 7) Code: `code`
+  // 8) Bold: **text**
+  // 9) Italics: *text*
   const tokenRegex =
-    /(?:(?:\*\*([^*]+)\*\*\s*)?\[node:([a-f0-9-]+)\])|(\b[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\b)|(\*\*[^*]+\*\*)|(`[^`]+`)|(\*[^*]+\*)/gi
+    /(?:(?:\*\*([^*]+)\*\*\s*)?\[node:([a-f0-9-]+)\])|(\b[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\b)|(\$\$[\s\S]+?\$\$)|(\\\[[\s\S]+?\\\])|(\\\([\s\S]+?\\\))|(\$(?!\s|\d+(?:\.\d+)?(?:\s|$))[^$\n]+?(?<!\s)\$)|(`[^`]+`)|(\*\*[^*]+\*\*)|(\*[^*]+\*)/gi
 
   let lastIndex = 0
   let match
 
-  while ((match = tokenRegex.exec(str)) !== null) {
+  while ((match = tokenRegex.exec(cleanStr)) !== null) {
     if (match.index > lastIndex) {
-      parts.push(str.slice(lastIndex, match.index))
+      parts.push(cleanStr.slice(lastIndex, match.index))
     }
 
-    const [fullMatch, boldLabel, taggedUuid, bareUuid, boldText, codeText, italicText] = match
+    const [
+      fullMatch,
+      boldLabel,
+      taggedUuid,
+      bareUuid,
+      displayMath,
+      bracketDisplayMath,
+      parenInlineMath,
+      dollarInlineMath,
+      codeText,
+      boldText,
+      italicText,
+    ] = match
 
     // Case 1: Tagged [node:<uuid>] with optional preceding bold name
     if (taggedUuid) {
@@ -145,27 +327,50 @@ export function renderInlineMarkdown(str, context = {}) {
         targetNode?.data?.label ||
         targetNode?.data?.title ||
         boldLabel ||
-        `Concept (${taggedUuid.slice(0, 8)})`
-      const dotColor =
-        targetNode?.background_color ||
-        (targetNode?.node_type === 'root'
-          ? '#2D5A47'
-          : targetNode?.node_type === 'branch'
-            ? '#C96B4B'
-            : '#899B72')
+        null
 
-      parts.push(
-        <button
-          key={`node-ref-${match.index}`}
-          type="button"
-          className="chat-node-pill"
-          onClick={() => onSelectNode?.(targetNode || taggedUuid)}
-          title={targetNode ? `Jump to "${displayLabel}" on canvas` : `Jump to node ${taggedUuid}`}
-        >
-          <span className="chat-node-pill-dot" style={{ backgroundColor: dotColor }} />
-          <span className="chat-node-pill-label">{displayLabel}</span>
-        </button>,
-      )
+      if (targetNode && displayLabel) {
+        // State 1: Active node present in current canvas map
+        const dotColor =
+          targetNode?.background_color ||
+          (targetNode?.node_type === 'root'
+            ? '#2D5A47'
+            : targetNode?.node_type === 'branch'
+              ? '#C96B4B'
+              : '#899B72')
+
+        parts.push(
+          <button
+            key={`node-ref-${match.index}`}
+            type="button"
+            className="chat-node-pill"
+            onClick={() => onSelectNode?.(targetNode)}
+            title={`Jump to "${displayLabel}" on canvas`}
+          >
+            <span className="chat-node-pill-dot" style={{ backgroundColor: dotColor }} />
+            <span className="chat-node-pill-label">{displayLabel}</span>
+          </button>,
+        )
+      } else if (displayLabel) {
+        // State 2: Historical / superseded node reference with known name (e.g. from prior regeneration)
+        parts.push(
+          <span
+            key={`stale-node-${match.index}`}
+            className="chat-node-pill chat-node-pill--stale"
+            title="This concept was modified or regenerated in a later version of the map"
+          >
+            <span className="chat-node-pill-dot" style={{ backgroundColor: '#8a928e' }} />
+            <span className="chat-node-pill-label">{displayLabel}</span>
+          </span>,
+        )
+      } else {
+        // State 3: Unresolved reference without available title
+        parts.push(
+          <span key={`unresolved-${match.index}`} className="chat-node-unresolved">
+            [concept]
+          </span>,
+        )
+      }
     }
     // Case 2: Bare UUID that matches a known node in this mind map
     else if (bareUuid && nodeMap?.has(String(bareUuid))) {
@@ -197,11 +402,23 @@ export function renderInlineMarkdown(str, context = {}) {
         </button>,
       )
     }
-    // Case 3: Bold text
-    else if (boldText) {
-      parts.push(<strong key={match.index}>{boldText.slice(2, -2)}</strong>)
+    // Case 3: Display Math ($$ ... $$)
+    else if (displayMath) {
+      parts.push(renderFormula(displayMath.slice(2, -2), true, match.index))
     }
-    // Case 4: Inline code
+    // Case 4: Bracket Display Math (\[ ... \])
+    else if (bracketDisplayMath) {
+      parts.push(renderFormula(bracketDisplayMath.slice(2, -2), true, match.index))
+    }
+    // Case 5: Paren Inline Math (\( ... \))
+    else if (parenInlineMath) {
+      parts.push(renderFormula(parenInlineMath.slice(2, -2), false, match.index))
+    }
+    // Case 6: Dollar Inline Math ($ ... $)
+    else if (dollarInlineMath) {
+      parts.push(renderFormula(dollarInlineMath.slice(1, -1), false, match.index))
+    }
+    // Case 7: Inline code
     else if (codeText) {
       parts.push(
         <code key={match.index} className="chat-inline-code">
@@ -209,7 +426,11 @@ export function renderInlineMarkdown(str, context = {}) {
         </code>,
       )
     }
-    // Case 5: Italics
+    // Case 8: Bold text
+    else if (boldText) {
+      parts.push(<strong key={match.index}>{boldText.slice(2, -2)}</strong>)
+    }
+    // Case 9: Italics
     else if (italicText) {
       parts.push(<em key={match.index}>{italicText.slice(1, -1)}</em>)
     }
@@ -221,8 +442,8 @@ export function renderInlineMarkdown(str, context = {}) {
     lastIndex = tokenRegex.lastIndex
   }
 
-  if (lastIndex < str.length) {
-    parts.push(str.slice(lastIndex))
+  if (lastIndex < cleanStr.length) {
+    parts.push(cleanStr.slice(lastIndex))
   }
 
   return parts
@@ -451,6 +672,9 @@ export function ChatPanel({
                   )}
               </div>
 
+              {msg.metadata?.research_warnings?.length > 0 && (
+                <ResearchDegradedBanner inline reason={msg.metadata.research_warnings.join(' ')} />
+              )}
               {/* S2-L8 / S2-FE4: Citations & Grounding Sources */}
               {((msg.metadata?.cited_node_ids && msg.metadata.cited_node_ids.length > 0) ||
                 (msg.metadata?.source_refs && msg.metadata.source_refs.length > 0)) && (

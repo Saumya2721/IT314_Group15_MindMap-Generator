@@ -18,13 +18,20 @@ callback.fail() before the task returns.
 from __future__ import annotations
 
 import logging
+import sys
 import traceback
+from pathlib import Path
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
+
+_pkg_root = Path(__file__).resolve().parent.parent
+if str(_pkg_root) not in sys.path:
+    sys.path.insert(0, str(_pkg_root))
 
 from callback.client import CallbackAlreadySent, JobCallbackClient
 from chat.agent import run_chat_turn
 from contracts.models import (
+    ChatIntent,
     ChatTurnRequest,
     GenerationError,
     GenerationRequest,
@@ -71,6 +78,7 @@ async def generate_mindmap(ctx: dict, request_payload: dict) -> dict:
         job_id=request.job_id,
         base_url=request.callback_base_url,
         token=request.callback_token,
+        redis=ctx.get("redis"),
     )
     dynamic_cfg = ctx.get("dynamic_config")
     active_llm = dynamic_cfg.get_llm_provider() if dynamic_cfg else ctx["llm"]
@@ -92,6 +100,8 @@ async def generate_mindmap(ctx: dict, request_payload: dict) -> dict:
 
     # S3-L3: Retrieve user memories before generation and inject into initial state.
     # Gracefully skips if user_id/callback_base_url absent or backend unreachable.
+    if request.user_id is None and isinstance(callback, JobCallbackClient):
+        request.user_id = (await callback.check_status()).get("owner_id")
     gen_query = request.topic or request.ideas or "mind map generation"
     _mem_system_prompt, retrieved_memories = await retrieve_and_inject_memories(
         system_prompt="",  # We pass memories via state's long_term_memories list instead
@@ -100,6 +110,7 @@ async def generate_mindmap(ctx: dict, request_payload: dict) -> dict:
         map_id=request.map_id,
         callback_base_url=request.callback_base_url,
         callback_token=request.callback_token,
+        job_id=request.job_id,
         llm_provider=deps.settings.llm.provider,
         llm_model=deps.settings.llm.model,
     )
@@ -146,6 +157,7 @@ async def generate_mindmap(ctx: dict, request_payload: dict) -> dict:
                 llm=deps.llm,
                 callback_base_url=request.callback_base_url,
                 callback_token=request.callback_token,
+                job_id=request.job_id,
                 user_id=request.user_id,
                 map_id=request.map_id,
                 user_inputs=user_inputs,
@@ -211,6 +223,7 @@ async def _run_regenerate_node(
         initial_state={
             "job_id": request.job_id,
             "map_id": request.map_id,
+            "user_id": request.user_id,
             "namespace": namespace,
             "selected_node": selected_node,
             "target_node_id": request.target_node_id or selected_node.id,
@@ -272,6 +285,7 @@ async def regenerate_node_task(ctx: dict, request_payload: dict) -> dict:
         job_id=request.job_id,
         base_url=request.callback_base_url,
         token=request.callback_token,
+        redis=ctx.get("redis"),
     )
     dynamic_cfg = ctx.get("dynamic_config")
     active_llm = dynamic_cfg.get_llm_provider() if dynamic_cfg else ctx["llm"]
@@ -330,6 +344,7 @@ async def chat_turn_task(ctx: dict, request_payload: dict) -> dict:
         job_id=job_id,
         base_url=request.callback_base_url,
         token=request.callback_token,
+        redis=ctx.get("redis"),
     )
     dynamic_cfg = ctx.get("dynamic_config")
     active_llm = dynamic_cfg.get_llm_provider() if dynamic_cfg else ctx["llm"]
@@ -351,7 +366,11 @@ async def chat_turn_task(ctx: dict, request_payload: dict) -> dict:
     try:
         # S3-L3: Retrieve user memories from backend and inject into request's memory context.
         # Uses request.memory_context["user_id"] if present (passed by backend via ChatTurnRequest).
-        chat_user_id = (request.memory_context or {}).get("user_id") if request.memory_context else None
+        chat_user_id = (request.memory_context or {}).get("user_id")
+        if chat_user_id is None and isinstance(callback, JobCallbackClient):
+            chat_user_id = (await callback.check_status()).get("owner_id")
+            if chat_user_id:
+                request.memory_context = {**(request.memory_context or {}), "user_id": chat_user_id}
         _mem_sys, chat_retrieved_memories = await retrieve_and_inject_memories(
             system_prompt="",
             query=request.message,
@@ -359,6 +378,7 @@ async def chat_turn_task(ctx: dict, request_payload: dict) -> dict:
             map_id=request.map_id,
             callback_base_url=request.callback_base_url,
             callback_token=request.callback_token,
+            job_id=request.job_id,
             llm_provider=deps.settings.llm.provider,
             llm_model=deps.settings.llm.model,
         )
@@ -378,8 +398,12 @@ async def chat_turn_task(ctx: dict, request_payload: dict) -> dict:
             assistant_message = response.action_proposal.explanation or "Proposed an action on the map."
         elif response.needs_clarification:
             assistant_message = response.clarification_question or "Could you clarify your request?"
+        elif response.intent == ChatIntent.QUESTION:
+            assistant_message = "I reviewed the mind map regarding your question, but could not produce a response. Please try asking again."
+        elif response.intent in (ChatIntent.REGEN_NODE, ChatIntent.REGEN_WHOLE, ChatIntent.EDIT_PROPOSAL):
+            assistant_message = "I could not determine the specific changes to apply. Please specify which branch or node you would like to modify."
         else:
-            assistant_message = "Processed your request."
+            assistant_message = "I received your message but could not generate a response. Please try asking again or rephrasing."
 
         action_proposal_dict = response.action_proposal.model_dump(mode="json") if response.action_proposal else None
 
@@ -423,6 +447,7 @@ async def chat_turn_task(ctx: dict, request_payload: dict) -> dict:
                 llm=deps.llm,
                 callback_base_url=request.callback_base_url,
                 callback_token=request.callback_token,
+                job_id=request.job_id,
                 user_id=chat_user_id,
                 map_id=request.map_id,
                 user_inputs=[request.message],
@@ -469,7 +494,9 @@ async def _run(
         rejected_files += [RejectedFile(file_name=n, reason=r) for n, r in fetch_failures]
 
         normalized = await normalize_seed(
-            submission=SeedSubmission(topic=request.topic, ideas=request.ideas, files=fetched_files),
+            submission=SeedSubmission(
+                topic=request.topic, ideas=request.ideas, files=fetched_files, seed_url=request.seed_url
+            ),
             decision_model=deps.decision_model,
             image_extractor=deps.pipeline_flags.image_extractor if deps.pipeline_flags else None,
         )
@@ -493,6 +520,7 @@ async def _run(
         initial_state={
             "job_id": request.job_id,
             "map_id": request.map_id,
+            "user_id": request.user_id,
             "namespace": namespace,
             "seed_text": seed_text,
             "detail_level": request.detail_level,
@@ -517,6 +545,7 @@ async def _run(
             rejected_files=rejected_files,
             tool_call_log=[ToolCallLogEntry(**e) for e in final_state.get("tool_call_log", [])],
             quality_warnings=final_state.get("quality_warnings", []),
+            research_warnings=final_state.get("research_warnings", []),
             expected_map_version=request.expected_map_version,
             expected_node_version=request.expected_node_version,
         )
@@ -568,3 +597,18 @@ async def _send_terminal(callback: JobCallbackClient, result: GenerationResult) 
                 logger.critical(
                     "job %s: both complete and fail callbacks failed to reach backend: %s", result.job_id, inner_exc
                 )
+
+
+async def delete_account_map_vectors(ctx: dict, map_ids: list[str]) -> None:
+    """Remove immutable namespaces recorded by an account deletion operation."""
+    for map_id in map_ids:
+        await ctx["vector_store"].delete_namespace(str(UUID(map_id)))
+
+
+def __getattr__(name: str) -> Any:
+    if name == "WorkerSettings":
+        from worker.settings import WorkerSettings
+
+        return WorkerSettings
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+

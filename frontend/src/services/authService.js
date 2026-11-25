@@ -31,6 +31,7 @@ export const authService = {
     const user = {
       id: data.user?.id || `usr_${Date.now()}`,
       name: data.user?.name || data.user?.email?.split('@')[0] || 'Curator',
+      role: data.user?.role,
       email: data.user?.email || email,
     }
     user.avatar = getUserAvatar(user)
@@ -108,6 +109,7 @@ export const authService = {
       id: data.id,
       email: data.email,
       name: data.profile?.name || data.email?.split('@')[0] || 'Curator',
+      role: data.profile?.role,
     }
     user.avatar = getUserAvatar(user)
 
@@ -173,6 +175,7 @@ export const authService = {
       id: data.user?.id,
       email: data.user?.email,
       name: data.user?.name || data.user?.email?.split('@')[0] || 'Curator',
+      role: data.user?.role,
     }
     user.avatar = getUserAvatar(user)
     setStoredUser(user)

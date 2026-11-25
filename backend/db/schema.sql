@@ -58,9 +58,17 @@ $$;
 CREATE TABLE public.profiles (
     id          UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
     name        VARCHAR(255),          -- display name shown in the app
+    role        TEXT NOT NULL DEFAULT 'user',
+    suspended_at TIMESTAMPTZ,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT chk_profiles_role CHECK (role IN ('user', 'admin'))
 );
+
+REVOKE INSERT ON public.profiles FROM authenticated;
+GRANT INSERT (id, name) ON public.profiles TO authenticated;
+REVOKE UPDATE ON public.profiles FROM authenticated;
+GRANT UPDATE (name) ON public.profiles TO authenticated;
 
 CREATE TRIGGER trg_profiles_updated_at
     BEFORE UPDATE ON public.profiles
@@ -224,18 +232,28 @@ CREATE INDEX idx_chat_messages_thread_id_created ON public.chat_messages (thread
 ALTER TABLE public.chat_threads ADD COLUMN summary_through_message_id UUID
     REFERENCES public.chat_messages(id) ON DELETE SET NULL;
 
--- S2-DB3: backend-managed long-term agent memory.
+-- S2-DB3 / S3-DB2: backend-managed long-term agent memory.
 CREATE TABLE public.agent_memories (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
     map_id UUID REFERENCES public.mind_maps(id) ON DELETE CASCADE,
-    memory_type TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'fact' CHECK (kind IN ('preference', 'decision', 'fact')),
+    memory_type TEXT NOT NULL DEFAULT 'fact',
     content TEXT NOT NULL,
+    importance DOUBLE PRECISION NOT NULL DEFAULT 1.0 CHECK (importance >= 0.0 AND importance <= 1.0),
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    disabled_at TIMESTAMPTZ,
+    last_accessed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+CREATE UNIQUE INDEX uq_agent_memories_active_content
+    ON public.agent_memories (user_id, md5(lower(btrim(content))))
+    WHERE is_active;
 CREATE INDEX idx_agent_memories_user_active ON public.agent_memories (user_id, is_active, created_at DESC);
 CREATE INDEX idx_agent_memories_map ON public.agent_memories (map_id) WHERE map_id IS NOT NULL;
+CREATE INDEX idx_agent_memories_user_map ON public.agent_memories (user_id, map_id);
+CREATE INDEX idx_agent_memories_user_kind_disabled ON public.agent_memories (user_id, kind, disabled_at);
 
 
 -- =====================================================================
@@ -259,6 +277,7 @@ CREATE TABLE public.generation_jobs (
     started_at        TIMESTAMPTZ,
     completed_at      TIMESTAMPTZ,
     callback_token_hash VARCHAR(64),
+    base_map_version  BIGINT,
 
     -- CHANGED from v2. v2 required target_node_id IS NOT NULL for every
     -- 'regenerate_node' job, but the FK below is ON DELETE SET NULL, so
@@ -321,7 +340,7 @@ CREATE UNIQUE INDEX uq_generation_jobs_active_full_map
 CREATE TABLE public.seed_assets (
     id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     generation_job_id  UUID NOT NULL REFERENCES public.generation_jobs(id) ON DELETE CASCADE,
-    asset_type         VARCHAR(20) NOT NULL CHECK (asset_type IN ('pdf', 'image', 'text')),
+    asset_type         VARCHAR(20) NOT NULL CHECK (asset_type IN ('pdf', 'image', 'text', 'docx', 'pptx', 'url')),
     file_name          VARCHAR(255),
     storage_key        TEXT,
     mime_type          VARCHAR(100),
@@ -332,8 +351,8 @@ CREATE TABLE public.seed_assets (
 
     CONSTRAINT chk_seed_asset_size CHECK (file_size_bytes IS NULL OR file_size_bytes >= 0),
     CONSTRAINT chk_seed_asset_storage CHECK (
-        (asset_type = 'text' AND storage_key IS NULL)
-        OR (asset_type IN ('pdf', 'image') AND storage_key IS NOT NULL AND file_name IS NOT NULL)
+        (asset_type IN ('text', 'url') AND storage_key IS NULL)
+        OR (asset_type IN ('pdf', 'image', 'docx', 'pptx') AND storage_key IS NOT NULL AND file_name IS NOT NULL)
     ),
     CONSTRAINT chk_seed_asset_checksum CHECK (
         checksum_sha256 IS NULL OR checksum_sha256 ~ '^[0-9A-Fa-f]{64}$'
@@ -973,6 +992,257 @@ create policy map_snapshots_select_own on public.map_snapshots
 
 -- Writes are owned by the backend only (service-role key); no write grants
 -- for authenticated/anon are provided.
+
+-- =====================================================================
+-- 15. SPRINT 3: ADMIN, PIPELINE CONFIG, RECOVERABLE DELETION & MEMORY VIEWS
+-- =====================================================================
+
+-- 15.1 Helper functions for RLS and Admin gating
+CREATE OR REPLACE FUNCTION private.is_admin()
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+    SELECT EXISTS (
+        SELECT 1 FROM public.profiles p
+        WHERE p.id = (SELECT auth.uid())
+          AND p.role = 'admin'
+          AND p.suspended_at IS NULL
+    );
+$$;
+REVOKE ALL ON FUNCTION private.is_admin() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION private.is_admin() TO authenticated;
+
+CREATE OR REPLACE FUNCTION private.is_active_account()
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+    SELECT EXISTS (
+        SELECT 1 FROM public.profiles
+        WHERE id = (SELECT auth.uid()) AND suspended_at IS NULL
+    );
+$$;
+REVOKE ALL ON FUNCTION private.is_active_account() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION private.is_active_account() TO authenticated;
+
+-- Restrictive policies to ensure admins cannot read user map/chat content
+CREATE POLICY mind_maps_admin_no_select ON public.mind_maps
+    AS RESTRICTIVE FOR SELECT TO authenticated
+    USING (NOT (SELECT private.is_admin()));
+CREATE POLICY nodes_admin_no_select ON public.nodes
+    AS RESTRICTIVE FOR SELECT TO authenticated
+    USING (NOT (SELECT private.is_admin()));
+CREATE POLICY edges_admin_no_select ON public.edges
+    AS RESTRICTIVE FOR SELECT TO authenticated
+    USING (NOT (SELECT private.is_admin()));
+CREATE POLICY chat_messages_admin_no_select ON public.chat_messages
+    AS RESTRICTIVE FOR SELECT TO authenticated
+    USING (NOT (SELECT private.is_admin()));
+CREATE POLICY agent_memories_admin_no_select ON public.agent_memories
+    AS RESTRICTIVE FOR SELECT TO authenticated
+    USING (NOT (SELECT private.is_admin()));
+
+CREATE POLICY agent_memories_active_account ON public.agent_memories
+    AS RESTRICTIVE FOR ALL TO authenticated
+    USING ((SELECT private.is_active_account()))
+    WITH CHECK ((SELECT private.is_active_account()));
+
+-- 15.2 Admin Audit Log
+CREATE TABLE public.admin_audit_log (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    actor_id uuid NOT NULL,
+    action text NOT NULL CHECK (length(btrim(action)) > 0),
+    target_user_id uuid,
+    metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_admin_audit_log_actor_created
+    ON public.admin_audit_log (actor_id, created_at DESC);
+CREATE INDEX idx_admin_audit_log_created
+    ON public.admin_audit_log (created_at DESC);
+ALTER TABLE public.admin_audit_log ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY admin_audit_log_insert ON public.admin_audit_log
+    FOR INSERT TO authenticated
+    WITH CHECK (actor_id = (SELECT auth.uid()) AND (SELECT private.is_admin()));
+CREATE POLICY admin_audit_log_select ON public.admin_audit_log
+    FOR SELECT TO authenticated
+    USING ((SELECT private.is_admin()));
+
+REVOKE ALL ON public.admin_audit_log FROM PUBLIC, anon, authenticated;
+GRANT SELECT, INSERT ON public.admin_audit_log TO authenticated;
+GRANT ALL ON public.admin_audit_log TO service_role;
+
+-- 15.3 Persistent Backend Pipeline Settings
+CREATE TABLE public.pipeline_config (
+    singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+    settings jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(settings) = 'object')
+);
+INSERT INTO public.pipeline_config DEFAULT VALUES ON CONFLICT DO NOTHING;
+ALTER TABLE public.pipeline_config ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE public.pipeline_config FROM PUBLIC, anon, authenticated, service_role;
+
+-- 15.4 Recoverable Account Deletion Requests
+CREATE TABLE public.account_deletion_requests (
+    user_id uuid PRIMARY KEY,
+    actor_id uuid NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    map_ids uuid[] NOT NULL DEFAULT '{}',
+    storage_cleaned_at timestamptz,
+    vector_attempt integer NOT NULL DEFAULT 0,
+    vectors_cleaned_at timestamptz,
+    completed_at timestamptz
+);
+ALTER TABLE public.account_deletion_requests ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.account_deletion_requests FROM PUBLIC, anon, authenticated;
+GRANT SELECT, INSERT, UPDATE ON public.account_deletion_requests TO service_role;
+
+-- 15.5 GDPR Agent Memories Export View
+CREATE VIEW public.agent_memories_gdpr_export
+WITH (security_invoker = true, security_barrier = true)
+AS
+SELECT m.user_id,
+       jsonb_agg(
+           jsonb_build_object(
+               'id', m.id,
+               'user_id', m.user_id,
+               'map_id', m.map_id,
+               'kind', m.kind,
+               'content', m.content,
+               'importance', m.importance,
+               'last_accessed_at', m.last_accessed_at,
+               'disabled_at', m.disabled_at,
+               'created_at', m.created_at,
+               'updated_at', m.updated_at
+           ) ORDER BY m.created_at, m.id
+       ) AS memories
+FROM public.agent_memories AS m
+WHERE m.user_id = (SELECT auth.uid())
+  AND NOT (SELECT private.is_admin())
+GROUP BY m.user_id;
+REVOKE ALL ON public.agent_memories_gdpr_export FROM PUBLIC, anon;
+GRANT SELECT ON public.agent_memories_gdpr_export TO authenticated, service_role;
+
+-- 15.6 Admin Aggregate Analytics Views
+CREATE VIEW public.admin_active_users
+WITH (security_barrier = true)
+AS
+    SELECT totals.*
+    FROM (
+        SELECT
+            (SELECT count(*)::bigint FROM public.profiles) AS total_users,
+            count(DISTINCT m.user_id) FILTER (WHERE m.updated_at >= now() - interval '7 days')::bigint AS active_users_last_7_days,
+            count(DISTINCT m.user_id) FILTER (WHERE m.updated_at >= now() - interval '30 days')::bigint AS active_users_last_30_days
+        FROM public.mind_maps m
+    ) totals
+    WHERE (SELECT private.is_admin());
+
+CREATE OR REPLACE VIEW public.admin_generation_counts
+WITH (security_barrier = true)
+AS
+WITH completed_maps AS (
+    SELECT map_id, min(completed_at) AS first_completed_at
+    FROM public.generation_jobs
+    WHERE job_type = 'generate' AND status = 'completed'
+    GROUP BY map_id
+),
+daily AS (
+    SELECT day::date AS day, count(c.map_id) AS count
+    FROM generate_series(
+        date_trunc('day', now() AT TIME ZONE 'UTC') - interval '6 days',
+        date_trunc('day', now() AT TIME ZONE 'UTC'),
+        interval '1 day'
+    ) AS day
+    LEFT JOIN completed_maps c ON (c.first_completed_at AT TIME ZONE 'UTC')::date = day::date
+    GROUP BY day
+)
+SELECT
+    count(*) AS total_generations,
+    count(*) FILTER (WHERE created_at >= now() - interval '7 days') AS generations_last_7_days,
+    count(*) FILTER (WHERE created_at >= now() - interval '30 days') AS generations_last_30_days,
+    (SELECT count(*) FROM completed_maps WHERE first_completed_at >= now() - interval '7 days')
+        AS maps_generated_last_7_days,
+    (SELECT count(*) FROM completed_maps WHERE first_completed_at >= now() - interval '30 days')
+        AS maps_generated_last_30_days,
+    (SELECT count(*) FROM public.mind_maps) AS total_maps,
+    (SELECT jsonb_agg(jsonb_build_object('date', day, 'count', count) ORDER BY day) FROM daily)
+        AS maps_created_per_day
+FROM public.generation_jobs
+HAVING (SELECT private.is_admin());
+
+CREATE VIEW public.admin_generation_failure_rates
+WITH (security_barrier = true)
+AS
+    SELECT totals.*
+    FROM (
+        SELECT
+            count(*) FILTER (WHERE j.status = 'failed')::bigint AS failed_jobs,
+            count(*) FILTER (WHERE j.status = 'completed')::bigint AS completed_jobs,
+            coalesce(
+                round(
+                    count(*) FILTER (WHERE j.status = 'failed')::numeric
+                    / nullif(count(*) FILTER (WHERE j.status IN ('failed', 'completed')), 0),
+                    4
+                ), 0
+            ) AS failure_rate
+        FROM public.generation_jobs j
+    ) totals
+    WHERE (SELECT private.is_admin());
+
+CREATE VIEW public.admin_job_error_categories
+WITH (security_barrier = true)
+AS
+    SELECT
+        category,
+        count(*)::bigint AS count
+    FROM (
+        SELECT
+            CASE
+                WHEN lower(error_message) LIKE '%rate%' OR lower(error_message) LIKE '%429%' OR lower(error_message) LIKE '%quota%' THEN 'rate_limit'
+                WHEN lower(error_message) LIKE '%timeout%' OR lower(error_message) LIKE '%timed out%' OR lower(error_message) LIKE '%deadline%' THEN 'timeout'
+                WHEN lower(error_message) LIKE '%validation%' OR lower(error_message) LIKE '%invalid%' OR lower(error_message) LIKE '%schema%' THEN 'validation'
+                WHEN lower(error_message) LIKE '%auth%' OR lower(error_message) LIKE '%permission%' OR lower(error_message) LIKE '%forbidden%' THEN 'auth'
+                WHEN lower(error_message) LIKE '%network%' OR lower(error_message) LIKE '%connect%' THEN 'network'
+                WHEN lower(error_message) LIKE '%provider%' OR lower(error_message) LIKE '%service%' OR lower(error_message) LIKE '%upstream%' THEN 'provider_error'
+                ELSE 'other'
+            END AS category
+        FROM public.generation_jobs
+        WHERE status IN ('failed', 'rejected') AND error_message IS NOT NULL
+    ) categorized
+    WHERE (SELECT private.is_admin())
+    GROUP BY category;
+
+CREATE VIEW public.admin_performance_latencies
+WITH (security_barrier = true)
+AS
+    SELECT totals.*
+    FROM (
+        SELECT
+            coalesce(
+                round(
+                    avg(EXTRACT(EPOCH FROM (j.completed_at - j.started_at)))
+                    FILTER (WHERE j.status = 'completed' AND j.job_type IN ('generate', 'regenerate_full', 'regenerate_node') AND j.started_at IS NOT NULL AND j.completed_at IS NOT NULL)::numeric,
+                    2
+                ),
+                0.0
+            ) AS avg_generation_latency,
+            coalesce(
+                round(
+                    avg(EXTRACT(EPOCH FROM (j.completed_at - j.started_at)))
+                    FILTER (WHERE j.status = 'completed' AND j.job_type = 'chat_turn' AND j.started_at IS NOT NULL AND j.completed_at IS NOT NULL)::numeric,
+                    2
+                ),
+                0.0
+            ) AS avg_chat_turn_latency
+        FROM public.generation_jobs j
+    ) totals
+    WHERE (SELECT private.is_admin());
+
 -- =====================================================================
 -- End of schema
 -- =====================================================================

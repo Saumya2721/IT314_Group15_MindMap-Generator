@@ -240,7 +240,7 @@ class VisionConfig:
     gemini_api_key: str = field(
         default_factory=lambda: os.environ.get("GEMINI_API_KEY", "") or os.environ.get("GOOGLE_API_KEY", "")
     )
-    gemini_model: str = field(default_factory=lambda: os.environ.get("GEMINI_VISION_MODEL", "gemini-2.0-flash"))
+    gemini_model: str = field(default_factory=lambda: os.environ.get("GEMINI_VISION_MODEL", "gemini-3.8-flash"))
     openrouter_api_key: str = field(default_factory=lambda: os.environ.get("OPENROUTER_API_KEY", ""))
     openrouter_model: str = field(
         default_factory=lambda: os.environ.get("OPENROUTER_VISION_MODEL", "google/gemini-2.0-flash-001")

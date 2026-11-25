@@ -43,6 +43,8 @@ export function adaptBackendGraphToFlow(rawNodes = [], rawEdges = [], options = 
       id: edgeId,
       source,
       target,
+      sourceHandle: 'source-bottom',
+      targetHandle: 'target-top',
       label: edge.label || edge.relationship_label || undefined,
       type: 'smoothstep',
       animated: false,
@@ -104,7 +106,7 @@ export function adaptBackendGraphToFlow(rawNodes = [], rawEdges = [], options = 
     Number.isFinite(Number(n.pos_y)) &&
     Number(n.pos_y) !== 0
 
-  // Group nodes by depth for columnar layout
+  // Group nodes by depth for horizontal layer layout
   const depthGroups = new Map()
   for (const n of rawNodes) {
     const nid = String(n.id)
@@ -113,11 +115,11 @@ export function adaptBackendGraphToFlow(rawNodes = [], rawEdges = [], options = 
     depthGroups.get(depth).push(n)
   }
 
-  const verticalSpacingByDepth = {
-    0: 200,
-    1: 180,
-    2: 130,
-    3: 110,
+  const horizontalSpacingByDepth = {
+    0: 300,
+    1: 300,
+    2: 280,
+    3: 260,
   }
 
   const flowNodes = rawNodes.map((n) => {
@@ -134,15 +136,15 @@ export function adaptBackendGraphToFlow(rawNodes = [], rawEdges = [], options = 
       const depth = depthMap.get(id) || 0
       const group = depthGroups.get(depth) || [n]
       const indexInGroup = group.findIndex((item) => String(item.id) === id)
-      const spacing = verticalSpacingByDepth[Math.min(depth, 3)] || 120
+      const spacing = horizontalSpacingByDepth[Math.min(depth, 3)] || 280
 
-      // X coordinate spaced by depth columns
-      x = 80 + depth * 360
+      // Y coordinate spaced by depth levels
+      y = 80 + depth * 200
 
-      // Y coordinate centered vertically around the group
-      const totalGroupHeight = (group.length - 1) * spacing
-      const startY = 320 - totalGroupHeight / 2
-      y = startY + indexInGroup * spacing
+      // X coordinate centered horizontally around the group
+      const totalGroupWidth = (group.length - 1) * spacing
+      const startX = 400 - totalGroupWidth / 2
+      x = startX + indexInGroup * spacing
     }
 
     const defaultTint = isRoot ? '#155E63' : isBranch ? '#C96B4B' : '#899B72'

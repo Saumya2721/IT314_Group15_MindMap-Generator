@@ -1,4 +1,5 @@
 import logging
+import os
 import sys
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -71,6 +72,13 @@ FRONTEND_URL = app_settings.FRONTEND_URL
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Initialize the database pool, generator, and application state."""
+    if os.getenv("ENVIRONMENT", "").lower() == "production":
+        memory_key = app_settings.INTERNAL_SERVICE_KEY
+        config_key = os.getenv("PIPELINE_CONFIG_SERVICE_KEY") or memory_key
+        if any(len(key) < 32 or key == "your-secure-internal-service-secret" for key in (memory_key, config_key)):
+            raise RuntimeError(
+                "Production worker credentials must be explicitly configured and at least 32 characters."
+            )
     pool = None
     try:
         pool = await create_db_pool()

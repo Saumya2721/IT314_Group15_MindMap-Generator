@@ -119,3 +119,36 @@ def test_worker_settings_functions_registration():
     }
     actual_functions = set(WorkerSettings.functions)
     assert expected_functions.issubset(actual_functions)
+
+
+def test_instrumented_extractors_and_tools_decorated():
+    from chat.context import assemble_chat_context
+    from chat.token_budget import trim_history_to_budget
+    from ingestion.extractors.docx import extract_text_from_docx
+    from ingestion.extractors.image import extract_text_from_image
+    from ingestion.extractors.pdf import extract_text_from_pdf
+    from ingestion.extractors.pptx import extract_text_from_pptx
+    from ingestion.extractors.registry import ExtractorRegistry
+    from memory.extraction import extract_memories_from_interaction
+    from tools.arxiv_tool import ArxivTool
+    from tools.scholar_tool import ScholarTool
+    from tools.web_reader import WebPageReaderTool, fetch_web_page_async
+    from tools.web_search_tool import TavilyWebSearchTool
+    from tools.wikipedia_tool import WikipediaTool
+
+    # Assert all target functions and methods are callable and decorated
+    assert callable(extract_text_from_image)
+    assert callable(extract_text_from_docx)
+    assert callable(extract_text_from_pptx)
+    assert callable(extract_text_from_pdf)
+    assert callable(ExtractorRegistry.extract_with_spec)
+    assert callable(ExtractorRegistry.aextract_with_spec)
+    assert callable(WikipediaTool.invoke)
+    assert callable(ScholarTool.invoke)
+    assert callable(ArxivTool.invoke)
+    assert callable(TavilyWebSearchTool.invoke)
+    assert callable(fetch_web_page_async)
+    assert callable(WebPageReaderTool.invoke)
+    assert callable(extract_memories_from_interaction)
+    assert callable(trim_history_to_budget)
+    assert callable(assemble_chat_context)

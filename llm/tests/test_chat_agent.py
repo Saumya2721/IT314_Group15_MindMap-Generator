@@ -143,23 +143,49 @@ class ConfigurableDecisionModel:
 
 @pytest.mark.asyncio
 async def test_classify_question():
-    """classify_intent returns question for a question-like message."""
+    """classify_intent returns question for a question-like message.
+    Uses the LLM classifier path (no regex fast-path for questions).
+    """
+    from tests.conftest import FakeLLMProvider
     dm = ConfigurableDecisionModel("question")
+    llm = FakeLLMProvider(["question"])
     snap = _make_snapshot()
-    intent = await classify_intent(dm, "What does the Light Reactions node mean?", snap)
+    intent = await classify_intent(dm, "What does the Light Reactions node mean?", snap, llm=llm)
     assert intent == ChatIntent.QUESTION
 
 
 @pytest.mark.asyncio
 async def test_classify_edit_proposal():
+    """edit_proposal classified by LLM (old _EDIT_PROPOSAL_RE removed)."""
+    from tests.conftest import FakeLLMProvider
     dm = ConfigurableDecisionModel("edit_proposal")
+    llm = FakeLLMProvider(["edit_proposal"])
     snap = _make_snapshot()
-    intent = await classify_intent(dm, "Add a node about ATP synthesis", snap)
+    intent = await classify_intent(dm, "Add a node about ATP synthesis", snap, llm=llm)
     assert intent == ChatIntent.EDIT_PROPOSAL
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("message, expected", [
+    ("Generate again keeping in mind that you should create more subbranches", ChatIntent.EDIT_PROPOSAL),
+    ("Regenerate the whole map with more sub-branches", ChatIntent.EDIT_PROPOSAL),
+    ("Generate again", ChatIntent.REGEN_WHOLE),
+    ("Regenerate the whole mind map with more detail", ChatIntent.REGEN_WHOLE),
+])
+async def test_classify_map_retry_without_model(message, expected):
+    assert await classify_intent(ConfigurableDecisionModel("question"), message, _make_snapshot()) == expected
+
+
+@pytest.mark.asyncio
+async def test_qualified_retry_reaches_decision_model():
+    message = "Redo the whole map, splitting the Calvin Cycle branch into three stages"
+    model = ConfigurableDecisionModel("edit_proposal")
+    assert await classify_intent(model, message, _make_snapshot()) == ChatIntent.EDIT_PROPOSAL
+
+
+@pytest.mark.asyncio
 async def test_classify_regen_whole():
+    """regen_whole hits the regex fast-path — no LLM needed."""
     dm = ConfigurableDecisionModel("regen_whole")
     snap = _make_snapshot()
     intent = await classify_intent(dm, "Regenerate the whole mind map with more detail", snap)
@@ -168,18 +194,91 @@ async def test_classify_regen_whole():
 
 @pytest.mark.asyncio
 async def test_classify_regen_node():
+    """regen_node classified by LLM (old _REGEN_NODE_RE removed)."""
+    from tests.conftest import FakeLLMProvider
     dm = ConfigurableDecisionModel("regen_node")
+    llm = FakeLLMProvider(["regen_node"])
     snap = _make_snapshot()
-    intent = await classify_intent(dm, "Redo the Calvin Cycle branch", snap)
+    intent = await classify_intent(dm, "Redo the Calvin Cycle branch", snap, llm=llm)
     assert intent == ChatIntent.REGEN_NODE
 
 
 @pytest.mark.asyncio
 async def test_classify_small_talk():
+    """small_talk hits the regex fast-path — no LLM needed."""
     dm = ConfigurableDecisionModel("small_talk")
     snap = _make_snapshot()
     intent = await classify_intent(dm, "Hello!", snap)
     assert intent == ChatIntent.SMALL_TALK
+
+
+@pytest.mark.asyncio
+async def test_classify_regen_node_multi_clause():
+    """Compound request 'regenerate X and explain' → REGEN_NODE via LLM classifier."""
+    from contracts.models import NodeDraft
+    from tests.conftest import FakeLLMProvider
+    dm = ConfigurableDecisionModel("question")  # DM never reached; LLM handles it
+    llm = FakeLLMProvider(["regen_node"])
+    snap = _make_snapshot(
+        nodes=[
+            NodeDraft(id=NODE_A_ID, label="Digital vs Analog", description="Root"),
+            NodeDraft(id=NODE_B_ID, label="Key Differences", description="Differences branch"),
+        ]
+    )
+    intent = await classify_intent(
+        dm,
+        "I want you to regenerate the Key Differences branch and list the differences in detail",
+        snap,
+        llm=llm,
+    )
+    assert intent == ChatIntent.REGEN_NODE
+
+
+@pytest.mark.asyncio
+async def test_classify_regen_node_typo():
+    """Typo in action verb ('exppand') → misses regex, reaches DecisionModel which classifies REGEN_NODE."""
+    from contracts.models import NodeDraft
+    dm = ConfigurableDecisionModel("regen_node")
+    snap = _make_snapshot(
+        nodes=[
+            NodeDraft(id=NODE_A_ID, label="Digital vs Analog", description="Root"),
+            NodeDraft(id=NODE_B_ID, label="Key Differences", description="Differences branch"),
+        ]
+    )
+    intent = await classify_intent(
+        dm,
+        "Exppand the Key Differences branch and explain the additional details",
+        snap,
+    )
+    assert intent == ChatIntent.REGEN_NODE
+
+
+@pytest.mark.asyncio
+async def test_classify_explain_only_is_question():
+    """'Expand on your explanation' (no branch name) → QUESTION, not regen_node."""
+    dm = ConfigurableDecisionModel("question")
+    snap = _make_snapshot()
+    intent = await classify_intent(
+        dm,
+        "Expand on your explanation of photosynthesis",
+        snap,
+    )
+    assert intent == ChatIntent.QUESTION
+
+
+@pytest.mark.asyncio
+async def test_classify_regen_node_when_dm_unavailable():
+    """When Jev is down and LLM is provided, LLM handles classification correctly."""
+    from tests.conftest import FakeLLMProvider
+
+    class FailingDM:
+        async def classify(self, **kwargs):
+            raise DecisionModelUnavailable("Jev 502 Bad Gateway")
+
+    llm = FakeLLMProvider(["regen_node"])
+    snap = _make_snapshot()
+    intent = await classify_intent(FailingDM(), "Please regenerate the Light Reactions branch", snap, llm=llm)
+    assert intent == ChatIntent.REGEN_NODE
 
 
 # ---------------------------------------------------------------------------

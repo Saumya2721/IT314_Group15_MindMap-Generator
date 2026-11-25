@@ -85,92 +85,224 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+# Visual layout constants for deterministic Top-to-Bottom (TB) tree placement
+_ROOT_Y = 80.0
+_ROW_HEIGHT = 200.0
+_CARD_WIDTH = 260.0
+_SIBLING_GAP_X = 40.0
+_COMPONENT_GAP_X = 120.0
+
+# Legacy aliases for backwards compatibility
+_ROOT_X = 80.0
+_COLUMN_WIDTH = _CARD_WIDTH
+_NODE_HEIGHT = _ROW_HEIGHT
+_SIBLING_GAP = _SIBLING_GAP_X
+_COMPONENT_GAP = _COMPONENT_GAP_X
+
+
+def _has_valid_coords(n: dict[str, Any]) -> bool:
+    """Return True if node already has distinct non-zero coordinates."""
+    try:
+        px = float(n.get("pos_x", 0.0))
+        py = float(n.get("pos_y", 0.0))
+        return px != 0.0 and py != 0.0
+    except (ValueError, TypeError):
+        return False
+
 
 def compute_layout(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> None:
     """Calculate 2D coordinates (pos_x, pos_y) for nodes arranged in a clean mind map layout.
 
-    Places the central root node in the center (450, 300) and radiates children outward.
+    Positions nodes in a deterministic Top-to-Bottom (TB) tree layout:
+    Root at apex (y=80), branches horizontally distributed at level 1 (y=280),
+    and concepts/leaves further down (y=480+), centering parents over child spans,
+    guaranteeing zero card collisions, and preserving manually dragged coordinates.
     """
     if not nodes:
         return
 
-    # Check if all nodes already have non-zero distinct positions
-    has_custom_positions = any(float(n.get("pos_x", 0.0)) != 0.0 or float(n.get("pos_y", 0.0)) != 0.0 for n in nodes)
-    if has_custom_positions and len(nodes) > 1:
+    # If all nodes already have non-zero coordinates, preserve stored layout
+    if len(nodes) > 1 and all(_has_valid_coords(n) for n in nodes):
         return
 
-    # Build adjacency list supporting both source/target and source_node_id/target_node_id
-    children_map: dict[str, list[str]] = {str(n["id"]): [] for n in nodes}
-    in_degree: dict[str, int] = {str(n["id"]): 0 for n in nodes}
+    node_by_id: dict[str, dict[str, Any]] = {str(n["id"]): n for n in nodes}
+
+    # Build adjacency lists supporting both source/target and source_node_id/target_node_id
+    children_map: dict[str, list[str]] = {nid: [] for nid in node_by_id}
+    parents_map: dict[str, list[str]] = {nid: [] for nid in node_by_id}
+    in_degree: dict[str, int] = {nid: 0 for nid in node_by_id}
+
     for e in edges:
         src = str(e.get("source") or e.get("source_node_id") or "")
         tgt = str(e.get("target") or e.get("target_node_id") or "")
-        if src in children_map and tgt in in_degree:
+        if src in children_map and tgt in node_by_id:
             children_map[src].append(tgt)
+            parents_map[tgt].append(src)
             in_degree[tgt] += 1
 
-    # Find candidate root
-    root_id = None
-    for n in nodes:
-        nid = str(n["id"])
-        if n.get("node_type") == "root" or in_degree.get(nid, 0) == 0:
-            root_id = nid
-            break
-    if not root_id:
-        root_id = str(nodes[0]["id"])
+    # Identify primary spanning forest to break multi-parent cross-links cleanly
+    visited: set[str] = set()
+    tree_children: dict[str, list[str]] = {nid: [] for nid in node_by_id}
+    depth_map: dict[str, int] = {}
+    component_roots: list[str] = []
 
-    node_by_id = {str(n["id"]): n for n in nodes}
+    # 1. First candidate: explicit root node or zero in-degree nodes
+    explicit_roots = [nid for nid, n in node_by_id.items() if n.get("node_type") == "root"]
+    zero_in_degree = [nid for nid, deg in in_degree.items() if deg == 0 and nid not in explicit_roots]
+    ordered_candidates = explicit_roots + zero_in_degree
 
-    # Center origin
-    center_x = 450.0
-    center_y = 300.0
+    if not ordered_candidates:
+        ordered_candidates = [str(nodes[0]["id"])]
 
-    root_node = node_by_id[root_id]
-    root_node["pos_x"] = center_x
-    root_node["pos_y"] = center_y
-    root_node["node_type"] = "root"
-
-    # Radial tree distribution
-    level_1_children = children_map.get(root_id, [])
-    l1_count = len(level_1_children)
-    l1_radius = 240.0
-
-    visited = {root_id}
-
-    for i, child_id in enumerate(level_1_children):
-        if child_id in visited:
+    for cand_id in ordered_candidates:
+        if cand_id in visited:
             continue
-        visited.add(child_id)
-        angle = (2 * math.pi * i) / max(l1_count, 1)
-        cx = center_x + l1_radius * math.cos(angle)
-        cy = center_y + l1_radius * math.sin(angle)
-        child_node = node_by_id[child_id]
-        child_node["pos_x"] = round(cx, 1)
-        child_node["pos_y"] = round(cy, 1)
+        component_roots.append(cand_id)
+        visited.add(cand_id)
+        depth_map[cand_id] = 0
+        queue = [cand_id]
+        while queue:
+            curr = queue.pop(0)
+            curr_depth = depth_map[curr]
+            for child_id in children_map[curr]:
+                if child_id not in visited:
+                    visited.add(child_id)
+                    tree_children[curr].append(child_id)
+                    depth_map[child_id] = curr_depth + 1
+                    queue.append(child_id)
 
-        # Distribute level 2 grandchildren
-        l2_children = [cid for cid in children_map.get(child_id, []) if cid not in visited]
-        l2_count = len(l2_children)
-        l2_radius = 160.0
-
-        for j, gchild_id in enumerate(l2_children):
-            visited.add(gchild_id)
-            spread = 0.6  # radians
-            offset_angle = angle - (spread / 2) + (spread * (j + 0.5) / max(l2_count, 1))
-            gx = cx + l2_radius * math.cos(offset_angle)
-            gy = cy + l2_radius * math.sin(offset_angle)
-            gc_node = node_by_id[gchild_id]
-            gc_node["pos_x"] = round(gx, 1)
-            gc_node["pos_y"] = round(gy, 1)
-
-    # For any remaining disconnected or deep nodes, arrange in a gentle grid/offset
-    curr_offset = 50.0
+    # 2. Cover any disconnected components or cycles not reached above
     for n in nodes:
         nid = str(n["id"])
         if nid not in visited:
-            n["pos_x"] = round(center_x + curr_offset, 1)
-            n["pos_y"] = round(center_y + curr_offset, 1)
-            curr_offset += 60.0
+            component_roots.append(nid)
+            visited.add(nid)
+            depth_map[nid] = 0
+            queue = [nid]
+            while queue:
+                curr = queue.pop(0)
+                curr_depth = depth_map[curr]
+                for child_id in children_map[curr]:
+                    if child_id not in visited:
+                        visited.add(child_id)
+                        tree_children[curr].append(child_id)
+                        depth_map[child_id] = curr_depth + 1
+                        queue.append(child_id)
+
+    # 3. Calculate subtree widths bottom-up
+    subtree_width: dict[str, float] = {}
+
+    def calc_subtree_width(u: str) -> float:
+        children = tree_children[u]
+        if not children:
+            subtree_width[u] = _CARD_WIDTH
+            return _CARD_WIDTH
+        total_children_w = sum(calc_subtree_width(c) for c in children)
+        gap_total = (len(children) - 1) * _SIBLING_GAP_X
+        w = max(_CARD_WIDTH, total_children_w + gap_total)
+        subtree_width[u] = w
+        return w
+
+    # 4. Top-down assignment of horizontal slices and vertical depth rows
+    def assign_positions(u: str, x_left: float, x_right: float):
+        node = node_by_id[u]
+        center_x = (x_left + x_right) / 2.0
+        # If node already has user-dragged coordinates and is not at (0, 0), preserve it
+        if not _has_valid_coords(node):
+            node["pos_x"] = round(center_x, 1)
+            node["pos_y"] = round(_ROOT_Y + depth_map[u] * _ROW_HEIGHT, 1)
+
+        children = tree_children[u]
+        if not children:
+            return
+
+        children_total_w = sum(subtree_width[c] for c in children) + (len(children) - 1) * _SIBLING_GAP_X
+        child_cursor = center_x - (children_total_w / 2.0)
+
+        for c in children:
+            c_w = subtree_width[c]
+            assign_positions(c, child_cursor, child_cursor + c_w)
+            child_cursor += c_w + _SIBLING_GAP_X
+
+    current_x_cursor = 80.0
+    for r in component_roots:
+        calc_subtree_width(r)
+        comp_w = subtree_width[r]
+        assign_positions(r, current_x_cursor, current_x_cursor + comp_w)
+        current_x_cursor += comp_w + _COMPONENT_GAP_X
+
+
+def compute_incremental_layout(
+    nodes: list[dict[str, Any]],
+    edges: list[dict[str, Any]],
+    new_node_ids: set[str] | list[str],
+) -> None:
+    """Position newly added nodes without shifting existing stable nodes.
+
+    Places new children relative to their parent anchor and to the right of any
+    existing siblings, avoiding bounding-box intersections with established cards.
+    """
+    if not new_node_ids:
+        return
+
+    # Preserve deterministic ordering for list/tuple or sort for sets
+    ordered_new_ids = list(dict.fromkeys(str(nid) for nid in new_node_ids))
+    new_id_set = set(ordered_new_ids)
+    node_by_id = {str(n["id"]): n for n in nodes}
+
+    # Build parent relationships for all nodes in edges
+    parent_map: dict[str, str] = {}
+    for e in edges:
+        src = str(e.get("source") or e.get("source_node_id") or "")
+        tgt = str(e.get("target") or e.get("target_node_id") or "")
+        if src in node_by_id and tgt in node_by_id:
+            parent_map[tgt] = src
+
+    for nid in ordered_new_ids:
+        node = node_by_id.get(nid)
+        if not node:
+            continue
+
+        parent_id = parent_map.get(nid)
+        parent_node = node_by_id.get(parent_id) if parent_id else None
+
+        if parent_node and _has_valid_coords(parent_node):
+            target_y = float(parent_node["pos_y"]) + _ROW_HEIGHT
+            # Find siblings of this new node that already have coordinates
+            sibling_xs = [
+                float(n["pos_x"])
+                for s_id, n in node_by_id.items()
+                if s_id != nid
+                and parent_map.get(s_id) == parent_id
+                and _has_valid_coords(n)
+            ]
+            if sibling_xs:
+                target_x = max(sibling_xs) + _CARD_WIDTH + _SIBLING_GAP_X
+            else:
+                target_x = float(parent_node["pos_x"])
+
+            # Check for collision against any existing placed nodes at target (x, y)
+            collision = True
+            while collision:
+                collision = any(
+                    abs(float(other.get("pos_y", 0.0)) - target_y) < (_ROW_HEIGHT * 0.7)
+                    and abs(float(other.get("pos_x", 0.0)) - target_x) < _CARD_WIDTH
+                    for other_id, other in node_by_id.items()
+                    if other_id != nid and _has_valid_coords(other)
+                )
+                if collision:
+                    target_x += _CARD_WIDTH + _SIBLING_GAP_X
+
+            node["pos_x"] = round(target_x, 1)
+            node["pos_y"] = round(target_y, 1)
+        else:
+            # Fallback for orphaned additions: place to the right of current occupied bounds
+            max_x = max(
+                (float(n.get("pos_x", 80.0)) for n_id, n in node_by_id.items() if n_id not in new_id_set),
+                default=80.0,
+            )
+            node["pos_x"] = round(max_x + _CARD_WIDTH + _SIBLING_GAP_X, 1)
+            node["pos_y"] = round(_ROOT_Y + _ROW_HEIGHT, 1)
 
 
 class MindMapGenerator:

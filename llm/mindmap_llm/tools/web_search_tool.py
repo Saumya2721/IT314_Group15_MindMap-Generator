@@ -5,6 +5,7 @@ from typing import Any
 import httpx
 from providers.base import ToolSpec
 from tools.base import Tool, ToolError, ToolResult
+from tracing import trace_span
 
 
 class TavilyWebSearchTool(Tool):
@@ -31,6 +32,7 @@ class TavilyWebSearchTool(Tool):
             },
         )
 
+    @trace_span("web_search_invoke", run_type="tool")
     async def invoke(self, *, query: str = "", **kwargs: Any) -> list[ToolResult]:
         query_val = query or str(kwargs.get("query", ""))
         try:

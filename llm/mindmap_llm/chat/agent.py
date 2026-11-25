@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 
 from chat.intents import classify_intent
@@ -29,8 +30,8 @@ from orchestration.deps import GenerationDeps
 
 logger = logging.getLogger(__name__)
 
-# Strict conversational latency budget: total chat-turn latency must be <= 5.0 seconds
-TOTAL_CHAT_TURN_TIMEOUT_S = 5.0
+# Conversational latency budget: configurable via environment (default: 15.0s to accommodate tool calling + LLM generation)
+TOTAL_CHAT_TURN_TIMEOUT_S = float(os.getenv("CHAT_TURN_TIMEOUT_S", "15.0"))
 
 
 async def _execute_chat_turn_internal(
@@ -38,8 +39,10 @@ async def _execute_chat_turn_internal(
     request: ChatTurnRequest,
     guard: ResearchInvocationGuard,
 ) -> ChatTurnResponse:
-    # Step 1: classify intent (decision model only — fast, typed)
-    intent = await classify_intent(deps.decision_model, request.message, request.map_snapshot)
+    # Step 1: classify intent.
+    # Primary: LLM classifier with a structured prompt (handles typos, compound intents).
+    # Jev DecisionModel is kept as an optional fast-path; see intents._USE_JEV_CLASSIFY.
+    intent = await classify_intent(deps.decision_model, request.message, request.map_snapshot, llm=deps.llm)
     logger.info("Chat intent classified as %r for map %s", intent, request.map_id)
 
     # Step 2: dispatch with shared per-turn research invocation guard

@@ -13,6 +13,7 @@ dependencies = [
     "groq>=0.9.0",
     "langgraph>=0.2.0",
     "pinecone>=5.0.0",
+    "pinecone-text>=0.9.0",
     "fastembed>=0.3.0",
     "numpy>=1.26.0",
     "pypdf>=4.0.0",
@@ -50,7 +51,9 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
+"mindmap_llm/__init__.py" = ["E402"]
 "mindmap_llm/worker/settings.py" = ["E402"]
+"mindmap_llm/worker/tasks.py" = ["E402"]
 "mindmap_llm/scripts/*" = ["E402"]
 "tests/*" = ["E402"]
 

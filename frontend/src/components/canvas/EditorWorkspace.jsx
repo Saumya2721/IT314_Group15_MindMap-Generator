@@ -8,6 +8,7 @@ import OutlineView from './OutlineView'
 import { VersionHistoryPanel } from '../history/VersionHistoryPanel'
 import { ChatPanel } from './ChatPanel'
 import { ExportModal } from './ExportModal'
+import { ResearchDegradedBanner } from './ResearchDegradedBanner'
 import { exportMindMap } from '../../services/exportService'
 import { mindMapService } from '../../services/mindMapService'
 import { getDescendantNodeIds, validateConnection } from '../../utils/connectionGuards'
@@ -100,6 +101,7 @@ export function EditorWorkspace({
   onViewportChange = null,
   toastMessage = '',
   onClearToast = null,
+  researchWarnings = null,
   canvasState: customCanvasState = null,
   commentsChatState: customCommentsChatState = null,
   exportHistoryState: customExportHistoryState = null,
@@ -111,6 +113,7 @@ export function EditorWorkspace({
 
   // Local Toast State
   const [localToast, setLocalToast] = useState('')
+  const [dismissedBanner, setDismissedBanner] = useState(false)
 
   // Regeneration Modal State
   const [showRegenModal, setShowRegenModal] = useState(false)
@@ -929,6 +932,14 @@ export function EditorWorkspace({
           void autosave.retry()
         }}
       />
+
+      {/* S3-FE3: Research Degraded Banner */}
+      {!dismissedBanner && researchWarnings && (
+        <ResearchDegradedBanner
+          reason={Array.isArray(researchWarnings) ? researchWarnings.join(' ') : String(researchWarnings)}
+          onDismiss={() => setDismissedBanner(true)}
+        />
+      )}
 
       {/* Visual Canvas or Outline Mode */}
       {canvas.viewMode === 'outline' ? (

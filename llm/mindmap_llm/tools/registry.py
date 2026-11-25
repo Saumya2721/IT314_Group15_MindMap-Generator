@@ -8,6 +8,7 @@ Nothing in orchestration/ changes.
 from __future__ import annotations
 
 from config import Settings
+from providers.decision_model import DecisionModel
 from tools.arxiv_tool import ArxivTool
 from tools.base import Tool
 from tools.policy import ToolQuotaLimiter, wrap_tool_registry
@@ -20,6 +21,7 @@ from tools.wikipedia_tool import WikipediaTool
 def build_tool_registry(
     settings: Settings,
     limiter: ToolQuotaLimiter | None = None,
+    decision_model: DecisionModel | None = None,
 ) -> dict[str, Tool]:
     registry: dict[str, Tool] = {
         "arxiv_search": ArxivTool(
@@ -48,6 +50,7 @@ def build_tool_registry(
             api_base=settings.tools.wikipedia_api_base,
             timeout_s=settings.tools.wikipedia_timeout_s,
             max_sections=settings.tools.wikipedia_max_sections,
+            decision_model=decision_model,
         )
 
     # S3-L1: Apply policy enforcement layer (per-tool timeouts, enable/disable flags, quota limits)

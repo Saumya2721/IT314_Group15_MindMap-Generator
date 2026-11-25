@@ -6,6 +6,7 @@ from typing import Any
 import httpx
 from providers.base import ToolSpec
 from tools.base import Tool, ToolError, ToolResult
+from tracing import trace_span
 
 ATOM_NS = {"atom": "http://www.w3.org/2005/Atom"}
 
@@ -28,6 +29,7 @@ class ArxivTool(Tool):
             },
         )
 
+    @trace_span("arxiv_invoke", run_type="tool")
     async def invoke(self, *, query: str = "", **kwargs: Any) -> list[ToolResult]:
         query_val = query or str(kwargs.get("query", ""))
         params: dict[str, str | int] = {

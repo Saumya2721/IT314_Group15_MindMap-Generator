@@ -90,6 +90,14 @@ class RetrievedChunkRecord:
 
 
 class PineconeVectorStore:
+    async def delete_namespace(self, namespace: str) -> None:
+        """Remove the indexed contents for one map."""
+        try:
+            await asyncio.to_thread(self._index.delete, delete_all=True, namespace=namespace)
+        except Exception as exc:
+            if getattr(exc, "status", None) != 404:
+                raise
+
     def __init__(self, api_key: str, index_name: str, dense_weight: float = 0.5):
         try:
             from pinecone import Pinecone

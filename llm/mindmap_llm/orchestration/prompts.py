@@ -367,7 +367,10 @@ def build_generation_user_prompt(
             *[f"- {e}" for e in previous_validation_errors],
         ]
 
-    parts += ["", "Respond with ONLY the JSON object described in the system prompt."]
+    parts += [
+        "",
+        "Respond with ONLY a raw valid JSON object. Do not wrap in markdown code fences (```json) or include any introductory/closing text. Start your response directly with { and end with }.",
+    ]
     return "\n".join(parts)
 
 
@@ -494,7 +497,7 @@ def build_outline_user_prompt(
     parts += [
         "",
         "Remember: Generate exactly 1 root node and between 4 and 8 top-level branch nodes directly attached to the root.",
-        "Respond with ONLY the JSON object described in the system prompt.",
+        "Respond with ONLY a raw valid JSON object. Do not wrap in markdown code fences (```json) or include any introductory/closing text. Start your response directly with { and end with }.",
     ]
     return "\n".join(parts)
 
@@ -594,7 +597,10 @@ def build_regenerate_node_user_prompt(
             *[f"- {e}" for e in previous_validation_errors],
         ]
 
-    parts += ["", "Respond with ONLY the JSON object described in the system prompt."]
+    parts += [
+        "",
+        "Respond with ONLY a raw valid JSON object. Do not wrap in markdown code fences (```json) or include any introductory/closing text. Start your response directly with { and end with }.",
+    ]
     return "\n".join(parts)
 
 

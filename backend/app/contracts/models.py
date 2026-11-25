@@ -80,6 +80,7 @@ class FileRef(BaseModel):
 
 
 class GenerationRequest(BaseModel):
+    user_id: UUID | str | None = None
     job_id: UUID
     map_id: UUID
     job_type: JobType
@@ -217,6 +218,7 @@ class ChatTurnRequest(BaseModel):
     message: str
     thread_id: UUID | None = None
     target_node_id: UUID | None = None
+    selected_node: dict[str, Any] | None = None
     history: list[dict[str, Any]] = Field(default_factory=list)
     summary: str | None = None
     rolling_summary: str | None = None
@@ -297,6 +299,7 @@ class GenerationResult(BaseModel):
     rejected_files: list[RejectedFile] = Field(default_factory=list)
     tool_call_log: list[ToolCallLogEntry] = Field(default_factory=list)
     quality_warnings: list[str] = Field(default_factory=list)
+    research_warnings: list[str] = Field(default_factory=list)
     expected_map_version: int | None = None
     expected_node_version: int | None = None
 

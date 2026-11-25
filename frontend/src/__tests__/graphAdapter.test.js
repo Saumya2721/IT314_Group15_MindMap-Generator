@@ -104,18 +104,24 @@ describe('adaptBackendGraphToFlow', () => {
           { id: 'e2', source_node_id: '1', target_node_id: '3' },
         ],
       )
-      // Root at depth 0 → x = 80
+      // Root at depth 0 → y = 80
       const root = flowNodes.find((n) => n.id === '1')
-      expect(root.position.x).toBe(80)
+      expect(root.position.y).toBe(80)
 
-      // Branch nodes at depth 1 → x = 80 + 1*360 = 440
+      // Branch nodes at depth 1 → y = 80 + 1*200 = 280
       const branchA = flowNodes.find((n) => n.id === '2')
       const branchB = flowNodes.find((n) => n.id === '3')
-      expect(branchA.position.x).toBe(440)
-      expect(branchB.position.x).toBe(440)
+      expect(branchA.position.y).toBe(280)
+      expect(branchB.position.y).toBe(280)
 
-      // Branch nodes should NOT all share the same y (no stacking)
-      expect(branchA.position.y).not.toBe(branchB.position.y)
+      // Branch nodes should NOT all share the same x (horizontal separation)
+      expect(branchA.position.x).not.toBe(branchB.position.x)
+    })
+
+    it('attaches source-bottom and target-top handles for top-to-bottom flow', () => {
+      const { flowEdges } = adaptBackendGraphToFlow([ROOT, BRANCH_A], [EDGE_WITH_LABEL])
+      expect(flowEdges[0].sourceHandle).toBe('source-bottom')
+      expect(flowEdges[0].targetHandle).toBe('target-top')
     })
 
     it('uses stored coordinates when a node has valid non-zero pos_x and pos_y', () => {

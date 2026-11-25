@@ -83,17 +83,22 @@ def _format_chunks(chunks: list[RetrievedChunkRecord]) -> str:
 
 def build_chat_qa_system_prompt(map_snapshot: MapSnapshot) -> str:
     return (
-        "You are a helpful assistant that answers questions about a mind map.\n\n"
+        "You are a knowledgeable and clear conversational assistant embedded inside a mind map editor.\n\n"
         "## Current Mind Map\n\n"
         f"{_map_summary(map_snapshot)}\n\n"
-        "## Instructions\n\n"
-        "- Only state facts that appear in the map or reference/research material below.\n"
-        "- Do NOT invent nodes, relationships, or facts that are not present.\n"
-        "- When you refer to a node, ALWAYS write its human-readable title/label in bold (e.g. **Policy Gradient**) and append its tag [node:<uuid>] immediately after so the interface can link directly to it.\n"
-        "- Never refer to a node using just a raw hexadecimal UUID in conversational prose without its title.\n"
-        "- When you cite a reference passage or research material, include its number, e.g. [1], [2].\n"
-        "- Do not fabricate references or citations. If research returned no sources, state the limitation honestly.\n"
-        "- Keep answers concise, factual, and well-grounded.\n"
+        "## Response Instructions\n\n"
+        "1. Direct Explanations First: Lead with a direct, comprehensive explanation in clean prose. "
+        "When explaining a concept or mechanism, describe how and why it works, connect it to the relevant mind map branch, "
+        "and provide an illustrative example or consequence when supported by the context.\n"
+        "2. Strict Factual Grounding: Only state facts supported by the mind map and reference/research material. "
+        "Do NOT invent ungrounded nodes, relationships, or scientific claims.\n"
+        "3. Interactive Node Mentions: When you refer to a mind map node, ALWAYS bold its title and append its tag on its first mention "
+        "(e.g. **Photosynthesis** [node:<uuid>]) so the editor can link to it. On repeat mentions in the same response, use its plain label.\n"
+        "4. LaTeX Formulas: Format all mathematical and scientific formulas with standard LaTeX ($...$ for inline or $$...$$ for display) "
+        "so KaTeX renders them legibly.\n"
+        "5. Judicious Use of Tables: Use a Markdown table ONLY when the user explicitly requests a table or side-by-side comparison, "
+        "or when there are 3 or more entities with 2 or more distinct comparison attributes. For all general explanations, use readable prose and ordered/unordered lists.\n"
+        "6. Citations: Cite reference passages with [1], [2] when drawing directly from external research sources.\n"
     )
 
 
@@ -103,6 +108,7 @@ def build_chat_qa_user_prompt(
     chunks: list[RetrievedChunkRecord],
     summary: str | None = None,
     research_context: str | None = None,
+    selected_node: NodeDraft | None = None,
 ) -> str:
     chunks_block = _format_chunks(chunks)
     parts = []
@@ -110,6 +116,13 @@ def build_chat_qa_user_prompt(
     parts.append(f"## Reference Material\n\n{chunks_block}")
     if research_context and research_context.strip():
         parts.append(f"## External Research Material\n\n{research_context.strip()}")
+    if selected_node:
+        parts.append(
+            f"## Currently Selected Canvas Node / Branch Focus\n\n"
+            f"- Name: **{selected_node.label}** [node:{selected_node.id}]\n"
+            f"- Note: The user has selected this node in the editor. Resolve references like 'this branch', "
+            f"'this node', or 'this concept' directly to this node."
+        )
     parts.append(f"## User Question\n\n{message}")
     return "\n\n".join(parts)
 
@@ -190,6 +203,7 @@ def build_proposal_user_prompt(
     history: list[ChatMessage],
     summary: str | None = None,
     research_context: str | None = None,
+    selected_node: NodeDraft | None = None,
 ) -> str:
     sections = format_conversation_context(history, summary)
     parts = []
@@ -197,5 +211,13 @@ def build_proposal_user_prompt(
         parts.extend(sections)
     if research_context and research_context.strip():
         parts.append(f"## External Research Findings (Grounding for Node Changes)\n\n{research_context.strip()}")
+    if selected_node:
+        parts.append(
+            f"## Active Selected Node / Target Branch\n\n"
+            f"- Target Node: **{selected_node.label}** [node:{selected_node.id}]\n"
+            f"- UI Context: The user currently has this node selected in the editor. "
+            f"When they ask to 'expand this branch', 'add subtopics to this node', or 'flesh out this branch', "
+            f"resolve the target to this node ID ({selected_node.id})."
+        )
     parts.append(f"## User request\n\n{message}")
     return "\n\n".join(parts)

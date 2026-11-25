@@ -57,6 +57,30 @@ MINDWEAVE implements an enterprise **Dual-Defense Architecture**:
 
 ## 3. Sprint Scope & Studio Engine
 
+### Sprint 3 Delivered Capabilities
+- **Role-Based Admin Oversight Panel (`/admin/*`)**:
+  - Protected admin routes guarded by `role === 'admin'` check with automatic redirection for standard users.
+  - User management table with pagination, account suspension/unsuspension, and deletion modals with cascade confirmation.
+  - Real-time aggregate telemetry widgets displaying total users, maps generated, failure rate, and generation latency.
+  - Administrative audit log viewer with actor, target, timestamp, and JSON metadata inspection.
+  - Pipeline runtime configuration studio (`/admin/config`) allowing live toggling of `ENABLE_TWO_PASS`, `RESEARCH_ENGINE`, `IMAGE_EXTRACTOR`, and model selection.
+- **Long-Term Memory Studio (`/memory`)**:
+  - Global and map-scoped memory management interface.
+  - Memory cards displaying kind badges (`preference`, `decision`, `fact`), content, map links, and last accessed timestamps.
+  - In-place enable/disable toggles and permanent deletion actions.
+  - One-click GDPR bulk export downloading a structured JSON bundle of all user memories.
+- **Enhanced Multi-Modal & Purpose Intake (`CreateMapPage.jsx`)**:
+  - Purpose intake selector with three tailored workflows: **General**, **Study**, and **Research** (enabling arXiv and Scholar tools).
+  - Expanded document upload support for `.docx` and `.pptx` documents alongside PDFs and images.
+  - Direct URL seed input with client-side address validation, private IP / loopback blocking, and reachability error indicators.
+- **Research Transparency & Source Badging (`NodeInspector.jsx`, `ResearchDegradedBanner.jsx`)**:
+  - Source attribution chips in the node inspector identifying Wikipedia, Semantic Scholar, and Web Page references.
+  - Wikipedia CC BY-SA attribution links opening directly to cited source sections.
+  - Unobtrusive degraded research alert banner when external search tools fail, allowing uninterrupted map editing.
+- **Top-to-Bottom Tree Canvas Layout (`graphAdapter.js`)**:
+  - Configured edge routing from parent `sourceHandle: 'source-bottom'` to child `targetHandle: 'target-top'` for natural vertical mind map trees.
+  - Topological fallback layout arranging unpositioned cards into horizontal tier groups centered below parent nodes.
+
 ### Sprint 2 Delivered Capabilities
 - **Interactive Editing Canvas (`@xyflow/react` v12.4.4)**:
   - Free-form node dragging with persistent Cartesian coordinates (`PATCH /api/maps/{id}/graph`) and Optimistic Concurrency Control (`expected_version`).
@@ -85,11 +109,6 @@ MINDWEAVE implements an enterprise **Dual-Defense Architecture**:
   - High-resolution PNG export with transparent, light, or dark background and 1x/2x pixel density.
   - Paginated vector PDF export (A4 and US Letter, Portrait or Landscape) with contain-fit scaling.
   - Structured Markdown outline export preserving concept taxonomy.
-
-### Sprint 3 Roadmap (Planned)
-- Real-time Server-Sent Events (SSE) push channel for worker progress.
-- Cloud vision model integration (Google Gemini 2.0 Flash) replacing local OCR.
-- Real-time collaborative multi-user editing.
 
 ---
 

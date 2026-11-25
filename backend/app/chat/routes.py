@@ -162,7 +162,7 @@ async def send_message(
                 job_type=JobType.CHAT_TURN,
                 job_id=job_id,
                 triggered_by_message_id=msg_id,
-                target_node_id=target_nid,
+                target_node_id=None,  # chk_target_node_matches_job_type requires NULL; worker receives target_nid via ChatTurnRequest
                 callback_token_hash=token_hash,
             )
 
@@ -220,9 +220,18 @@ async def send_message(
                 history = [{"role": r["role"], "content": r["content"]} for r in reversed(msg_rows)]
 
         memory_ctx = {
+            "user_id": user_id,
             "summary": thread_summary,
             "summary_through_message_id": str(summary_cursor) if summary_cursor else None,
         }
+
+        # Resolve selected node dictionary from map nodes if target_node_id provided
+        selected_node_dict = None
+        if target_nid:
+            for n in nodes_rows:
+                if str(n["id"]) == str(target_nid):
+                    selected_node_dict = dict(n)
+                    break
 
         chat_req = ChatTurnRequest(
             job_id=job_id,
@@ -231,6 +240,7 @@ async def send_message(
             message=message.content,
             thread_id=thread_id_val,
             target_node_id=target_nid,
+            selected_node=selected_node_dict,
             history=history,
             summary=thread_summary,
             rolling_summary=thread_summary,
@@ -240,7 +250,9 @@ async def send_message(
             callback_token=callback_token,
         )
 
-        await enqueue_chat_turn_job(redis_pool, chat_req.model_dump(mode="json"))
+        receipt = await enqueue_chat_turn_job(redis_pool, chat_req.model_dump(mode="json"))
+        if not receipt:
+            raise RuntimeError("Redis declined chat job enqueue")
         return {
             "status": "accepted",
             "job_id": str(job_id),

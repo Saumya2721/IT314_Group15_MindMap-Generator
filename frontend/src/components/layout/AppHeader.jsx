@@ -45,7 +45,7 @@ export function AppHeader() {
           <nav className="header-nav">
             <Link
               to="/dashboard"
-              className={`header-nav-link ${location.pathname === '/dashboard' ? 'active' : ''}`}
+              className={`header-nav-link ${location.pathname === '/dashboard' && !location.search.includes('view=archive') ? 'active' : ''}`}
             >
               Dashboard
             </Link>
@@ -56,22 +56,8 @@ export function AppHeader() {
               Memory
             </Link>
             <Link
-              to="/dashboard"
-              className="header-nav-link"
-              onClick={(e) => {
-                e.preventDefault()
-                alert('My Maps view is available on the Dashboard in Sprint 1.')
-              }}
-            >
-              My Maps
-            </Link>
-            <Link
-              to="/dashboard"
-              className="header-nav-link"
-              onClick={(e) => {
-                e.preventDefault()
-                alert('Archive feature will be connected in future sprints.')
-              }}
+              to="/dashboard?view=archive"
+              className={`header-nav-link ${location.pathname === '/dashboard' && location.search.includes('view=archive') ? 'active' : ''}`}
             >
               Archive
             </Link>

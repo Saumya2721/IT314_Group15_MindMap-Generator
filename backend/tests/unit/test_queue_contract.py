@@ -28,6 +28,7 @@ from db.repository import create_generation_job
 @pytest.mark.asyncio
 async def test_arq_producer_enqueues_contract_payload():
     mock_redis = MagicMock()
+    mock_redis.eval = AsyncMock(return_value=[1, 0])
     mock_job = MagicMock()
     mock_job.job_id = "test-arq-job-123"
     mock_redis.enqueue_job = AsyncMock(return_value=mock_job)
@@ -114,6 +115,38 @@ async def test_create_generation_job_string_and_enum():
     )
     assert job_enum.job_type in (JobType.REGENERATE_FULL, "regenerate_full")
 
+    # 3. Defensive check: non-regenerate_node job clears target_node_id to satisfy chk_target_node_matches_job_type
+    dummy_node = uuid.uuid4()
+    captured_args = []
+    async def mock_fetchrow_capture(query, *args):
+        captured_args.extend(args)
+        return {
+            "id": uuid.uuid4(),
+            "map_id": uuid.uuid4(),
+            "job_type": "chat_turn",
+            "status": "pending",
+            "progress_percent": 0,
+            "error_message": None,
+            "created_at": datetime.now(UTC),
+            "started_at": None,
+            "completed_at": None,
+            "triggered_by_message_id": None,
+            "target_node_id": args[3],
+            "callback_token_hash": "hash3",
+        }
+    mock_conn.fetchrow = AsyncMock(side_effect=mock_fetchrow_capture)
+    job_chat = await create_generation_job(
+        mock_conn,
+        map_id=uuid.uuid4(),
+        job_type=JobType.CHAT_TURN,
+        target_node_id=dummy_node,
+        callback_token_hash="hash3",
+    )
+    # The 4th argument ($4: target_node_id) passed to the query must be None
+    assert captured_args[3] is None
+    assert captured_args[4] == "hash3"
+    assert job_chat.target_node_id is None
+
 
 def test_node_regeneration_intake_202():
     client = TestClient(main.app)
@@ -151,6 +184,7 @@ def test_node_regeneration_intake_202():
     mock_pool.fetch = AsyncMock(return_value=[])
 
     mock_redis = MagicMock()
+    mock_redis.eval = AsyncMock(return_value=[1, 0])
     mock_job = MagicMock()
     mock_job.job_id = "arq-job-123"
     mock_redis.enqueue_job = AsyncMock(return_value=mock_job)
@@ -392,13 +426,12 @@ def test_compute_layout_handles_worker_edge_keys():
 
     compute_layout(nodes, edges)
 
-    # Root should be at center
-    assert nodes[0]["pos_x"] == 450.0
-    assert nodes[0]["pos_y"] == 300.0
+    # Root should be positioned at apex
+    assert nodes[0]["pos_y"] == 80.0
 
-    # Children should have radiating positions
-    assert nodes[1]["pos_x"] != 0.0 or nodes[1]["pos_y"] != 0.0
-    assert nodes[2]["pos_x"] != 0.0 or nodes[2]["pos_y"] != 0.0
+    # Children should have level 1 positions and distinct coordinates
+    assert nodes[1]["pos_y"] == 280.0
+    assert nodes[2]["pos_y"] == 280.0
     assert (nodes[1]["pos_x"], nodes[1]["pos_y"]) != (nodes[2]["pos_x"], nodes[2]["pos_y"])
 
 
@@ -647,6 +680,7 @@ def test_generate_queue_failure_triggers_storage_cleanup_and_job_rejection():
     core.supabase.admin.storage.from_ = MagicMock(return_value=mock_storage)
 
     mock_redis = MagicMock()
+    mock_redis.eval = AsyncMock(return_value=[1, 0])
 
     orig_pool = getattr(main.app.state, "pool", None)
     orig_redis = getattr(main.app.state, "redis_pool", None)
@@ -718,6 +752,7 @@ def test_quick_generate_enqueue_failure_triggers_job_rejection():
 
     mock_pool = _build_test_pool()
     mock_redis = MagicMock()
+    mock_redis.eval = AsyncMock(return_value=[1, 0])
 
     orig_pool = getattr(main.app.state, "pool", None)
     orig_redis = getattr(main.app.state, "redis_pool", None)

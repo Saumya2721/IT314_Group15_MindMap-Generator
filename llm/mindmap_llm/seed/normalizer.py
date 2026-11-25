@@ -20,6 +20,8 @@ from seed.extractors import (
     checksum_sha256,
     normalize_free_text,
 )
+from tools.base import ToolError
+from tools.web_reader import fetch_web_page_async
 
 MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024  # 25 MB; enforce before expensive parsing (US-02 tech note)
 SUPPORTED_MIME_PREFIXES = ("application/pdf", "image/")
@@ -44,6 +46,7 @@ class SeedSubmission:
     topic: str | None
     ideas: str | None
     files: list[UploadedFile] = field(default_factory=list)
+    seed_url: str | None = None
 
 
 @dataclass
@@ -71,7 +74,7 @@ async def _classify_is_supported_upload(
     try:
         result = await decision_model.classify(
             state=f"file_name={file_name!r} mime_type={mime_type!r} size_bytes={size_bytes}",
-            question="Is this file plausibly a valid, parseable PDF or image upload?",
+            question="Is this file plausibly a valid, parseable document or image upload?",
             labels=["plausible", "implausible"],
         )
         return result.label == "plausible"
@@ -106,26 +109,23 @@ async def normalize_seed(
                 raise SeedExtractionError(f"Unsupported file type: {f.mime_type}")
 
             if not await _classify_is_supported_upload(decision_model, f.file_name, f.mime_type, len(f.data)):
-                raise SeedExtractionError("This file doesn't look like a valid PDF or image.")
+                raise SeedExtractionError("This file does not look like a valid document or image.")
 
             options = {}
             if image_extractor is not None:
                 matching_spec = registry.get(f.mime_type, f.file_name)
                 if matching_spec is not None and matching_spec.asset_type == "image":
                     options["extractor"] = image_extractor
-            extracted, spec = registry.extract_with_spec(f.data, mime_type=f.mime_type, filename=f.file_name, **options)
-            if spec.asset_type == "pdf":
-                asset_type = SeedAssetType.PDF
-            elif spec.asset_type == "image":
-                asset_type = SeedAssetType.IMAGE
-            else:
-                asset_type = SeedAssetType.TEXT
+            extracted, spec = await registry.aextract_with_spec(
+                f.data, mime_type=f.mime_type, filename=f.file_name, **options
+            )
+            asset_type = SeedAssetType(spec.asset_type)
 
             seed_assets.append(
                 SeedAssetDraft(
                     asset_type=asset_type,
                     file_name=f.file_name,
-                    storage_key=f.storage_key,
+                    storage_key=f.storage_key if asset_type != SeedAssetType.TEXT else None,
                     mime_type=f.mime_type,
                     content_text=extracted,
                     file_size_bytes=len(f.data),
@@ -150,6 +150,26 @@ async def normalize_seed(
                 checksum_sha256=None,
             )
         )
+
+    if submission.seed_url:
+        try:
+            text, _ = await fetch_web_page_async(submission.seed_url)
+            if not text.strip():
+                raise ToolError("The page contained no readable text.")
+            text_parts.append(f"[From {submission.seed_url}]\n{text}")
+            seed_assets.append(
+                SeedAssetDraft(
+                    asset_type=SeedAssetType.URL,
+                    file_name=submission.seed_url,
+                    storage_key=None,
+                    mime_type="text/html",
+                    content_text=text,
+                    file_size_bytes=len(text.encode("utf-8")),
+                    checksum_sha256=None,
+                )
+            )
+        except ToolError as exc:
+            rejected.append(("Seed URL", str(exc)))
 
     if not text_parts:
         raise NoUsableSeedContent(

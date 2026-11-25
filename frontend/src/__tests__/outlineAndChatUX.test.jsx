@@ -172,4 +172,38 @@ Final paragraph.`
     expect(Array.isArray(elements)).toBe(true)
     expect(elements.length).toBeGreaterThan(0)
   })
+
+  it('renders markdown tables with headers, body rows, and node references', () => {
+    const tableMd = `| Aspect | Node Link | Description |
+|---|---|---|
+| Strategy | [node:8a302a60-f5fc-4f22-92c0-2b797b00373c] | Gradient ascent on expected return |
+| Metric | Continuous | High efficiency |`
+
+    const elements = renderMarkdown(tableMd, { nodeMap })
+    expect(Array.isArray(elements)).toBe(true)
+    const tableContainer = elements.find(
+      (el) => React.isValidElement(el) && el.props.className === 'chat-table-container',
+    )
+    expect(tableContainer).toBeDefined()
+    const table = tableContainer.props.children
+    expect(table.type).toBe('table')
+    expect(table.props.className).toBe('chat-markdown-table')
+  })
+
+  it('renders mathematical formulae via KaTeX without mangling currency', () => {
+    const mathContent = 'Formula: $s(t) = A \\cos(2\\pi f t)$ and cost is $100 and $5.'
+    const result = renderInlineMarkdown(mathContent, { nodeMap })
+
+    expect(Array.isArray(result)).toBe(true)
+    // Formula rendered with KaTeX
+    const mathEl = result.find(
+      (el) => React.isValidElement(el) && el.props.className === 'chat-math-inline',
+    )
+    expect(mathEl).toBeDefined()
+    expect(mathEl.props.dangerouslySetInnerHTML.__html).toContain('katex')
+
+    // Currency text preserved as plain text
+    const textJoined = result.filter((p) => typeof p === 'string').join('')
+    expect(textJoined).toContain('$100 and $5')
+  })
 })

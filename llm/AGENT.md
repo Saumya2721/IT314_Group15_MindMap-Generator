@@ -48,6 +48,32 @@ This guide outlines rules, architectural constraints, and verification protocols
 - All synthesized or extracted edges must possess a descriptive relationship label.
 - In `validation.schema.resolve_to_records`, any edge with an empty or null label must default to `"relates to"` to preserve semantic readability.
 
+### H. LangSmith Tracing & Safe Instrumentation (S3-OBS)
+- `configure_langsmith()` runs once at startup in `mindmap_llm.worker.settings`.
+- When `LANGSMITH_TRACING=false` or credentials are missing, tracing must be a complete no-op (zero network overhead, never crash jobs).
+- All major entry points (`generate_mindmap`, `regenerate_node_task`, `chat_turn_task`, `research_planner`) must be instrumented with `@trace_span`.
+
+### I. Dynamic Context Budgeting & Pruning Hierarchy (S3-L7)
+- Dynamic token allocation via `ContextBudgetManager` must scale to active provider constraints (e.g. Groq 8k/6k input ceiling, Qwen OTPM clamp, Gemini Flash 32k/128k).
+- Pruning hierarchy when context overflows:
+  1. Low-scoring RAG context chunks.
+  2. Older chat history turns outside sliding window.
+  3. Dense external search tool payloads.
+  Core system prompts and seed focus must **never** be pruned.
+
+### J. Vision Extractor Fallback Chain (S3-L6, S3-R1)
+- Images must route through Google Gemini Flash (`gemini-3.8-flash`) by default.
+- If Gemini Flash is unreachable, unconfigured, or returns empty text, the extractor must fall back cleanly to local `pytesseract`. Never fail image ingestion without attempting the fallback.
+
+### K. Research Subgraph Bounds & Tool Policies (S3-A2, S3-L1)
+- The research loop must be bounded: at most 2 research rounds and $\le 10\text{s}$ total execution budget.
+- All external tool calls must enforce $\le 5\text{s}$ individual timeouts and query the 1-hour Redis result cache (`research:cache:<hash>`).
+- If research fails or times out, the pipeline must continue in degraded mode, flagging `state["research_degraded"] = True`.
+
+### L. Long-Term Memory Extraction & Prompt Budget (S3-L3)
+- Post-turn memory proposals to `POST /internal/memory/propose` must deduplicate normalized text and calculate importance decay.
+- Memory prompt injection must never exceed 10% of the active provider context budget. If memory retrieval fails or times out, synthesis proceeds safely without memories.
+
 ---
 
 ## 3. Environment & Execution Specifics

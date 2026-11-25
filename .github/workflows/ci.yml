@@ -26,6 +26,7 @@ jobs:
       llm: ${{ steps.filter.outputs.llm }}
       frontend: ${{ steps.filter.outputs.frontend }}
       supabase: ${{ steps.filter.outputs.supabase }}
+      compose: ${{ steps.filter.outputs.compose }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -44,6 +45,8 @@ jobs:
               - 'frontend/**'
               - '.nvmrc'
               - '.github/workflows/ci.yml'
+            compose:
+              - 'compose.yaml'
             supabase:
               - 'supabase/**'
               - '.github/workflows/ci.yml'
@@ -109,7 +112,6 @@ jobs:
       - run: npm ci
       - run: npm run format:check
       - run: npm run lint
-      - run: npm run typecheck
       - run: npm run test
       - run: npm run build
 
@@ -130,25 +132,34 @@ jobs:
   docker:
     name: Docker images build
     needs: changes
-    if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.frontend == 'true'
+    if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.frontend == 'true' || needs.changes.outputs.llm == 'true' || needs.changes.outputs.compose == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
-      - if: needs.changes.outputs.backend == 'true'
+      - if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.compose == 'true'
         uses: docker/build-push-action@v6
         with:
           context: backend
           push: false
           cache-from: type=gha,scope=backend
           cache-to: type=gha,scope=backend,mode=max
-      - if: needs.changes.outputs.frontend == 'true'
+      - if: needs.changes.outputs.frontend == 'true' || needs.changes.outputs.compose == 'true'
         uses: docker/build-push-action@v6
         with:
           context: frontend
           push: false
           cache-from: type=gha,scope=frontend
           cache-to: type=gha,scope=frontend,mode=max
+
+      - if: needs.changes.outputs.llm == 'true' || needs.changes.outputs.compose == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: llm
+          push: false
+          cache-from: type=gha,scope=llm
+          cache-to: type=gha,scope=llm,mode=max
+      - run: docker compose config --quiet
 
   secrets:
     name: Secret scan

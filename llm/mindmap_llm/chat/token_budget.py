@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from contracts.models import ChatMessage
+from tracing import trace_span
 
 # Standard heuristic: 1 token ≈ 4 characters in English prose and code.
 CHARS_PER_TOKEN = 4
@@ -55,6 +56,7 @@ class TokenBudget:
         return max(0, self.max_context_tokens - self.reserved_response_tokens)
 
 
+@trace_span("trim_history_to_budget", run_type="chain")
 def trim_history_to_budget(
     history: list[ChatMessage],
     *,

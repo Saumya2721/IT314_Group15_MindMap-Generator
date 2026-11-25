@@ -48,6 +48,29 @@ This guide outlines rules, architectural constraints, and verification protocols
 - Action proposals confirming edits must take an automated safety snapshot (`create_map_snapshot`) before applying modifications.
 - Proposals attempting to delete a root node (`node_type == 'root'`) must be rejected with HTTP 400.
 
+### H. Admin Role Guard & Zero-Content-SELECT Boundary (S3-DB1, S3-BE1, S3-BE2, S3-BE3)
+- All `/admin/*` routes must strictly depend on `require_admin_role()`. Any non-admin user must receive an immediate `403 Forbidden`.
+- **Absolute Content Privacy**: Administrative queries and routes must **never** perform `SELECT` queries on content tables (`mind_maps`, `nodes`, `edges`, `chat_messages`, `agent_memories`). Admin usage metrics must read exclusively from aggregate views (`admin_stats_view`).
+- **Audit Logging**: Every administrative action (suspension, unsuspension, deletion, config changes) must append an immutable record to `admin_audit_log` with actor ID, target user ID, action, and JSONB metadata.
+
+### I. Long-Term Memory Ownership Isolation & Proposal Hygiene (S3-DB2, S3-BE4)
+- User-facing memory routes (`/memory`, `/memory/{id}`, `/memory/export`) must enforce strict user ownership (`user_id == current_user_id`). Users can only view, mutate, disable, or export their own memories.
+- Internal worker memory proposals (`POST /internal/memory/propose`) must validate memory kinds (`preference`, `decision`, `fact`), perform normalized text deduplication, apply importance decay, and enforce the per-user memory ceiling (500 rows).
+
+### J. Distributed Redis Rate Limiting (S3-BE5)
+- Rate limiting across generation, chat turns, and memory proposals must use the distributed Redis rate limiter (`app/services/rate_limiter.py`). In-memory rate limiting is prohibited to support multi-replica clusters.
+
+### K. Pipeline Dynamic Configuration (S3-BE8)
+- Runtime pipeline flags (`ENABLE_TWO_PASS`, `RESEARCH_ENGINE`, `IMAGE_EXTRACTOR`, model selection) are stored in `pipeline_runtime_config`.
+- Only admins may modify settings via `PATCH /admin/config`.
+- Workers fetch settings via `GET /internal/config` without database connections.
+
+### L. Deterministic Top-to-Bottom Tree Layout (generator.py)
+- Mind map graph generation and incremental chat additions must lay out trees vertically:
+  - Root placed at $y = 80.0$, level step $\Delta y = 200.0$.
+  - Parents centered horizontally above children bounding intervals.
+  - Newly added nodes placed at $\text{parent}.\text{pos\_y} + 200.0$ to the right of existing siblings with zero card collisions.
+
 ---
 
 ## 3. Environment & Execution Specifics

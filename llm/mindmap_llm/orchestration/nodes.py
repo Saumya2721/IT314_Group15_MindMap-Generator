@@ -316,6 +316,9 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
                 for src in deduped_sources:
                     if src.tool == "wikipedia":
                         chunk_source = ChunkSource.WIKIPEDIA
+                        wikipedia_sections.extend(
+                            section for section in src.metadata.get("sections", []) if section and section.strip()
+                        )
                     elif src.tool in ("scholar", "arxiv_search", "arxiv"):
                         chunk_source = ChunkSource.SCHOLAR
                     else:
@@ -625,10 +628,22 @@ def make_nodes(deps: GenerationDeps) -> dict[str, Callable]:
         if getattr(deps.llm, "supports_structured_output", False):
             gen_kwargs["response_format"] = {"type": "json_object"}
 
-        response = await deps.llm.generate(
-            [Message(role="user", content=prompt)],
-            **gen_kwargs,
-        )
+        try:
+            response = await deps.llm.generate(
+                [Message(role="user", content=prompt)],
+                **gen_kwargs,
+            )
+        except Exception as exc:
+            logger.error("LLM generation call failed for job %s: %s", state.get("job_id"), exc)
+            return {
+                "draft_payload": None,
+                "validation_errors": [f"LLM generation call failed: {exc}"],
+                "retrieved_chunks": budgeted.rag_chunks,
+                "prompt_items_log": [
+                    *state.get("prompt_items_log", []),
+                    {"type": "token_budget", "allocation": breakdown, "pruned": budgeted.pruned},
+                ],
+            }
         try:
             payload = extract_json_object(response.text or "")
         except JSONExtractionError as exc:

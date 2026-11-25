@@ -81,14 +81,15 @@ async def test_mindmap_generator_success():
     root = result["nodes"][0]
     assert root["id"] == "root"
     assert root["node_type"] == "root"
-    assert root["pos_x"] == 450.0
-    assert root["pos_y"] == 300.0
+    assert root["pos_y"] == 80.0
+    assert root["pos_x"] == 360.0
 
-    # Children should have radiating positions
+    # Children should have level 1 positions
     child1 = result["nodes"][1]
     child2 = result["nodes"][2]
-    assert (child1["pos_x"], child1["pos_y"]) != (root["pos_x"], root["pos_y"])
-    assert (child2["pos_x"], child2["pos_y"]) != (child1["pos_x"], child1["pos_y"])
+    assert child1["pos_y"] == 280.0
+    assert child2["pos_y"] == 280.0
+    assert child1["pos_x"] != child2["pos_x"]
 
 
 @pytest.mark.asyncio

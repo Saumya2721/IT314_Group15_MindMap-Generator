@@ -28,6 +28,44 @@ The worker is completely decoupled from PostgreSQL and Supabase. The backend own
 
 ---
 
+## Sprint 3 Core Capabilities
+
+### 1. LangSmith Observability & Quality Datasets (`S3-OBS`)
+- End-to-end tracing across generation, branch regeneration, chat turns, and research agent executions with `@trace_span` / `@traceable`.
+- Dual LangSmith project tracking (`mindweave-dev`, `mindweave-prod`).
+- Continuous evaluation benchmarks evaluating schema validity, node count, depth, and latency across seed sets.
+
+### 2. Automatic Context & Dynamic Token Budgeting (`S3-L7`, `context_budget.py`)
+- Provider-aware `ContextBudgetManager` that computes dynamic token partitions for system instructions, seed summaries, long-term memories, RAG chunks, and conversation history.
+- Automatically adjusts ceilings to match active model constraints (Groq 8k/6k input, Qwen OTPM clamp, Gemini Flash 32k/128k), eliminating HTTP 413 and 429 errors.
+- Strict multi-stage priority pruning: prunes low-similarity RAG chunks first, then older chat turns, then dense external tool payloads.
+
+### 3. Long-Term Agent Memory Node (`S3-L3`, `memory/`)
+- Post-turn memory extraction proposing durable preferences, decisions, and domain facts to the backend via `POST /internal/memory/propose`.
+- Normalized text deduplication and importance decay calculations.
+- Top-$k$ memory prompt injection capped at $\le 10\%$ of context budget with graceful fallback if the backend is unavailable.
+
+### 4. Bounded Research Agent Subgraph (`S3-A2`, `S3-A4`, `research/`)
+- Multi-step research loop with query planner, parallel tool execution, canonical URL/DOI deduplication, and a 1-hour Redis cache.
+- Hard time budget ($\le 10\text{s}$) and maximum 2 iteration rounds.
+- Degraded-run status reporting when search tools are unreachable.
+
+### 5. Extractor Registry & Multi-Modal Ingestion (`S3-R1`, `S3-L6`, `S3-T4`, `S3-T2`)
+- MIME-type extractor registry (`ingestion/extractors/registry.py`) providing unified interfaces across formats.
+- Cloud Vision Extractor: Google Gemini Flash vision model (`gemini-3.8-flash`) as primary image parser with automatic PyTesseract fallback.
+- Document Parsers: Native DOCX (`python-docx`) and PPTX (`python-pptx`) extraction preserving headings and slide hierarchies.
+- SSRF-Guarded Page Reader: Fetches and converts web pages to clean Markdown with private IP blocklists, $\le 3$ redirects, $\le 1\text{ MB}$ payload cap, and $5\text{s}$ timeout.
+
+### 6. New Research Tools (`S3-T1`, `S3-T3`)
+- Wikipedia API Tool: Fetches article summaries and hierarchical section outlines for topic seeds.
+- Semantic Scholar Tool: Fetches academic paper abstracts, citations, and publication metadata for research-purpose maps.
+
+### 7. Dynamic Runtime Configuration & Tool Policies (`S3-L1`, `S3-L2`)
+- `DynamicConfigManager` fetches runtime settings from backend `GET /internal/config` without database connections.
+- Tool policy layer enforcing per-tool timeouts and Redis-backed quotas.
+
+---
+
 ## Sprint 2 Core Capabilities
 
 ### 1. Partial Node & Branch Regeneration (`JobType.REGENERATE_NODE`)

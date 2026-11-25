@@ -3,6 +3,8 @@
 services:
   redis:
     image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: ["redis-data:/data"]
     ports: ["6379:6379"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -22,7 +24,6 @@ services:
       SUPABASE_URL: http://host.docker.internal:54321
       CORS_ORIGINS: http://localhost:5173
       BACKEND_INTERNAL_URL: http://pipeline-backend:8000
-      PIPELINE_CONFIG_WORKER_IPS: 172.29.171.2
       # U7/M4: Export converter service endpoint (see docs/export_service.md)
       EXPORT_CONVERTER_URL: ${EXPORT_CONVERTER_URL:-http://localhost:3001/convert}
       EXPORT_TIMEOUT_SECONDS: "15.0"
@@ -64,6 +65,9 @@ services:
     build: ./frontend
     depends_on: [backend]
     ports: ["5173:80"]
+
+volumes:
+  redis-data:
 
 networks:
   worker_config:

@@ -12,6 +12,7 @@ pattern and avoids re-establishing HTTP connections for every task.
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -27,6 +28,7 @@ load_dotenv(_pkg_root.parent.parent / ".env")
 load_dotenv(find_dotenv())
 
 from arq.connections import RedisSettings
+from callback.client import replay_terminal_callback
 from config import get_settings
 from embeddings.registry import get_embedding_provider
 from providers.registry import get_decision_model
@@ -34,12 +36,19 @@ from rag.pinecone_store import PineconeVectorStore
 from tools.policy import ToolQuotaLimiter
 from tools.registry import build_tool_registry
 from tracing import configure_langsmith
-from worker.tasks import chat_turn_task, generate_mindmap, regenerate_node_task
+from worker.tasks import chat_turn_task, delete_account_map_vectors, generate_mindmap, regenerate_node_task
 
 logging.basicConfig(level=logging.INFO)
 
 
 async def on_startup(ctx: dict) -> None:
+    if os.getenv("ENVIRONMENT", "").lower() == "production":
+        memory_key = os.getenv("INTERNAL_SERVICE_KEY") or ""
+        config_key = os.getenv("PIPELINE_CONFIG_SERVICE_KEY") or memory_key
+        if any(len(key) < 32 or key == "your-secure-internal-service-secret" for key in (memory_key, config_key)):
+            raise RuntimeError(
+                "Production worker credentials must be explicitly configured and at least 32 characters."
+            )
     settings = get_settings()
     from dynamic_config import DynamicConfigManager
 
@@ -62,7 +71,7 @@ async def on_startup(ctx: dict) -> None:
     redis_client = ctx.get("redis")
     quota_limiter = ToolQuotaLimiter(redis_client=redis_client)
     ctx["quota_limiter"] = quota_limiter
-    ctx["tools"] = build_tool_registry(settings, limiter=quota_limiter)
+    ctx["tools"] = build_tool_registry(settings, limiter=quota_limiter, decision_model=ctx["decision_model"])
     configure_langsmith(settings.langsmith)
     logging.info(
         "Worker started: llm=%s decision_model=%s embeddings=%s",
@@ -103,7 +112,13 @@ def build_worker_redis_settings() -> RedisSettings:
 
 
 class WorkerSettings:
-    functions = [generate_mindmap, regenerate_node_task, chat_turn_task]
+    functions = [
+        generate_mindmap,
+        regenerate_node_task,
+        chat_turn_task,
+        replay_terminal_callback,
+        delete_account_map_vectors,
+    ]
     on_startup = on_startup
     on_shutdown = on_shutdown
     redis_settings = build_worker_redis_settings()

@@ -129,7 +129,8 @@ async def search_maps(
                   (SELECT count(*)::int FROM public.nodes n WHERE n.map_id = m.id) AS node_count,
                   (SELECT j.status FROM public.generation_jobs j WHERE j.map_id = m.id ORDER BY j.created_at DESC LIMIT 1) AS latest_job_status,
                   (SELECT j.progress_percent::int FROM public.generation_jobs j WHERE j.map_id = m.id ORDER BY j.created_at DESC LIMIT 1) AS latest_job_progress,
-                  (SELECT j.id FROM public.generation_jobs j WHERE j.map_id = m.id ORDER BY j.created_at DESC LIMIT 1) AS latest_job_id
+                  (SELECT j.id FROM public.generation_jobs j WHERE j.map_id = m.id ORDER BY j.created_at DESC LIMIT 1) AS latest_job_id,
+                  (SELECT j.job_type FROM public.generation_jobs j WHERE j.map_id = m.id ORDER BY j.created_at DESC LIMIT 1) AS latest_job_type
            FROM public.mind_maps m
            WHERE m.user_id = $1
              AND (m.title ILIKE $2 OR COALESCE(m.description, '') ILIKE $2 OR EXISTS (SELECT 1 FROM public.nodes n WHERE n.map_id = m.id AND n.label ILIKE $2))
@@ -141,7 +142,8 @@ async def search_maps(
                   (SELECT count(*)::int FROM public.nodes n WHERE n.map_id = m.id) AS node_count,
                   (SELECT j.status FROM public.generation_jobs j WHERE j.map_id = m.id ORDER BY j.created_at DESC LIMIT 1) AS latest_job_status,
                   (SELECT j.progress_percent::int FROM public.generation_jobs j WHERE j.map_id = m.id ORDER BY j.created_at DESC LIMIT 1) AS latest_job_progress,
-                  (SELECT j.id FROM public.generation_jobs j WHERE j.map_id = m.id ORDER BY j.created_at DESC LIMIT 1) AS latest_job_id
+                  (SELECT j.id FROM public.generation_jobs j WHERE j.map_id = m.id ORDER BY j.created_at DESC LIMIT 1) AS latest_job_id,
+                  (SELECT j.job_type FROM public.generation_jobs j WHERE j.map_id = m.id ORDER BY j.created_at DESC LIMIT 1) AS latest_job_type
            FROM public.mind_maps m
            WHERE m.user_id = $1
              AND (m.title ILIKE $2 OR COALESCE(m.description, '') ILIKE $2 OR EXISTS (SELECT 1 FROM public.nodes n WHERE n.map_id = m.id AND n.label ILIKE $2))
@@ -410,6 +412,10 @@ async def create_generation_job(
     callback_token_hash: str | None = None,
 ) -> GenerationJob:
     job_type_str = job_type.value if hasattr(job_type, "value") else str(job_type)
+    # Database constraint chk_target_node_matches_job_type strictly enforces:
+    # (job_type = 'regenerate_node' OR target_node_id IS NULL)
+    if job_type_str != "regenerate_node":
+        target_node_id = None
     try:
         if job_id is not None:
             row = await conn.fetchrow(

@@ -345,7 +345,8 @@ def _mock_authed_user(user_id: uuid.UUID, email: str) -> MagicMock:
     return mock_response
 
 
-def test_sprint1_auth_dual_defense_accepts_bearer_header():
+def test_sprint1_auth_dual_defense_accepts_bearer_header(monkeypatch):
+    monkeypatch.setattr(supabase_core, "require_active_profile", lambda _: {"role": "user", "suspended_at": None})
     fake_uid = uuid.uuid4()
     mock_response = _mock_authed_user(fake_uid, "regression@test.com")
 
@@ -366,7 +367,8 @@ def test_sprint1_auth_dual_defense_accepts_bearer_header():
         supabase_core.anon_client = orig_anon_client
 
 
-def test_sprint1_auth_dual_defense_accepts_http_only_cookie():
+def test_sprint1_auth_dual_defense_accepts_http_only_cookie(monkeypatch):
+    monkeypatch.setattr(supabase_core, "require_active_profile", lambda _: {"role": "user", "suspended_at": None})
     fake_uid = uuid.uuid4()
     mock_response = _mock_authed_user(fake_uid, "cookie-sprint1@test.com")
 

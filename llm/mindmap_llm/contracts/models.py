@@ -285,6 +285,7 @@ class GenerationResult(BaseModel):
     rejected_files: list[RejectedFile] = Field(default_factory=list)
     tool_call_log: list[ToolCallLogEntry] = Field(default_factory=list)
     quality_warnings: list[str] = Field(default_factory=list)
+    research_warnings: list[str] = Field(default_factory=list)
     expected_map_version: int | None = None
     expected_node_version: int | None = None
 
@@ -324,6 +325,7 @@ class ChatTurnRequest(BaseModel):
     message: str
     thread_id: UUID | None = None
     target_node_id: UUID | None = None
+    selected_node: NodeDraft | None = None
     history: list[ChatMessage] = Field(default_factory=list)
     summary: str | None = None  # Rolling conversation summary from backend (S2-L9 / US-15)
     rolling_summary: str | None = None
@@ -332,6 +334,17 @@ class ChatTurnRequest(BaseModel):
     callback_base_url: str = ""
     callback_token: str = ""
     memory_context: dict[str, Any] | None = None
+
+    @property
+    def effective_selected_node(self) -> NodeDraft | None:
+        """Resolve active selected node from explicit field or target_node_id snapshot lookup."""
+        if self.selected_node:
+            return self.selected_node
+        if self.target_node_id and self.map_snapshot and self.map_snapshot.nodes:
+            for n in self.map_snapshot.nodes:
+                if str(n.id) == str(self.target_node_id):
+                    return n
+        return None
 
     @model_validator(mode="before")
     @classmethod

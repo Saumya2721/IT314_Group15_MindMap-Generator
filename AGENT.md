@@ -70,7 +70,41 @@ IT314_Group15_MindMap-Generator/
 ### Invariant 7: Sprint Delivery Status & Scope Boundaries
 - **Sprint 1 Delivered**: Thought capture, seed upload, background worker synthesis, and read-only graph visualization.
 - **Sprint 2 Delivered**: Interactive canvas with node dragging & Cartesian coordinate persistence, node & edge CRUD, relationship binding, partial branch regeneration, version history & rollback, chat action proposals, multi-format export (PNG/PDF/Markdown), and prompt token budgeting.
-- **Sprint 3 Roadmap (Planned)**: Server-Sent Events (SSE) push architecture for real-time collaborative updates, cloud-hosted vision API (Google Gemini 2.0 Flash) to replace local Tesseract OCR, and multi-user live presence.
+- **Sprint 3 Delivered**: Role-based admin oversight (`profiles.role`, user management, aggregate analytics, audit log), long-term agent memory (`agent_memories` table, post-turn proposal, token-budgeted injection, GDPR export), LangSmith end-to-end tracing, automatic context & dynamic token budgeting (`ContextBudgetManager` with provider-aware limits and priority pruning), multi-source ingestion (DOCX, PPTX, SSRF-guarded URL seeds), cloud vision integration (Google Gemini Flash with Tesseract fallback), live research tools (Wikipedia, Page Reader, Scholar), research agent subgraph with Redis caching, runtime pipeline configuration API (`/admin/config`, `/internal/config`), and deterministic Top-to-Bottom tree layout.
+- **Scope Adjustments**: Real-time collaborative multi-user editing (presence/SSE) and folder refactor were deferred/scratched in Sprint 3 in favor of hardening core platform administration, memory, and LLM orchestration.
+
+### Invariant 8: Role-Based Admin Oversight & Zero-Content-SELECT Boundary (S3-DB1, S3-BE1)
+- **Role Enforcement**: User role is persisted in `profiles.role` (`user` or `admin`, default `user`). All administrative routes (`/admin/*`) strictly enforce the `require_admin_role()` dependency.
+- **Zero Content SELECT Invariant**: Admins have **zero SELECT permissions** on user content tables (`mind_maps`, `nodes`, `edges`, `chat_messages`, `agent_memories`). Admin analytics are computed exclusively via aggregate database views (`admin_stats_view`).
+- **Audit Logging**: Every administrative action (suspension, unsuspension, deletion, config changes) must write an immutable record to `admin_audit_log` with actor ID, target user ID, action, and JSONB metadata.
+
+### Invariant 9: Long-Term Memory Lifecycle & User Sovereignty (S3-DB2, S3-BE4, S3-L3)
+- **Ownership Isolation**: `agent_memories` rows belong exclusively to the creating user (`user_id`). Users can inspect, edit, disable, or delete their memories at `/memory`.
+- **Worker Proposal Write Path**: The LLM worker never writes directly to the database; it sends candidate memories via `POST /internal/memory/propose`, which enforces validation, deduplication, importance decay, and per-user limits (500 rows).
+- **Token Budget Ceiling**: At prompt assembly time, retrieved top-$k$ memories must never exceed 10% of the active provider context budget. If memory retrieval fails or times out, generation proceeds without memories (graceful degradation).
+
+### Invariant 10: Provider-Aware Context Budgeting & Dynamic Pruning Hierarchy (S3-L7)
+- **`ContextBudgetManager` Rule**: All prompt assembly must dynamically allocate token budgets across system prompt, seed summary, long-term memories, RAG chunks, and conversation turns based on active provider ceilings (e.g. Groq 8k/6k input ceiling, Qwen OTPM clamp, Gemini Flash 32k/128k).
+- **Strict Pruning Order**: When assembled context exceeds provider ceilings, pruning must execute strictly in this order:
+  1. Lowest-scoring RAG context chunks.
+  2. Oldest conversational turns beyond the sliding window.
+  3. Dense external tool payloads from Wikipedia, Page Reader, or Scholar.
+  System instructions and active seed core focus are **never** pruned.
+
+### Invariant 11: Multi-Source Ingestion, Vision Extractor Fallback & SSRF Defense (S3-R1, S3-L6, S3-T2)
+- **Extractor Registry**: All file uploads route through `ingestion.extractors.registry.get_extractor_for_mime()`.
+- **Vision Model Fallback Chain**: Images are extracted using Google Gemini Flash (`gemini-3.8-flash`) by default. If the API is unreachable, empty, or unconfigured, it must fall back seamlessly to local `pytesseract`.
+- **SSRF Guard on URL Seeds & Page Reader**: URL seeds and Page Reader tools must validate target hostnames against public IP ranges, reject private/loopback/cloud-metadata addresses (e.g. `127.0.0.1`, `169.254.169.254`, `10.0.0.0/8`), enforce $\le 3$ redirects, $\le 1\text{ MB}$ response size, and a 5-second timeout.
+
+### Invariant 12: Distributed Redis Rate Limiting & Tool Policy Limits (S3-BE5, S3-L1)
+- **Redis Limiter**: Quotas for generation requests, chat turns, and memory proposals must be tracked in Redis using sliding-window counters (`app/services/rate_limiter.py`).
+- **Tool Policies**: External research tools (Tavily, Wikipedia, Scholar) must enforce per-call timeouts ($\le 5\text{s}$) and bounded total research budget ($\le 10\text{s}$) inside the research subgraph.
+
+### Invariant 13: Deterministic Top-to-Bottom Tree Geometry & React Flow Handles
+- **Vertical Tree Direction**: Mind maps flow vertically top-to-bottom ($Y$ advances by tree level with level step $\Delta y = 200.0$, starting from root apex at $y=80.0$).
+- **Parent Centering**: Parent nodes are centered horizontally above the bounding span of their children ($\text{pos\_x} = \frac{\text{child}_1.\text{pos\_x} + \text{child}_k.\text{pos\_x}}{2}$).
+- **React Flow Handles**: All edges must connect from parent handle `sourceHandle: 'source-bottom'` to child handle `targetHandle: 'target-top'` to ensure clean vertical bezier routing.
+- **Incremental Placement**: New nodes appended during chat proposals are placed at level $\text{parent}.\text{pos\_y} + 200.0$ to the right of any existing siblings with collision avoidance.
 
 ---
 

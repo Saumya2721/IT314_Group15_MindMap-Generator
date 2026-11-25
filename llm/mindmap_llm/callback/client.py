@@ -19,6 +19,8 @@ from typing import Any
 from uuid import UUID
 
 import httpx
+from arq import Retry
+from arq.connections import ArqRedis
 from contracts.models import ChatCompleteCallback, GenerationResult
 
 logger = logging.getLogger(__name__)
@@ -37,8 +39,11 @@ class JobCallbackClient:
     a worker can only report on the one job it was given, not any other.
     """
 
-    def __init__(self, *, job_id, base_url: str, token: str, timeout_s: float = 10.0):
+    def __init__(self, *, job_id, base_url: str, token: str, timeout_s: float = 10.0, redis: ArqRedis | None = None):
         self._job_id = job_id
+        self._base_url = base_url
+        self._token = token
+        self._redis = redis
         self._client = httpx.AsyncClient(
             base_url=base_url.rstrip("/"),
             headers={
@@ -73,51 +78,44 @@ class JobCallbackClient:
             # a UI nicety. complete()/fail() below are NOT allowed to do this.
             logger.warning("job %s: progress callback failed (percent=%d): %s", self._job_id, percent, exc)
 
-    async def complete(self, result: GenerationResult) -> dict:
+    async def _send_result(self, path: str, payload: str, status: str) -> dict:
         if self._terminal_sent:
-            raise CallbackAlreadySent(f"job {self._job_id}: complete() called twice")
+            raise CallbackAlreadySent(f"job {self._job_id}: terminal result already submitted")
         self._terminal_sent = True
-        last_exc = None
-        for attempt in range(1, 4):
+        if self._redis is not None:
             try:
-                resp = await self._client.post(
-                    f"/internal/jobs/{self._job_id}/complete",
-                    content=result.model_dump_json(),
-                    headers={"Content-Type": "application/json"},
+                await self._redis.enqueue_job(
+                    "replay_terminal_callback",
+                    str(self._job_id),
+                    self._base_url,
+                    self._token,
+                    path,
+                    payload,
+                    status,
+                    _job_id=f"terminal:{self._job_id}",
+                    _defer_by=20,
                 )
+            except Exception:
+                logger.exception("job %s: could not persist callback retry", self._job_id)
+        return await self._post_result(path, payload, status)
+
+    async def _post_result(self, path: str, payload: str, status: str) -> dict:
+        for attempt in range(3):
+            try:
+                resp = await self._client.post(path, content=payload)
                 resp.raise_for_status()
-                return resp.json() if resp.content else {"status": "completed"}
-            except (httpx.TransportError, httpx.TimeoutException) as exc:
-                last_exc = exc
-                logger.warning("job %s: complete callback attempt %d/3 failed: %s", self._job_id, attempt, exc)
-                if attempt < 3:
-                    await asyncio.sleep(0.5 * (2 ** (attempt - 1)))
-        if last_exc:
-            raise last_exc
-        return {}
+                return resp.json() if resp.content else {"status": status}
+            except (httpx.TransportError, httpx.HTTPStatusError) as exc:
+                if attempt == 2 or (isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code < 500):
+                    raise
+                await asyncio.sleep(0.5 * 2**attempt)
+        raise RuntimeError("Callback attempts exhausted")
+
+    async def complete(self, result: GenerationResult) -> dict:
+        return await self._send_result(f"/internal/jobs/{self._job_id}/complete", result.model_dump_json(), "completed")
 
     async def fail(self, result: GenerationResult) -> dict:
-        if self._terminal_sent:
-            raise CallbackAlreadySent(f"job {self._job_id}: fail() called twice")
-        self._terminal_sent = True
-        last_exc = None
-        for attempt in range(1, 4):
-            try:
-                resp = await self._client.post(
-                    f"/internal/jobs/{self._job_id}/fail",
-                    content=result.model_dump_json(),
-                    headers={"Content-Type": "application/json"},
-                )
-                resp.raise_for_status()
-                return resp.json() if resp.content else {"status": "failed"}
-            except (httpx.TransportError, httpx.TimeoutException) as exc:
-                last_exc = exc
-                logger.warning("job %s: fail callback attempt %d/3 failed: %s", self._job_id, attempt, exc)
-                if attempt < 3:
-                    await asyncio.sleep(0.5 * (2 ** (attempt - 1)))
-        if last_exc:
-            raise last_exc
-        return {}
+        return await self._send_result(f"/internal/jobs/{self._job_id}/fail", result.model_dump_json(), "failed")
 
     async def complete_chat(
         self,
@@ -129,10 +127,6 @@ class JobCallbackClient:
         cited_node_ids: list[UUID] | None = None,
         source_refs: list[str] | None = None,
     ) -> dict:
-        """Report successful chat turn completion to /internal/chat/{job_id}/complete."""
-        if self._terminal_sent:
-            raise CallbackAlreadySent(f"job {self._job_id}: complete_chat() called twice")
-        self._terminal_sent = True
         payload = ChatCompleteCallback(
             map_id=map_id,
             job_id=UUID(str(self._job_id)),
@@ -143,35 +137,11 @@ class JobCallbackClient:
             source_refs=source_refs or [],
             status="completed",
         )
-        last_exc = None
-        for attempt in range(1, 4):
-            try:
-                resp = await self._client.post(
-                    f"/internal/chat/{self._job_id}/complete",
-                    content=payload.model_dump_json(),
-                    headers={"Content-Type": "application/json"},
-                )
-                resp.raise_for_status()
-                return resp.json() if resp.content else {"status": "completed"}
-            except (httpx.TransportError, httpx.TimeoutException) as exc:
-                last_exc = exc
-                logger.warning("job %s: complete_chat callback attempt %d/3 failed: %s", self._job_id, attempt, exc)
-                if attempt < 3:
-                    await asyncio.sleep(0.5 * (2 ** (attempt - 1)))
-        if last_exc:
-            raise last_exc
-        return {}
+        return await self._send_result(
+            f"/internal/chat/{self._job_id}/complete", payload.model_dump_json(), "completed"
+        )
 
-    async def fail_chat(
-        self,
-        *,
-        map_id: UUID,
-        error: str,
-    ) -> dict:
-        """Report chat turn failure to /internal/chat/{job_id}/complete."""
-        if self._terminal_sent:
-            raise CallbackAlreadySent(f"job {self._job_id}: fail_chat() called twice")
-        self._terminal_sent = True
+    async def fail_chat(self, *, map_id: UUID, error: str) -> dict:
         payload = ChatCompleteCallback(
             map_id=map_id,
             job_id=UUID(str(self._job_id)),
@@ -179,27 +149,26 @@ class JobCallbackClient:
             status="failed",
             error=error,
         )
-        last_exc = None
-        for attempt in range(1, 4):
-            try:
-                resp = await self._client.post(
-                    f"/internal/chat/{self._job_id}/complete",
-                    content=payload.model_dump_json(),
-                    headers={"Content-Type": "application/json"},
-                )
-                resp.raise_for_status()
-                return resp.json() if resp.content else {"status": "failed"}
-            except (httpx.TransportError, httpx.TimeoutException) as exc:
-                last_exc = exc
-                logger.warning("job %s: fail_chat callback attempt %d/3 failed: %s", self._job_id, attempt, exc)
-                if attempt < 3:
-                    await asyncio.sleep(0.5 * (2 ** (attempt - 1)))
-        if last_exc:
-            raise last_exc
-        return {}
+        return await self._send_result(f"/internal/chat/{self._job_id}/complete", payload.model_dump_json(), "failed")
 
     async def aclose(self) -> None:
         await self._client.aclose()
+
+
+async def replay_terminal_callback(
+    ctx: dict, job_id: str, base_url: str, token: str, path: str, payload: str, status: str
+) -> None:
+    client = JobCallbackClient(job_id=job_id, base_url=base_url, token=token)
+    try:
+        receipt = await client.check_status()
+        if not receipt.get("already_terminal"):
+            await client._post_result(path, payload, status)
+    except (httpx.TransportError, httpx.HTTPStatusError) as exc:
+        if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code < 500:
+            raise
+        raise Retry(defer=min(300, 5 * 2 ** ctx.get("job_try", 1))) from exc
+    finally:
+        await client.aclose()
 
 
 class NullCallbackClient:

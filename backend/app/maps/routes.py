@@ -154,6 +154,7 @@ class RegenerateRequest(BaseModel):
 
 
 class QuickGenerateRequest(BaseModel):
+    seed_url: str | None = None
     topic: str | None = None
     ideas: str | None = None
     detail_level: DetailLevel | None = DetailLevel.overview
@@ -445,8 +446,13 @@ async def quick_generate(
     if not redis_pool:
         raise HTTPException(503, "Generation queue service is unavailable. Redis connection is required.")
 
-    if not (body.topic or "").strip() and not (body.ideas or "").strip():
-        raise HTTPException(422, "Provide a topic or some ideas.")
+    seed_url = (body.seed_url or "").strip() or None
+    if seed_url:
+        valid_url, error = validate_seed_url(seed_url)
+        if not valid_url:
+            raise HTTPException(422, error)
+    if not ((body.topic or "").strip() or (body.ideas or "").strip() or seed_url):
+        raise HTTPException(422, "Provide a topic, some ideas, or a seed URL.")
 
     p_ok, norm_purpose, p_err = validate_purpose(body.purpose)
     if not p_ok:
@@ -496,6 +502,8 @@ async def quick_generate(
         job_id=job_id,
         map_id=map_id,
         job_type=JobType.GENERATE,
+        user_id=uid,
+        seed_url=seed_url,
         topic=body.topic,
         ideas=body.ideas,
         files=[],
@@ -677,6 +685,7 @@ async def generate(
         gen_req = GenerationRequest(
             job_id=job_id,
             map_id=map_id,
+            user_id=uid,
             job_type=JobType.GENERATE,
             topic=topic,
             ideas=ideas,
@@ -787,7 +796,7 @@ async def regenerate(
     # Step 1: Create chat thread & user turn, then create the job record and safety snapshot in DB upfront
     summary_msg = f"Regenerate mind map with instruction: '{body.instruction.strip()}'"
     async with transaction(pool) as conn:
-        await lock_map_for_mutation(conn, map_id)
+        expected_map_version = await lock_map_for_mutation(conn, map_id)
         thread_id = await get_or_create_chat_thread(conn, map_id, uid)
         msg_id = await insert_chat_message(conn, thread_id, "user", summary_msg)
         await create_generation_job(
@@ -797,6 +806,11 @@ async def regenerate(
             job_id=job_id,
             triggered_by_message_id=msg_id,
             callback_token_hash=token_hash,
+        )
+        await conn.execute(
+            "UPDATE public.generation_jobs SET base_map_version = $2 WHERE id = $1",
+            job_id,
+            expected_map_version,
         )
         await create_map_snapshot(
             conn,
@@ -810,7 +824,7 @@ async def regenerate(
             """
             SELECT 1 FROM public.seed_assets a
             JOIN public.generation_jobs j ON j.id = a.generation_job_id
-            WHERE j.map_id = $1 AND a.asset_type IN ('pdf', 'image')
+            WHERE j.map_id = $1 AND a.asset_type IN ('pdf', 'image', 'docx', 'pptx')
             LIMIT 1
             """,
             map_id,
@@ -819,7 +833,9 @@ async def regenerate(
         gen_req = GenerationRequest(
             job_id=job_id,
             map_id=map_id,
+            user_id=uid,
             job_type=JobType.REGENERATE_FULL,
+            expected_map_version=expected_map_version,
             regeneration_instruction=body.instruction.strip(),
             seed_has_files=bool(has_file_seed),
             detail_level=body.detail_level.value if body.detail_level else None,
@@ -1000,6 +1016,11 @@ async def regenerate_node(
             triggered_by_message_id=msg_id,
             callback_token_hash=token_hash,
         )
+        await conn.execute(
+            "UPDATE public.generation_jobs SET base_map_version = $2 WHERE id = $1",
+            job_id,
+            expected_map_version,
+        )
         # Take pre-regeneration safety snapshot inside the transaction
         snapshot_id = await create_map_snapshot(
             conn,
@@ -1014,7 +1035,7 @@ async def regenerate_node(
             """
             SELECT 1 FROM public.seed_assets a
             JOIN public.generation_jobs j ON j.id = a.generation_job_id
-            WHERE j.map_id = $1 AND a.asset_type IN ('pdf', 'image')
+            WHERE j.map_id = $1 AND a.asset_type IN ('pdf', 'image', 'docx', 'pptx')
             LIMIT 1
             """,
             map_id,
@@ -1023,6 +1044,7 @@ async def regenerate_node(
         gen_req = GenerationRequest(
             job_id=job_id,
             map_id=map_id,
+            user_id=uid,
             job_type=JobType.REGENERATE_NODE,
             target_node_id=node_id,
             ancestor_labels=ancestor_labels,
@@ -1147,7 +1169,8 @@ async def get_job_by_id(job_id: UUID, request: Request, uid: UUID = Depends(curr
     )
     if not row:
         raise HTTPException(404, "Job not found")
-    await assert_map_owner(pool, row["map_id"], uid)
+    if not await assert_map_owner(pool, row["map_id"], uid):
+        raise HTTPException(404, "Job not found")
     return job_dict(row)
 
 

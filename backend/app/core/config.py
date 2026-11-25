@@ -47,6 +47,12 @@ class AppConfig:
     MEMORY_PROPOSE_RATE_LIMIT_WINDOW_S: int = int(os.getenv("MEMORY_PROPOSE_RATE_LIMIT_WINDOW_S", "60"))
     # Memory Settings (S3-BE4)
     MEMORY_PER_USER_LIMIT: int = int(os.getenv("MEMORY_PER_USER_LIMIT", "500"))
+    # Internal Service Authentication (AUD-01 / NEW-01 / S3-BE4 / S3-BE8)
+    # Must be explicitly configured. In test environments without env var, falls back to test key.
+    INTERNAL_SERVICE_KEY: str = os.getenv(
+        "INTERNAL_SERVICE_KEY",
+        "mindweave-test-internal-secret" if os.getenv("ENVIRONMENT") == "test" else "",
+    )
 
 
 settings = AppConfig()

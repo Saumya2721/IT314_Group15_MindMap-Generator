@@ -277,7 +277,7 @@ describe('US-04: Canvas load graph payload regression', () => {
     expect(flowNodes.find((n) => n.id === 'n2').type).toBe('branchNode')
   })
 
-  it('places unpositioned nodes into topological depth columns', () => {
+  it('places unpositioned nodes into topological depth levels (top-to-bottom)', () => {
     const root = { id: 'n-root', node_type: 'root', label: 'Root' }
     const c1 = { id: 'n-c1', node_type: 'default', label: 'C1' }
     const c2 = { id: 'n-c2', node_type: 'default', label: 'C2' }
@@ -290,8 +290,12 @@ describe('US-04: Canvas load graph payload regression', () => {
       ],
     )
 
-    expect(flowNodes.find((n) => n.id === 'n-root').position.x).toBeCloseTo(80)
-    expect(flowNodes.find((n) => n.id === 'n-c1').position.x).toBeCloseTo(440) // depth 1
+    expect(flowNodes.find((n) => n.id === 'n-root').position.y).toBeCloseTo(80) // depth 0
+    expect(flowNodes.find((n) => n.id === 'n-c1').position.y).toBeCloseTo(280) // depth 1
+    expect(flowNodes.find((n) => n.id === 'n-c2').position.y).toBeCloseTo(280) // depth 1
+    expect(flowNodes.find((n) => n.id === 'n-c1').position.x).not.toBe(
+      flowNodes.find((n) => n.id === 'n-c2').position.x,
+    )
   })
 
   it('maps backend edge label field for canvas annotations', () => {

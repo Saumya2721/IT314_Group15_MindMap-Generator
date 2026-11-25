@@ -18,6 +18,7 @@ Design decisions:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from uuid import UUID
 
@@ -31,6 +32,7 @@ from chat.research import (
 )
 from chat.token_budget import TokenBudget
 from contracts.models import ActionProposal, ChatIntent, ChatTurnRequest, ChatTurnResponse
+from orchestration.context_discovery import get_model_context_window
 from orchestration.deps import GenerationDeps
 from orchestration.prompts import JSONExtractionError, extract_json_object
 from providers.base import Message
@@ -38,7 +40,7 @@ from research.models import ResearchSource
 
 logger = logging.getLogger(__name__)
 
-_PROPOSAL_MAX_TOKENS = 512
+_PROPOSAL_MAX_TOKENS = 1024  # raised from 512 — 512 was too tight for multi-node JSON proposals
 
 
 async def build_action_proposal(
@@ -87,12 +89,19 @@ async def build_action_proposal(
             provider=deps.settings.llm.provider,
             model=deps.settings.llm.model,
         )
+    active = deps.dynamic_config.get_config().llm if deps.dynamic_config else None
+    model_context = await asyncio.to_thread(
+        get_model_context_window,
+        active.model if active else deps.settings.llm.model,
+        active.provider if active else deps.settings.llm.provider,
+        api_base=active.api_base if active else None,
+    )
     assembled = assemble_chat_context(
         current_message=request.message,
         history=request.history,
         summary=request.summary,
         budget=TokenBudget(
-            max_context_tokens=deps.settings.llm.max_output_tokens,
+            max_context_tokens=model_context,
             reserved_response_tokens=_PROPOSAL_MAX_TOKENS,
         ),
         system_prompt=system,
@@ -102,6 +111,7 @@ async def build_action_proposal(
         assembled.recent_messages,
         summary=assembled.summary,
         research_context=research_context,
+        selected_node=request.effective_selected_node,
     )
 
     # LLM call — single turn, no retry (parse errors become clarifications)
