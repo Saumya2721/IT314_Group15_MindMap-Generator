@@ -15,7 +15,6 @@ Gracefully falls back to an in-memory sliding window when Redis is unavailable (
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import time
 from collections import defaultdict, deque
@@ -27,6 +26,32 @@ from fastapi import HTTPException, Request, status
 from services.queue import get_redis_pool
 
 logger = logging.getLogger(__name__)
+
+LUA_SLIDING_WINDOW_SCRIPT = """
+local key = KEYS[1]
+local now = tonumber(ARGV[1])
+local window = tonumber(ARGV[2])
+local limit = tonumber(ARGV[3])
+local member = ARGV[4]
+local cutoff = now - window
+
+redis.call('zremrangebyscore', key, 0, cutoff)
+local current_hits = redis.call('zcard', key)
+
+if current_hits >= limit then
+    local oldest = redis.call('zrange', key, 0, 0, 'WITHSCORES')
+    local oldest_ts = cutoff
+    if oldest and #oldest >= 2 then
+        oldest_ts = tonumber(oldest[2])
+    end
+    local retry_after = math.max(1, math.ceil(window - (now - oldest_ts)))
+    return {0, retry_after}
+else
+    redis.call('zadd', key, now, member)
+    redis.call('expire', key, math.ceil(window + 10))
+    return {1, 0}
+end
+"""
 
 
 class RedisRateLimiter:
@@ -66,42 +91,28 @@ class RedisRateLimiter:
         window = window_s if window_s is not None else quota_window
         key_str = str(key)
 
-        # 1. Try Redis sorted set sliding window
+        # 1. Try Redis sorted set sliding window (Atomic Lua execution)
         if redis is not None:
             try:
                 redis_key = f"rate_limit:{api}:{key_str}"
                 now = time.time()
-                cutoff = now - window
-
-                pipe = redis.pipeline()
-                pipe.zremrangebyscore(redis_key, 0, cutoff)
-                pipe.zcard(redis_key)
-                pipe.zrange(redis_key, 0, 0, withscores=True)
-                results = await pipe.execute()
-
-                current_hits = int(results[1]) if len(results) > 1 and results[1] is not None else 0
-                oldest_entry = results[2] if len(results) > 2 and results[2] else []
-
-                if current_hits >= limit:
-                    # Calculate retry after based on oldest entry in window
-                    oldest_ts = oldest_entry[0][1] if oldest_entry else cutoff
-                    retry_after = max(1, int(window - (now - float(oldest_ts))))
-                    return False, retry_after
-
-                # Under limit: add current call and reset expiration
                 member = f"{now}-{uuid4().hex}"
-                pipe = redis.pipeline()
-                pipe.zadd(redis_key, {member: now})
-                pipe.expire(redis_key, window + 10)
-                await pipe.execute()
-                return True, 0
-            except Exception as exc:
-                logger.warning(
-                    "Redis rate limiter failed for %s:%s, using in-memory fallback: %s",
-                    api,
-                    key_str,
-                    exc,
+
+                res = await redis.eval(
+                    LUA_SLIDING_WINDOW_SCRIPT,
+                    1,
+                    redis_key,
+                    str(now),
+                    str(window),
+                    str(limit),
+                    member,
                 )
+                allowed = bool(res[0] == 1)
+                retry_after = int(res[1])
+                return allowed, retry_after
+            except Exception as exc:
+                logger.warning("Redis rate limiter unavailable for %s", api, exc_info=True)
+                raise HTTPException(503, "Rate limiting is temporarily unavailable.") from exc
 
         # 2. In-memory sliding window fallback (NFR-07)
         now_mono = time.monotonic()
@@ -188,22 +199,16 @@ def get_rate_limiter() -> RedisRateLimiter:
 
 
 def extract_client_key(request: Request) -> str:
-    """Extract client key for rate limiting: user id if authenticated, token hash, or IP."""
+    """Extract client key for rate limiting: stable user UUID if authenticated, or IP if anonymous (AUD-04)."""
     if not request:
         return "ip:unknown"
 
-    # 1. Bearer token
-    auth_header = request.headers.get("authorization") or request.headers.get("Authorization")
-    if auth_header and auth_header.lower().startswith("bearer "):
-        token = auth_header[7:].strip()
-        return hashlib.sha256(token.encode("utf-8")).hexdigest()[:32]
+    # 1. State user (set by auth dependencies or get_current_user)
+    user = getattr(request.state, "user", None)
+    if user and hasattr(user, "id"):
+        return f"user:{user.id}"
 
-    # 2. Cookie access token
-    cookie_token = request.cookies.get("access_token")
-    if cookie_token:
-        return hashlib.sha256(cookie_token.encode("utf-8")).hexdigest()[:32]
-
-    # 3. Client IP fallback
+    # 3. Client IP fallback for unauthenticated calls
     if request.client and request.client.host:
         return f"ip:{request.client.host}"
 

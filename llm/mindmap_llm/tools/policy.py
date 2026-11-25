@@ -15,7 +15,7 @@ import logging
 import time
 from collections import defaultdict, deque
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from config import Settings
 from providers.base import ToolSpec
@@ -113,29 +113,29 @@ class ToolQuotaLimiter:
         key_str = str(user_key)
         redis_key = f"tool_quota:{key_str}:{tool_name}"
 
-        # 1. Try Redis sliding window via zadd / zremrangebyscore
         if self._redis is not None:
             try:
-                now = time.time()
-                cutoff = now - window_s
-                pipe = self._redis.pipeline()
-                pipe.zremrangebyscore(redis_key, 0, cutoff)
-                pipe.zcard(redis_key)
-                results = await pipe.execute()
-                current_count = results[1] if len(results) > 1 else 0
-
-                if current_count >= max_calls:
-                    return False
-
-                # Under limit: record call with member = timestamp-uuid
-                member = f"{now}-{time.monotonic()}"
-                pipe = self._redis.pipeline()
-                pipe.zadd(redis_key, {member: now})
-                pipe.expire(redis_key, window_s + 10)
-                await pipe.execute()
-                return True
+                accepted = await self._redis.eval(
+                    """
+                    local now = tonumber(ARGV[1])
+                    local window = tonumber(ARGV[2])
+                    redis.call('zremrangebyscore', KEYS[1], '-inf', now - window)
+                    if redis.call('zcard', KEYS[1]) >= tonumber(ARGV[3]) then return 0 end
+                    redis.call('zadd', KEYS[1], now, ARGV[4])
+                    redis.call('expire', KEYS[1], math.ceil(window + 10))
+                    return 1
+                    """,
+                    1,
+                    redis_key,
+                    str(time.time()),
+                    str(window_s),
+                    str(max_calls),
+                    uuid4().hex,
+                )
+                return bool(accepted)
             except Exception as exc:
-                logger.warning("Redis quota limiter error, falling back to in-memory: %s", exc)
+                logger.warning("Redis quota limiter unavailable: %s", exc)
+                return False
 
         # 2. In-memory sliding window fallback
         now_mono = time.monotonic()

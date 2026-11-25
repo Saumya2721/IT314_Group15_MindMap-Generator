@@ -202,30 +202,17 @@ class TestUserQuotaLimiter:
     @pytest.mark.asyncio
     async def test_redis_quota_sliding_window(self) -> None:
         mock_redis = MagicMock()
-        mock_pipeline = MagicMock()
-        mock_redis.pipeline.return_value = mock_pipeline
-
-        # First check: zcard returns 1 (under max_calls=3)
-        mock_pipeline.execute = AsyncMock(side_effect=[[None, 1], [1, True]])
+        mock_redis.eval = AsyncMock(side_effect=[1, 0])
         limiter = ToolQuotaLimiter(redis_client=mock_redis)
-
-        ok = await limiter.check_and_consume("usr_redis", "arxiv", max_calls=3, window_s=60)
-        assert ok is True
-        assert mock_pipeline.zremrangebyscore.called
-        assert mock_pipeline.zcard.called
-        assert mock_pipeline.zadd.called
+        assert await limiter.check_and_consume("usr_redis", "arxiv", max_calls=3, window_s=60)
+        assert not await limiter.check_and_consume("usr_redis", "arxiv", max_calls=3, window_s=60)
 
     @pytest.mark.asyncio
-    async def test_redis_failure_falls_back_to_in_memory(self) -> None:
+    async def test_redis_failure_denies_tool_work(self) -> None:
         mock_redis = MagicMock()
-        mock_pipeline = MagicMock()
-        mock_pipeline.execute = AsyncMock(side_effect=RuntimeError("Redis connection lost"))
-        mock_redis.pipeline.return_value = mock_pipeline
-
+        mock_redis.eval = AsyncMock(side_effect=RuntimeError("Redis connection lost"))
         limiter = ToolQuotaLimiter(redis_client=mock_redis)
-        # Should gracefully fall back to in-memory rather than raising RuntimeError
-        ok = await limiter.check_and_consume("usr_fallback", "arxiv", max_calls=2, window_s=60)
-        assert ok is True
+        assert not await limiter.check_and_consume("usr_redis", "arxiv", max_calls=2, window_s=60)
 
 
 # ---------------------------------------------------------------------------

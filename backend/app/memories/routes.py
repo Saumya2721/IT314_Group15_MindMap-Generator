@@ -15,12 +15,13 @@ All routes require the requesting user to be the owner.
 
 from __future__ import annotations
 
-import logging
-from typing import Any
+from typing import Annotated, Any
 from uuid import UUID
 
-from core.supabase import current_user_id
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from asyncpg import UniqueViolationError
+from auth.dependencies import require_internal_service
+from core.supabase import get_current_user
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
 from memories.schemas import (
     GDPRExportResponse,
     MemoryItem,
@@ -30,15 +31,18 @@ from memories.schemas import (
     MemoryProposeResponse,
 )
 from memories.service import delete_memory, gdpr_export, get_memory, list_memories, patch_memory, propose_memory
-from services.rate_limiter import check_memory_propose_rate_limit
+from routes.internal import verify_callback_auth
+from services.rate_limiter import get_redis_pool, rate_limiter
 
 from db.repository import assert_map_owner
 
-logger = logging.getLogger(__name__)
-
 router = APIRouter(prefix="/memory", tags=["Memory (S3-BE4)"])
 memories_plural_router = APIRouter(prefix="/memories", tags=["Memories (S3-BE4 Alias)"])
-internal_router = APIRouter(prefix="/internal/memory", tags=["Internal Memory (S3-BE4)"])
+internal_router = APIRouter(
+    prefix="/internal/memory",
+    tags=["Internal Memory (S3-BE4)"],
+    dependencies=[Depends(require_internal_service)],
+)
 
 
 def _pool(request: Request):
@@ -49,6 +53,34 @@ def _pool(request: Request):
             detail="Database pool not available.",
         )
     return pool
+
+
+def memory_owner(request: Request, user=Depends(get_current_user)) -> UUID:
+    if request.state.profile["role"] == "admin":
+        raise HTTPException(403, "User memories are unavailable to administrators.")
+    return UUID(str(user.id))
+
+
+async def worker_memory_owner(
+    request: Request, job_id: Annotated[UUID, Header(alias="X-Internal-Job-ID")]
+) -> tuple[UUID, UUID]:
+    job = await verify_callback_auth(job_id, request)
+    pool = _pool(request)
+    map_id = job["map_id"]
+    owner = await pool.fetchval(
+        """
+        SELECT m.user_id FROM public.mind_maps m
+        JOIN public.profiles p ON p.id = m.user_id
+        JOIN public.generation_jobs j ON j.map_id = m.id
+        WHERE m.id = $1 AND j.id = $2 AND p.role = 'user' AND p.suspended_at IS NULL
+          AND (j.completed_at IS NULL OR j.completed_at > now() - interval '15 minutes')
+        """,
+        map_id,
+        job_id,
+    )
+    if owner is None or job["status"] in ("failed", "rejected"):
+        raise HTTPException(403, "Job cannot access user memories.")
+    return owner, map_id
 
 
 # ---------------------------------------------------------------------------
@@ -65,16 +97,19 @@ async def internal_list_memories(
     request: Request,
     user_id: UUID = Query(..., description="Target user ID"),
     map_id: UUID | None = Query(None, description="Optional map scope"),
-    is_active: bool | None = Query(True, description="Filter by active state"),
+    owner: tuple[UUID, UUID] = Depends(worker_memory_owner),
     limit: int = Query(50, ge=1, le=200),
 ) -> dict[str, Any]:
     """Internal read-path for workers to retrieve active memories for a given user."""
+    if user_id != owner[0] or map_id != owner[1]:
+        raise HTTPException(403, "Memory scope does not match the job.")
     pool = _pool(request)
     items, total = await list_memories(
         pool,
         user_id=user_id,
         map_id=map_id,
-        is_active=is_active,
+        is_active=True,
+        include_global=True,
         limit=limit,
         offset=0,
     )
@@ -84,34 +119,20 @@ async def internal_list_memories(
 @internal_router.post(
     "/propose",
     response_model=MemoryProposeResponse,
-    dependencies=[Depends(check_memory_propose_rate_limit)],
     summary="Worker proposal write path (validate, dedupe, limit, store)",
 )
 async def propose_memory_route(
     payload: MemoryProposeRequest,
     request: Request,
     response: Response,
+    owner: tuple[UUID, UUID] = Depends(worker_memory_owner),
 ) -> MemoryProposeResponse:
     """Worker write-path to propose and persist an agent memory with deduplication and limits."""
     pool = _pool(request)
 
-    # If caller provided a user auth token, verify it matches payload.user_id
-    auth_hdr = request.headers.get("authorization") or request.headers.get("Authorization")
-    if auth_hdr and auth_hdr.lower().startswith("bearer "):
-        token = auth_hdr[7:].strip()
-        try:
-            from core.supabase import anon_client
-
-            user_res = anon_client().auth.get_user(token)
-            if user_res and user_res.user and user_res.user.id and str(user_res.user.id) != str(payload.user_id):
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Cannot propose memories for another user.",
-                )
-        except HTTPException:
-            raise
-        except Exception as exc:
-            logger.debug("Caller token inspection skipped/failed: %s", exc)
+    if payload.user_id != owner[0] or payload.map_id not in (None, owner[1]):
+        raise HTTPException(403, "Memory scope does not match the job.")
+    await rate_limiter.check(f"user:{owner[0]}", api="memory_propose", redis=get_redis_pool(request))
 
     try:
         res = await propose_memory(pool, payload)
@@ -144,7 +165,7 @@ async def propose_memory_route(
 )
 async def export_memories(
     request: Request,
-    uid: UUID = Depends(current_user_id),
+    uid: UUID = Depends(memory_owner),
 ) -> dict[str, Any]:
     """Return a JSON bundle of every memory record owned by the authenticated user."""
     return await gdpr_export(_pool(request), user_id=uid)
@@ -161,9 +182,10 @@ async def get_memories(
     request: Request,
     map_id: UUID | None = Query(None, description="Scope to a specific map"),
     is_active: bool | None = Query(None, description="Filter by active state"),
+    include_global: bool = Query(True, description="When map_id is set, also include user global memories"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
-    uid: UUID = Depends(current_user_id),
+    uid: UUID = Depends(memory_owner),
 ) -> dict[str, Any]:
     """List memories for the authenticated user, with optional map-scoping and pagination."""
     pool = _pool(request)
@@ -178,6 +200,7 @@ async def get_memories(
         user_id=uid,
         map_id=map_id,
         is_active=is_active,
+        include_global=include_global,
         limit=limit,
         offset=offset,
     )
@@ -194,7 +217,7 @@ async def get_memories(
 async def get_single_memory(
     memory_id: UUID,
     request: Request,
-    uid: UUID = Depends(current_user_id),
+    uid: UUID = Depends(memory_owner),
 ) -> dict[str, Any]:
     mem = await get_memory(_pool(request), memory_id=memory_id, user_id=uid)
     if mem is None:
@@ -208,10 +231,13 @@ async def patch_single_memory(
     memory_id: UUID,
     payload: MemoryPatchRequest,
     request: Request,
-    uid: UUID = Depends(current_user_id),
+    uid: UUID = Depends(memory_owner),
 ) -> dict[str, Any]:
     """Edit memory content, type, or active state. Ownership enforced by SQL WHERE user_id clause."""
-    updated = await patch_memory(_pool(request), memory_id=memory_id, user_id=uid, payload=payload)
+    try:
+        updated = await patch_memory(_pool(request), memory_id=memory_id, user_id=uid, payload=payload)
+    except UniqueViolationError as exc:
+        raise HTTPException(409, "An active memory with this content already exists.") from exc
     if updated is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Memory '{memory_id}' not found.")
     return updated
@@ -222,7 +248,7 @@ async def patch_single_memory(
 async def delete_single_memory(
     memory_id: UUID,
     request: Request,
-    uid: UUID = Depends(current_user_id),
+    uid: UUID = Depends(memory_owner),
 ) -> dict[str, Any]:
     """Permanently delete a memory record owned by the authenticated user."""
     deleted = await delete_memory(_pool(request), memory_id=memory_id, user_id=uid)

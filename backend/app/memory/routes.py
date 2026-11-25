@@ -8,9 +8,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials
 from memory.schemas import CallbackPayload
 from memory.service import MemoryService
-from pydantic import BaseModel, Field
 from routes.internal import verify_callback_auth
-from services.rate_limiter import check_memory_propose_rate_limit
 
 from db.connection import transaction
 from db.repository import assert_map_owner, update_chat_thread_summary
@@ -77,7 +75,9 @@ async def completion_callback(
 
     # C3: Verify internal callback authentication
     job_id = UUID(payload.job_id)
-    await verify_callback_auth(job_id, request, authorization, creds)
+    job = await verify_callback_auth(job_id, request, authorization, creds)
+    if job["map_id"] != UUID(payload.map_id):
+        raise HTTPException(403, "Callback map does not match the job.")
 
     # C3: Persist summary durably in PostgreSQL chat_threads
     if payload.summary:
@@ -116,32 +116,7 @@ async def get_map_summary(
     }
 
 
-class ProposeMemoryRequest(BaseModel):
-    user_id: UUID | None = None
-    map_id: UUID | None = None
-    memory_type: str = "preference"
-    content: str = Field(..., min_length=1, max_length=4000)
-
-
-@router.post("/propose", dependencies=[Depends(check_memory_propose_rate_limit)])
-async def propose_memory_route(
-    payload: ProposeMemoryRequest,
-    request: Request,
-    current_user=Depends(get_current_user),
-) -> dict[str, Any]:
-    """Propose an agent memory with rate limit protection (S3-BE5 / FR-41)."""
-    pool = getattr(request.app.state, "pool", None)
-    if pool is None:
-        raise HTTPException(status_code=503, detail="Database pool is not available")
-
-    user_id = current_user.id if current_user else (payload.user_id or UUID("00000000-0000-0000-0000-000000000000"))
-    if payload.map_id is not None:
-        is_owner = await assert_map_owner(pool, payload.map_id, user_id)
-        if not is_owner:
-            raise HTTPException(status_code=403, detail="User does not own the specified map.")
-
-    return {
-        "status": "accepted",
-        "user_id": str(user_id),
-        "content": payload.content,
-    }
+@router.post("/propose", deprecated=True)
+async def propose_memory_route(current_user=Depends(get_current_user)) -> None:
+    """Retired endpoint for the legacy client that never persisted proposals."""
+    raise HTTPException(410, "Memory proposals are submitted by authorized workers.")

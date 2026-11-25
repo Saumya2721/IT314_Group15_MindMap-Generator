@@ -39,6 +39,29 @@ class MockRedis:
     def pipeline(self) -> MockRedisPipeline:
         return MockRedisPipeline(self)
 
+    async def eval(self, script: str, numkeys: int, *args) -> list:
+        key = args[0]
+        now = float(args[1])
+        window = float(args[2])
+        limit = int(args[3])
+        member = args[4]
+        cutoff = now - window
+        z = self.zsets.setdefault(key, {})
+        to_del = [m for m, s in z.items() if s <= cutoff]
+        for m in to_del:
+            del z[m]
+        count = len(z)
+        if count >= limit:
+            sorted_items = sorted(z.items(), key=lambda x: x[1])
+            oldest_ts = sorted_items[0][1] if sorted_items else cutoff
+            import math
+
+            retry_after = max(1, math.ceil(window - (now - oldest_ts)))
+            return [0, retry_after]
+        else:
+            z[member] = now
+            return [1, 0]
+
 
 class MockRedisPipeline:
     def __init__(self, redis: MockRedis) -> None:
@@ -197,19 +220,13 @@ async def test_in_memory_fallback_when_redis_none() -> None:
 
 
 @pytest.mark.asyncio
-async def test_in_memory_fallback_on_redis_exception() -> None:
+async def test_redis_exception_fails_closed() -> None:
     broken_redis = MagicMock()
-    pipe = MagicMock()
-    pipe.execute = AsyncMock(side_effect=RuntimeError("Redis connection dropped"))
-    broken_redis.pipeline.return_value = pipe
-
+    broken_redis.eval = AsyncMock(side_effect=RuntimeError("Redis connection dropped"))
     limiter = RedisRateLimiter({"chat": (2, 60)})
-    user_id = uuid4()
-
-    # Does not crash when Redis fails — degrades gracefully to in-memory
-    assert (await limiter.is_allowed(user_id, api="chat", redis=broken_redis))[0] is True
-    assert (await limiter.is_allowed(user_id, api="chat", redis=broken_redis))[0] is True
-    assert (await limiter.is_allowed(user_id, api="chat", redis=broken_redis))[0] is False
+    with pytest.raises(HTTPException) as exc_info:
+        await limiter.is_allowed(uuid4(), api="chat", redis=broken_redis)
+    assert exc_info.value.status_code == 503
 
 
 def test_rate_limiter_sync_in_memory() -> None:
@@ -276,13 +293,28 @@ def test_memory_propose_rate_limit_dependency_enforced() -> None:
 
 
 def test_extract_client_key_variations() -> None:
-    req_bearer = MagicMock()
-    req_bearer.headers = {"authorization": "Bearer secret_token_1234567890"}
-    req_bearer.cookies = {}
-    key1 = extract_client_key(req_bearer)
-    assert len(key1) == 32
+    # 1. Authenticated user in state
+    req_user = MagicMock()
+    req_user.state.user.id = "user-uuid-123"
+    assert extract_client_key(req_user) == "user:user-uuid-123"
 
+    # 2. JWT token with sub claim in bearer header
+    import base64
+
+    header_b64 = base64.urlsafe_b64encode(b'{"alg":"HS256"}').decode("utf-8").rstrip("=")
+    payload_b64 = base64.urlsafe_b64encode(b'{"sub":"jwt-user-456"}').decode("utf-8").rstrip("=")
+    fake_jwt = f"{header_b64}.{payload_b64}.signature"
+
+    req_jwt = MagicMock()
+    req_jwt.state = MagicMock(spec=[])  # no user attr
+    req_jwt.headers = {"authorization": f"Bearer {fake_jwt}"}
+    req_jwt.cookies = {}
+    req_jwt.client.host = "192.168.1.45"
+    assert extract_client_key(req_jwt) == "ip:192.168.1.45"
+
+    # 3. Unauthenticated client with IP
     req_ip = MagicMock()
+    req_ip.state = MagicMock(spec=[])
     req_ip.headers = {}
     req_ip.cookies = {}
     req_ip.client.host = "192.168.1.50"

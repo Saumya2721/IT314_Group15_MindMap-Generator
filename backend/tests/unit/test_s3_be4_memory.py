@@ -18,10 +18,12 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
 import pytest
-from core.supabase import current_user_id
+from auth.dependencies import require_internal_service
+from core.config import settings
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from memories.routes import internal_router as internal_memory_router
+from memories.routes import memory_owner, worker_memory_owner
 from memories.routes import router as memory_router
 from memories.schemas import MemoryPatchRequest, MemoryProposeRequest
 from memories.service import (
@@ -50,6 +52,7 @@ def mock_pool():
     pool.fetchrow = AsyncMock()
     pool.fetch = AsyncMock()
     pool.execute = AsyncMock()
+    pool.acquire.return_value.__aenter__.return_value = pool
     return pool
 
 
@@ -58,7 +61,9 @@ def client(mock_pool):
     app = FastAPI()
     app.state.pool = mock_pool
     # Override current_user_id to simulate authenticated TEST_USER_ID
-    app.dependency_overrides[current_user_id] = lambda: TEST_USER_ID
+    app.dependency_overrides[memory_owner] = lambda: TEST_USER_ID
+    app.dependency_overrides[require_internal_service] = lambda: {"auth": "internal_service"}
+    app.dependency_overrides[worker_memory_owner] = lambda: (TEST_USER_ID, TEST_MAP_ID)
 
     app.include_router(memory_router)
     app.include_router(internal_memory_router)
@@ -422,3 +427,92 @@ def test_http_unauthenticated_rejected(mock_pool):
 
     resp = unauth_client.get("/memory")
     assert resp.status_code == 401
+
+
+def test_http_internal_memory_auth_negative(mock_pool):
+    """Assert internal memory routes reject unauthenticated requests without service key (AUD-01)."""
+    app = FastAPI()
+    app.state.pool = mock_pool
+    app.include_router(internal_memory_router)
+    unauth_client = TestClient(app)
+
+    # 1. Unauthenticated GET /internal/memory
+    resp = unauth_client.get(f"/internal/memory?user_id={TEST_USER_ID}")
+    assert resp.status_code == 401
+
+    # 2. Unauthenticated POST /internal/memory/propose
+    resp = unauth_client.post(
+        "/internal/memory/propose",
+        json={"user_id": str(TEST_USER_ID), "content": "Test content", "memory_type": "fact"},
+    )
+    assert resp.status_code == 401
+
+
+def test_http_internal_memory_requires_job_even_with_service_key(mock_pool, monkeypatch):
+    app = FastAPI()
+    app.state.pool = mock_pool
+    app.include_router(internal_memory_router)
+    monkeypatch.setattr(settings, "INTERNAL_SERVICE_KEY", "test-worker-key")
+    client = TestClient(app)
+    response = client.get(
+        f"/internal/memory?user_id={TEST_USER_ID}&map_id={TEST_MAP_ID}",
+        headers={"X-Internal-Service-Key": "test-worker-key"},
+    )
+    assert response.status_code == 422
+    mock_pool.fetch.assert_not_awaited()
+
+
+def test_http_internal_memory_admin_jwt_rejected(mock_pool):
+    """Assert internal memory routes reject Admin JWTs and require worker service key (NEW-02, S3-DB2)."""
+    app = FastAPI()
+    app.state.pool = mock_pool
+    app.include_router(internal_memory_router)
+    client = TestClient(app)
+
+    # Admin user passes Bearer token instead of X-Internal-Service-Key
+    resp = client.get(
+        f"/internal/memory?user_id={TEST_USER_ID}",
+        headers={"Authorization": "Bearer admin-jwt-token"},
+    )
+    assert resp.status_code == 401
+    assert "Valid internal service key required" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_propose_memory_kind_and_importance_preserved(mock_pool):
+    """Assert propose_memory honors kind='preference' and custom importance (NEW-03, AUD-03)."""
+    new_id = uuid4()
+    # 1. Total count query
+    # 2. Duplicate exact content check (None -> not duplicate)
+    mock_pool.fetchval.side_effect = [5, None]
+    # 3. Embedding candidates check (empty list)
+    mock_pool.fetch.return_value = []
+    # 4. Insert returns new row
+    mock_pool.fetchrow.return_value = {
+        "id": new_id,
+        "user_id": TEST_USER_ID,
+        "map_id": None,
+        "kind": "preference",
+        "content": "User prefers detailed node explanations",
+        "importance": 0.85,
+    }
+
+    req = MemoryProposeRequest(
+        user_id=TEST_USER_ID,
+        kind="preference",
+        content="User prefers detailed node explanations",
+        importance=0.85,
+    )
+
+    res = await propose_memory(mock_pool, req)
+    assert res.stored is True
+    assert res.reason == "created"
+    assert res.id == new_id
+
+    # Verify SQL query received 'preference' and 0.85
+    insert_call = mock_pool.fetchrow.call_args
+    assert insert_call is not None
+    args = insert_call[0]
+    # $3 is kind, $6 is importance
+    assert args[3] == "preference"
+    assert args[6] == 0.85
