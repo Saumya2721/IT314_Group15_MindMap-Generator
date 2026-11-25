@@ -48,14 +48,16 @@ def app(monkeypatch: pytest.MonkeyPatch) -> FastAPI:
         SimpleNamespace(fetchval=AsyncMock(return_value={"enable_two_pass": True, "prompt_template_version": "v2"})),
         raising=False,
     )
-    monkeypatch.setenv("PIPELINE_CONFIG_WORKER_IPS", "127.0.0.1,::1")
+    monkeypatch.setenv("PIPELINE_CONFIG_SERVICE_KEY", "test-config-key")
     return real_app
 
 
 @pytest_asyncio.fixture()
 async def client(app: FastAPI):
     transport = ASGITransport(app=app, client=("127.0.0.1", 50000))
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    async with AsyncClient(
+        transport=transport, base_url="http://test", headers={"X-Internal-Service-Key": "test-config-key"}
+    ) as client:
         yield client
 
 

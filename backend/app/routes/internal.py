@@ -6,6 +6,7 @@ LLM worker (as described in llm/api.md Section 3).
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import os
@@ -13,8 +14,10 @@ import secrets
 from typing import Any
 from uuid import UUID
 
+from auth.dependencies import internal_key_matches
 from contracts.models import GenerationResult, JobType
-from core.supabase import bearer
+from core.config import settings
+from core.supabase import bearer, require_active_profile
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field, model_validator
@@ -89,7 +92,11 @@ async def verify_callback_auth(
         raise HTTPException(status_code=503, detail="Database pool not initialized")
 
     row = await pool.fetchrow(
-        "SELECT id, map_id, job_type, status, callback_token_hash FROM public.generation_jobs WHERE id = $1",
+        """
+        SELECT id, map_id, job_type, status, callback_token_hash,
+               (SELECT user_id FROM public.mind_maps WHERE id = j.map_id) AS owner_id
+        FROM public.generation_jobs j WHERE id = $1
+        """,
         job_id,
     )
     if not row:
@@ -109,6 +116,7 @@ async def verify_callback_auth(
             res = client.auth.get_user(raw_token)
             if res and res.user and res.user.id:
                 owner_uid = UUID(str(res.user.id))
+                await asyncio.to_thread(require_active_profile, str(owner_uid))
                 is_owner = await pool.fetchval(
                     "SELECT 1 FROM public.mind_maps WHERE id = $1 AND user_id = $2",
                     row["map_id"],
@@ -122,7 +130,7 @@ async def verify_callback_auth(
                         detail="You do not have permission to access this mind map's job.",
                     )
         except HTTPException as http_exc:
-            if http_exc.status_code == status.HTTP_403_FORBIDDEN:
+            if http_exc.status_code in (status.HTTP_403_FORBIDDEN, status.HTTP_503_SERVICE_UNAVAILABLE):
                 raise
         except Exception as exc:
             logger.warning("Token verification failed for job %s: %s", job_id, exc)
@@ -160,6 +168,7 @@ async def check_job_status(
     return {
         "id": str(job_id),
         "status": st,
+        "owner_id": job_ctx.get("owner_id"),
         "already_terminal": st in ("completed", "failed", "rejected"),
         "receipt_id": str(job_id) if st in ("completed", "failed", "rejected") else None,
     }
@@ -241,7 +250,7 @@ async def report_complete(
         current_map_version = await lock_map_for_mutation(conn, map_id)
 
         job_row = await conn.fetchrow(
-            "SELECT id, map_id, job_type, target_node_id, status, started_at FROM public.generation_jobs WHERE id = $1 FOR UPDATE",
+            "SELECT id, map_id, job_type, target_node_id, status, started_at, base_map_version FROM public.generation_jobs WHERE id = $1 FOR UPDATE",
             job_id,
         )
         if not job_row:
@@ -306,14 +315,7 @@ async def report_complete(
 
         # P1-8: Persist returned seed assets atomically
         for asset in result.seed_assets:
-            asset_type_str = str(
-                asset.asset_type.value if hasattr(asset.asset_type, "value") else asset.asset_type
-            ).lower()
-            asset_type = (
-                SeedAssetType.PDF
-                if asset_type_str == "pdf"
-                else (SeedAssetType.IMAGE if asset_type_str == "image" else SeedAssetType.TEXT)
-            )
+            asset_type = SeedAssetType(asset.asset_type)
             await insert_seed_asset(
                 conn,
                 generation_job_id=job_id,
@@ -333,7 +335,10 @@ async def report_complete(
                 raise HTTPException(500, "Node regeneration job missing target_node_id")
 
             # Concurrency guard: compare current map version with expected_map_version
-            if result.expected_map_version is not None and current_map_version != result.expected_map_version:
+            expected_version = job_row.get("base_map_version")
+            if expected_version is None:
+                expected_version = result.expected_map_version
+            if expected_version is None or current_map_version != expected_version:
                 logger.warning(
                     "Job %s node regeneration conflict: current map version %s != expected %s; skipping branch replacement.",
                     job_id,
@@ -384,9 +389,21 @@ async def report_complete(
                 source_job_id=job_id,
                 new_nodes=node_records,
                 new_edges=edge_records,
-                expected_map_version=result.expected_map_version,
+                expected_map_version=expected_version,
             )
         elif job_type in ("regenerate_full", "regenerate", JobType.REGENERATE_FULL):
+            if job_row.get("base_map_version") is None or current_map_version != job_row["base_map_version"]:
+                await conn.execute(
+                    """
+                    UPDATE public.generation_jobs
+                       SET status = 'failed', progress_percent = 100,
+                           started_at = COALESCE(started_at, now()), completed_at = now(),
+                           error_message = 'Map changed while regeneration was running. Existing edits were preserved.'
+                     WHERE id = $1
+                    """,
+                    job_id,
+                )
+                return {"status": "conflict_skipped", "receipt_id": str(job_id)}
             await replace_map_graph(
                 conn,
                 map_id=map_id,
@@ -394,6 +411,7 @@ async def report_complete(
                 nodes=node_records,
                 edges=edge_records,
             )
+            await check_and_bump_map_version(conn, map_id)
         else:
             await persist_generated_graph(
                 conn,
@@ -424,14 +442,15 @@ async def report_complete(
             thread_id = await get_or_create_chat_thread(conn, map_id, map_owner)
             action_desc = "Regenerated branch" if str(job_type) == "regenerate_node" else "Generated mind map"
             chat_msg = f"{action_desc} with {len(node_records)} nodes and {len(edge_records)} edges."
-            if result.quality_warnings:
-                chat_msg += f"\n\n*Notice: {'; '.join(result.quality_warnings)}*"
+            other_warnings = [warning for warning in result.quality_warnings if warning not in result.research_warnings]
+            if other_warnings:
+                chat_msg += f"\n\n*Notice: {'; '.join(other_warnings)}*"
             await insert_chat_message(
                 conn,
                 thread_id,
                 "assistant",
                 chat_msg,
-                metadata={"quality_warnings": result.quality_warnings} if result.quality_warnings else None,
+                metadata={"quality_warnings": result.quality_warnings, "research_warnings": result.research_warnings},
             )
 
     logger.info(
@@ -701,24 +720,21 @@ async def get_internal_pipeline_config(request: Request) -> dict[str, Any]:
     Security Invariant: Never exposes API keys, credentials, or provider secrets.
     Only exposes model identifiers, provider selections, hyperparameters, and prompt templates.
     """
-    client = request.client
-    allowed_ips = os.getenv("PIPELINE_CONFIG_WORKER_IPS", "127.0.0.1,::1").split(",")
-    if client is None or client.host not in {ip.strip() for ip in allowed_ips}:
-        raise HTTPException(403, "Pipeline configuration is restricted to the worker network")
-    if any(header in request.headers for header in ("forwarded", "x-forwarded-for")):
-        raise HTTPException(403, "Pipeline configuration requires a direct connection")
+    expected_key = os.getenv("PIPELINE_CONFIG_SERVICE_KEY") or settings.INTERNAL_SERVICE_KEY
+    if not internal_key_matches(expected_key, request.headers.get("X-Internal-Service-Key")):
+        raise HTTPException(403, "Pipeline configuration requires a worker credential")
     overrides = await read_config_overrides(pipeline_pool(request))
     active = effective_config(overrides)
     return {
         "version": "1.0.0",
         "flags": active.model_dump(exclude={"prompt_template_version"}),
         "llm": {
-            "provider": os.environ.get("LLM_PROVIDER", "groq"),
-            "model": os.environ.get("LLM_MODEL", "llama-3.3-70b-versatile"),
+            "provider": active.llm_provider or os.environ.get("LLM_PROVIDER", "groq"),
+            "model": active.llm_model or os.environ.get("LLM_MODEL", "llama-3.3-70b-versatile"),
             "api_base": os.environ.get("LLM_API_BASE") or None,
             "hyperparameters": {
-                "temperature": float(os.environ.get("LLM_TEMPERATURE", "0.2")),
-                "max_output_tokens": int(os.environ.get("LLM_MAX_OUTPUT_TOKENS", "8000")),
+                "temperature": float(active.temperature if active.temperature is not None else os.environ.get("LLM_TEMPERATURE", "0.2")),
+                "max_output_tokens": int(active.max_output_tokens or os.environ.get("LLM_MAX_OUTPUT_TOKENS", "8000")),
                 "request_timeout_s": float(os.environ.get("LLM_TIMEOUT_S", "90.0")),
             },
         },

@@ -52,12 +52,14 @@ async def test_get_config_combines_overrides_with_defaults(client_and_db):
     client, _ = client_and_db
     response = await client.get("/admin/config")
     assert response.status_code == 200
-    assert response.json() == {
-        "enable_two_pass": False,
-        "research_engine": "inline",
-        "image_extractor": "gemini",
-        "prompt_template_version": "v1.0",
-    }
+    assert response.json()["enable_two_pass"] is False
+    assert response.json()["research_engine"] == "inline"
+    assert response.json()["image_extractor"] == "gemini"
+    assert response.json()["prompt_template_version"] == "v1.0"
+    assert "llm_provider" in response.json()
+    assert "llm_model" in response.json()
+    assert "temperature" in response.json()
+    assert "langsmith_tracing" in response.json()
 
 
 @pytest.mark.asyncio

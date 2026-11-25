@@ -17,12 +17,17 @@ surface clean source attribution (consumed by S3-FE3).
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 from urllib.parse import quote
 
 import httpx
 from providers.base import ToolSpec
+from providers.decision_model import DecisionModel
 from tools.base import Tool, ToolError, ToolResult
+from tracing import trace_span
+
+logger = logging.getLogger(__name__)
 
 # The Wikimedia REST API requires a descriptive User-Agent on all requests.
 WIKIPEDIA_USER_AGENT = (
@@ -38,7 +43,7 @@ WIKIPEDIA_ATTRIBUTION_TEMPLATE = (
 )
 
 # MediaWiki Action API fallback endpoint used when the decommissioned
-# /page/mobile-sections REST endpoint cannot be reached.
+# /page/mobile-sections REST endpoint cannot be reached or for full-text search.
 WIKIPEDIA_API_FALLBACK_BASE = "https://en.wikipedia.org/w/api.php"
 
 
@@ -50,10 +55,12 @@ class WikipediaTool(Tool):
         api_base: str = "https://en.wikipedia.org/api/rest_v1",
         timeout_s: float = 10.0,
         max_sections: int = 30,
+        decision_model: DecisionModel | None = None,
     ):
         self._api_base = api_base.rstrip("/")
         self._timeout_s = timeout_s
         self._max_sections = max_sections
+        self._decision_model = decision_model
 
     @property
     def spec(self) -> ToolSpec:
@@ -72,16 +79,54 @@ class WikipediaTool(Tool):
             },
         )
 
+    @trace_span("wikipedia_invoke", run_type="tool")
     async def invoke(self, *, query: str = "", **kwargs: Any) -> list[ToolResult]:
         topic = (query or str(kwargs.get("query", "")) or "").strip()
         if not topic:
             raise ToolError("Wikipedia tool requires a non-empty query/topic.")
-        slug = quote(topic, safe="")
+
+        decision_model = kwargs.get("decision_model") or self._decision_model
+        summary: dict[str, Any] | None = None
+        chosen_slug: str | None = None
+
         try:
             async with httpx.AsyncClient(timeout=self._timeout_s, follow_redirects=True) as client:
-                summary = await self._fetch_summary(client, slug)
+                # 1. Attempt direct summary lookup first for concise or exact topic titles
+                direct_slug = quote(topic, safe="")
                 try:
-                    sections = await self._fetch_sections(client, slug)
+                    direct_summary = await self._fetch_summary(client, direct_slug)
+                    if direct_summary.get("type") != "disambiguation" and (
+                        direct_summary.get("extract") or direct_summary.get("description")
+                    ):
+                        summary = direct_summary
+                        chosen_slug = direct_slug
+                except httpx.HTTPStatusError as exc:
+                    if exc.response.status_code != 404:
+                        raise
+
+                # 2. If direct lookup failed (404 or disambiguation/empty), run full-text search & decision-model ranking
+                if summary is None:
+                    ranked_titles = await self._search_and_rank_articles(client, topic, decision_model=decision_model)
+                    for cand_title in ranked_titles:
+                        cand_slug = quote(cand_title, safe="")
+                        try:
+                            cand_summary = await self._fetch_summary(client, cand_slug)
+                            if cand_summary.get("type") != "disambiguation" and (
+                                cand_summary.get("extract") or cand_summary.get("description")
+                            ):
+                                summary = cand_summary
+                                chosen_slug = cand_slug
+                                break
+                        except httpx.HTTPStatusError:
+                            continue
+
+                # 3. If no articles were found after search and ranking, return empty list gracefully
+                if summary is None or chosen_slug is None:
+                    return []
+
+                # 4. Fetch sections for the chosen article
+                try:
+                    sections = await self._fetch_sections(client, chosen_slug)
                 except httpx.HTTPError:
                     # Section hierarchy is optional enrichment; never let a
                     # section-endpoint outage prevent returning the summary.
@@ -111,7 +156,7 @@ class WikipediaTool(Tool):
         return [result] if result.content.strip() or result.sections else []
 
     # ------------------------------------------------------------------
-    # Wikipedia REST API calls
+    # Wikipedia REST API & Search calls
     # ------------------------------------------------------------------
 
     async def _fetch_summary(self, client: httpx.AsyncClient, slug: str) -> dict[str, Any]:
@@ -121,6 +166,60 @@ class WikipediaTool(Tool):
         if not isinstance(data, dict):
             raise ToolError("Wikipedia summary response was not a JSON object.")
         return data
+
+    async def _search_and_rank_articles(
+        self,
+        client: httpx.AsyncClient,
+        query: str,
+        limit: int = 10,
+        decision_model: DecisionModel | None = None,
+    ) -> list[str]:
+        """Search Wikipedia via MediaWiki Action API, rank candidate titles, and return sorted titles."""
+        params = {
+            "action": "query",
+            "list": "search",
+            "srsearch": query,
+            "srlimit": str(limit),
+            "format": "json",
+            "formatversion": "2",
+            "utf8": "1",
+        }
+        resp = await client.get(WIKIPEDIA_API_FALLBACK_BASE, params=params, headers=self._headers())
+        resp.raise_for_status()
+        data = resp.json()
+        if not isinstance(data, dict):
+            return []
+
+        search_results = (data.get("query") or {}).get("search") or []
+        if not search_results or not isinstance(search_results, list):
+            return []
+
+        candidates: list[str] = []
+        for item in search_results:
+            if isinstance(item, dict):
+                title = str(item.get("title") or "").strip()
+                if title and title not in candidates:
+                    candidates.append(title)
+
+        if not candidates:
+            return []
+
+        dm = decision_model or self._decision_model
+        if dm is not None and len(candidates) > 1:
+            try:
+                # Delegate candidate selection to the decision model (Jev System One -> LLM fallback)
+                result = await dm.classify(
+                    state=f"Research topic query: {query}",
+                    question="Which Wikipedia article title is the most relevant and accurate topic for this query?",
+                    labels=candidates[:10],
+                )
+                chosen = result.label
+                if chosen in candidates:
+                    return [chosen] + [c for c in candidates if c != chosen]
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Decision model article selection failed, using search ranking: %s", exc)
+
+        return candidates
 
     async def _fetch_sections(self, client: httpx.AsyncClient, slug: str) -> list[str]:
         """Return top-level section titles for the article, preserving order."""

@@ -166,3 +166,144 @@ class TestWikipediaToolEdgeCases:
         with patch("httpx.AsyncClient", return_value=client):
             results = await tool.invoke(query="Empty")
         assert results == []
+
+    @pytest.mark.asyncio
+    async def test_descriptive_query_falls_back_to_search_and_ranks_candidates_via_decision_model(self):
+        """When direct summary returns 404, tool queries search API and delegates candidate selection to DecisionModel."""
+        from providers.decision_model import ClassifyResult, DecisionModel
+
+        mock_dm = AsyncMock(spec=DecisionModel)
+        mock_dm.classify = AsyncMock(
+            return_value=ClassifyResult(label="Modulation", confidence=0.92, label_probabilities={"Modulation": 0.92})
+        )
+
+        tool = WikipediaTool(decision_model=mock_dm)
+        client = AsyncMock(spec=httpx.AsyncClient)
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=False)
+
+        search_payload = {
+            "query": {
+                "search": [
+                    {
+                        "title": "Unrelated Topic",
+                        "snippet": "Completely unrelated text without matching keywords.",
+                    },
+                    {
+                        "title": "Modulation",
+                        "snippet": "Modulation is the process of conveying a digital or analog signal.",
+                    },
+                ]
+            }
+        }
+        best_match_summary = {
+            "title": "Modulation",
+            "extract": "Modulation is the process of conveying a message signal.",
+            "content_urls": {"desktop": {"page": "https://en.wikipedia.org/wiki/Modulation"}},
+        }
+        best_match_sections = [{"line": "Types of modulation"}, {"line": "Digital modulation"}]
+
+        # Call sequence:
+        # 1. Direct summary lookup for "Digital Analog Modulation Overview" -> 404
+        # 2. MediaWiki search API call -> search_payload (with 2 candidates)
+        # 3. Decision model selects "Modulation"
+        # 4. Candidate summary lookup for "Modulation" -> best_match_summary (200)
+        # 5. Sections lookup for "Modulation" -> best_match_sections (200)
+        not_found_resp = AsyncMock(spec=httpx.Response)
+        not_found_resp.status_code = 404
+        not_found_resp.raise_for_status.side_effect = httpx.HTTPStatusError("404", request=AsyncMock(), response=not_found_resp)
+
+        client.get = AsyncMock(
+            side_effect=[
+                not_found_resp,
+                _make_response(search_payload),
+                _make_response(best_match_summary),
+                _make_response({"sections": best_match_sections}),
+            ]
+        )
+
+        with patch("httpx.AsyncClient", return_value=client):
+            results = await tool.invoke(query="Digital Analog Modulation Overview")
+
+        assert len(results) == 1
+        assert results[0].source_title == "Modulation"
+        assert "Modulation is the process" in results[0].content
+        assert results[0].sections == ["Types of modulation", "Digital modulation"]
+        # Verify DecisionModel was called with the candidates
+        mock_dm.classify.assert_awaited_once()
+        call_kwargs = mock_dm.classify.await_args.kwargs
+        assert "Digital Analog Modulation" in call_kwargs["state"]
+        assert call_kwargs["labels"] == ["Unrelated Topic", "Modulation"]
+
+    @pytest.mark.asyncio
+    async def test_search_zero_results_returns_empty_gracefully(self):
+        """When direct summary returns 404 and search returns no matches, tool returns empty list cleanly."""
+        tool = WikipediaTool()
+        client = AsyncMock(spec=httpx.AsyncClient)
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=False)
+
+        not_found_resp = AsyncMock(spec=httpx.Response)
+        not_found_resp.status_code = 404
+        not_found_resp.raise_for_status.side_effect = httpx.HTTPStatusError("404", request=AsyncMock(), response=not_found_resp)
+
+        empty_search = {"query": {"search": []}}
+
+        client.get = AsyncMock(
+            side_effect=[
+                not_found_resp,
+                _make_response(empty_search),
+            ]
+        )
+
+        with patch("httpx.AsyncClient", return_value=client):
+            results = await tool.invoke(query="GibberishQueryWithNoArticleMatch12345")
+
+        assert results == []
+
+    @pytest.mark.asyncio
+    async def test_decision_model_failure_gracefully_falls_back_to_search_rank(self):
+        """When the decision model fails or raises, tool falls back to native search rank order."""
+        from providers.decision_model import DecisionModel
+
+        mock_dm = AsyncMock(spec=DecisionModel)
+        mock_dm.classify.side_effect = RuntimeError("Decision model network timeout")
+
+        tool = WikipediaTool(decision_model=mock_dm)
+        client = AsyncMock(spec=httpx.AsyncClient)
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=False)
+
+        search_payload = {
+            "query": {
+                "search": [
+                    {
+                        "title": "First Candidate",
+                        "snippet": "First candidate snippet.",
+                    },
+                ]
+            }
+        }
+        first_summary = {
+            "title": "First Candidate",
+            "extract": "First candidate extract.",
+            "content_urls": {"desktop": {"page": "https://en.wikipedia.org/wiki/First_Candidate"}},
+        }
+        not_found_resp = AsyncMock(spec=httpx.Response)
+        not_found_resp.status_code = 404
+        not_found_resp.raise_for_status.side_effect = httpx.HTTPStatusError("404", request=AsyncMock(), response=not_found_resp)
+
+        client.get = AsyncMock(
+            side_effect=[
+                not_found_resp,
+                _make_response(search_payload),
+                _make_response(first_summary),
+                _make_response({"sections": []}),
+            ]
+        )
+
+        with patch("httpx.AsyncClient", return_value=client):
+            results = await tool.invoke(query="Any Query")
+
+        assert len(results) == 1
+        assert results[0].source_title == "First Candidate"

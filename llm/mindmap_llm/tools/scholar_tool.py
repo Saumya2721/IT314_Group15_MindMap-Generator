@@ -11,6 +11,7 @@ from urllib.parse import quote
 import httpx
 from providers.base import ToolSpec
 from tools.base import Tool, ToolError, ToolResult
+from tracing import trace_span
 
 
 class ScholarTool(Tool):
@@ -41,6 +42,7 @@ class ScholarTool(Tool):
             },
         )
 
+    @trace_span("scholar_invoke", run_type="tool")
     async def invoke(self, *, query: str = "", **kwargs: Any) -> list[ToolResult]:
         query_val = query.strip()
         if not query_val:
