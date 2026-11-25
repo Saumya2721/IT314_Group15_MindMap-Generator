@@ -1,13 +1,9 @@
 """Comprehensive unit tests for the deterministic Top-to-Bottom tree layout algorithm."""
 
-from uuid import uuid4
-
-import pytest
 from services.generator import (
     _CARD_WIDTH,
-    _ROW_HEIGHT,
     _ROOT_Y,
-    _SIBLING_GAP_X,
+    _ROW_HEIGHT,
     compute_incremental_layout,
     compute_layout,
 )
@@ -71,7 +67,7 @@ def test_deep_unbalanced_six_level_tree():
     """A deep 6-level chain should advance level by level downwards."""
     nodes = [{"id": f"n{i}", "label": f"Level {i}", "pos_x": 0.0, "pos_y": 0.0} for i in range(6)]
     nodes[0]["node_type"] = "root"
-    edges = [{"source": f"n{i}", "target": f"n{i+1}"} for i in range(5)]
+    edges = [{"source": f"n{i}", "target": f"n{i + 1}"} for i in range(5)]
 
     compute_layout(nodes, edges)
 

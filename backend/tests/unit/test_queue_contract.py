@@ -118,6 +118,7 @@ async def test_create_generation_job_string_and_enum():
     # 3. Defensive check: non-regenerate_node job clears target_node_id to satisfy chk_target_node_matches_job_type
     dummy_node = uuid.uuid4()
     captured_args = []
+
     async def mock_fetchrow_capture(query, *args):
         captured_args.extend(args)
         return {
@@ -134,6 +135,7 @@ async def test_create_generation_job_string_and_enum():
             "target_node_id": args[3],
             "callback_token_hash": "hash3",
         }
+
     mock_conn.fetchrow = AsyncMock(side_effect=mock_fetchrow_capture)
     job_chat = await create_generation_job(
         mock_conn,

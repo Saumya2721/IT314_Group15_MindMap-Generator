@@ -733,7 +733,9 @@ async def get_internal_pipeline_config(request: Request) -> dict[str, Any]:
             "model": active.llm_model or os.environ.get("LLM_MODEL", "llama-3.3-70b-versatile"),
             "api_base": os.environ.get("LLM_API_BASE") or None,
             "hyperparameters": {
-                "temperature": float(active.temperature if active.temperature is not None else os.environ.get("LLM_TEMPERATURE", "0.2")),
+                "temperature": float(
+                    active.temperature if active.temperature is not None else os.environ.get("LLM_TEMPERATURE", "0.2")
+                ),
                 "max_output_tokens": int(active.max_output_tokens or os.environ.get("LLM_MAX_OUTPUT_TOKENS", "8000")),
                 "request_timeout_s": float(os.environ.get("LLM_TIMEOUT_S", "90.0")),
             },

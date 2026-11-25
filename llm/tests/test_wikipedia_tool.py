@@ -211,7 +211,9 @@ class TestWikipediaToolEdgeCases:
         # 5. Sections lookup for "Modulation" -> best_match_sections (200)
         not_found_resp = AsyncMock(spec=httpx.Response)
         not_found_resp.status_code = 404
-        not_found_resp.raise_for_status.side_effect = httpx.HTTPStatusError("404", request=AsyncMock(), response=not_found_resp)
+        not_found_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "404", request=AsyncMock(), response=not_found_resp
+        )
 
         client.get = AsyncMock(
             side_effect=[
@@ -245,7 +247,9 @@ class TestWikipediaToolEdgeCases:
 
         not_found_resp = AsyncMock(spec=httpx.Response)
         not_found_resp.status_code = 404
-        not_found_resp.raise_for_status.side_effect = httpx.HTTPStatusError("404", request=AsyncMock(), response=not_found_resp)
+        not_found_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "404", request=AsyncMock(), response=not_found_resp
+        )
 
         empty_search = {"query": {"search": []}}
 
@@ -291,7 +295,9 @@ class TestWikipediaToolEdgeCases:
         }
         not_found_resp = AsyncMock(spec=httpx.Response)
         not_found_resp.status_code = 404
-        not_found_resp.raise_for_status.side_effect = httpx.HTTPStatusError("404", request=AsyncMock(), response=not_found_resp)
+        not_found_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "404", request=AsyncMock(), response=not_found_resp
+        )
 
         client.get = AsyncMock(
             side_effect=[
