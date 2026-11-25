@@ -18,6 +18,7 @@ from memory.schemas import ProposedMemory, UserMemory
 from memory.scoring import deduplicate_and_filter_proposals, is_transient_or_noise
 from orchestration.prompts import JSONExtractionError, extract_json_object
 from providers.base import LLMProvider, Message
+from tracing import trace_span
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,7 @@ def build_memory_extraction_system_prompt() -> str:
         '  "memories": [\n'
         "    {\n"
         '      "content": "concise description of the preference or fact",\n'
+        '      "kind": "preference | decision | fact",\n'
         '      "memory_type": "preference | decision | fact | convention",\n'
         '      "importance_score": 0.5 to 1.0,\n'
         '      "is_durable": true\n'
@@ -81,6 +83,7 @@ def build_memory_extraction_user_prompt(
     return "\n".join(lines)
 
 
+@trace_span("extract_memories_from_interaction", run_type="chain")
 async def extract_memories_from_interaction(
     llm: LLMProvider,
     user_inputs: list[str],
@@ -171,11 +174,13 @@ async def extract_and_propose_memories_async(
                 user_id=user_id,
                 content=p.content,
                 memory_type=p.memory_type,
-                map_id=map_id,
+                kind=p.kind,
+                importance=p.importance_score,
+                map_id=map_id if p.kind == "decision" else None,
             )
             if res.stored:
                 stored_count += 1
-                logger.info("Durable memory stored for user %s: '%s'", user_id, p.content[:60])
+                logger.info("Durable memory stored for user %s", user_id)
 
         return stored_count
     except Exception as exc:
@@ -195,12 +200,13 @@ def schedule_memory_extraction(
     user_inputs: list[str],
     interaction_summary: str = "",
     existing_memories: Sequence[str | UserMemory] | None = None,
+    job_id: UUID | str | None = None,
 ) -> asyncio.Task | None:
     """Convenience helper to schedule memory extraction as a fire-and-forget background task."""
     if not user_id or not base_url:
         return None
 
-    client = MemoryClient(base_url=base_url, token=token)
+    client = MemoryClient(base_url=base_url, token=token, job_id=UUID(str(job_id)) if job_id else None)
     task = asyncio.create_task(
         extract_and_propose_memories_async(
             llm=llm,

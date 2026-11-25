@@ -60,7 +60,7 @@ async def execute_tool_query(
     Returns (sources, is_cache_hit, error_message).
     """
     # 1. Check cache first
-    cached = await cache.get(tool_name, query)
+    cached = await cache.get(tool_name, query, user_id=str(user_id) if user_id else None)
     if cached is not None:
         return cached, True, None
 
@@ -85,13 +85,15 @@ async def execute_tool_query(
                 doi=r.doi,
                 authors=r.metadata.get("authors", []),
                 published_date=str(r.metadata.get("year")) if r.metadata.get("year") else None,
-                metadata=r.metadata | ({"attribution": r.attribution} if r.attribution else {}),
+                metadata=r.metadata
+                | ({"attribution": r.attribution} if r.attribution else {})
+                | ({"sections": r.sections} if r.sections else {}),
             )
             sources.append(src)
 
         # 4. Cache successful non-empty results (TTL 3600 seconds)
         if sources:
-            await cache.set(tool_name, query, sources)
+            await cache.set(tool_name, query, sources, user_id=str(user_id) if user_id else None)
 
         return sources, False, None
 

@@ -105,6 +105,16 @@ def _make_proposed(
 # ---------------------------------------------------------------------------
 
 
+def test_proposal_normalizes_legacy_kind_and_keeps_importance():
+    proposal = ProposedMemory(
+        content="Prefer worked examples for proofs",
+        memory_type="preference",
+        importance_score=0.72,
+    )
+    assert proposal.kind == "preference"
+    assert proposal.importance_score == 0.72
+
+
 def test_normalize_memory_text():
     assert normalize_memory_text("  Hello World  ") == "hello world"
     assert normalize_memory_text("User  prefers  concise  output") == "user prefers concise output"

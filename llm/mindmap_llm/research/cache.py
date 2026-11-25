@@ -23,13 +23,26 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_CACHE_TTL_S = 3600  # 1 hour
 
+# Public research tools share deterministic global cache keys (NEW-09, AUD-08).
+PUBLIC_CACHEABLE_TOOLS: frozenset[str] = frozenset({"wikipedia", "scholar", "arxiv", "arxiv_search", "web_search"})
 
-def make_cache_key(tool_name: str, query: str) -> str:
-    """Generate deterministic, collision-resistant Redis cache key for a tool and query."""
+
+def make_cache_key(tool_name: str, query: str, user_id: str | None = None) -> str | None:
+    """Generate deterministic, collision-resistant Redis cache key for a tool and query.
+
+    Public tools (wikipedia, scholar, arxiv, web_search) share global cache keys.
+    Private or non-whitelisted tools (such as web_page_reader) scope cache keys per user
+    to prevent cross-user data leakage (NEW-09, AUD-08).
+    """
     norm_tool = tool_name.strip().lower()
-    norm_query = " ".join(query.strip().lower().split())
+    if norm_tool not in PUBLIC_CACHEABLE_TOOLS and not user_id:
+        return None
+    norm_query = " ".join(query.strip().lower().split()) if norm_tool in PUBLIC_CACHEABLE_TOOLS else query.strip()
     digest = hashlib.sha256(norm_query.encode("utf-8")).hexdigest()
-    return f"research_cache:{norm_tool}:{digest}"
+    if norm_tool in PUBLIC_CACHEABLE_TOOLS:
+        return f"research_cache:{norm_tool}:{digest}"
+    uid = str(user_id).strip()
+    return f"research_cache:user:{uid}:{norm_tool}:{digest}"
 
 
 class ResearchCache:
@@ -44,12 +57,14 @@ class ResearchCache:
         """Update active Redis client."""
         self._redis = redis_client
 
-    async def get(self, tool_name: str, query: str) -> list[ResearchSource] | None:
+    async def get(self, tool_name: str, query: str, user_id: str | None = None) -> list[ResearchSource] | None:
         """Retrieve cached research sources for a tool query.
 
         Returns None on cache miss, expired entry, or Redis communication failure.
         """
-        key = make_cache_key(tool_name, query)
+        key = make_cache_key(tool_name, query, user_id=user_id)
+        if key is None:
+            return None
 
         # 1. Try Redis
         if self._redis is not None:
@@ -87,6 +102,7 @@ class ResearchCache:
         query: str,
         sources: list[ResearchSource],
         ttl_s: int | None = None,
+        user_id: str | None = None,
     ) -> bool:
         """Store research sources in cache with specified TTL (defaults to 3600 seconds).
 
@@ -96,7 +112,9 @@ class ResearchCache:
             # Do not cache empty or failed queries to avoid corrupting future rounds
             return False
 
-        key = make_cache_key(tool_name, query)
+        key = make_cache_key(tool_name, query, user_id=user_id)
+        if key is None:
+            return False
         effective_ttl = ttl_s if ttl_s is not None else self._ttl_s
 
         try:

@@ -382,12 +382,12 @@ async def test_redis_cache_miss_executes_search_and_sets_3600_ttl():
     cache = ResearchCache(redis_client=mock_redis, ttl_s=3600)
 
     live_res = [ToolResult(content="Fresh", source_title="Fresh", source_url="https://fresh.org")]
-    tool = MockTool("tavily", results=live_res)
+    tool = MockTool("web_search", results=live_res)
     budget = ResearchTimeBudget(10.0)
 
     sources, is_hit, err = await execute_tool_query(
         tool=tool,
-        tool_name="tavily",
+        tool_name="web_search",
         query="deep learning optimization",
         cache=cache,
         budget=budget,
@@ -399,7 +399,7 @@ async def test_redis_cache_miss_executes_search_and_sets_3600_ttl():
     assert len(tool.invocations) == 1
 
     # Verify TTL was set to exactly 3600 seconds
-    key = make_cache_key("tavily", "deep learning optimization")
+    key = make_cache_key("web_search", "deep learning optimization")
     assert key in mock_redis.store
     assert mock_redis.ttls[key] == 3600
 

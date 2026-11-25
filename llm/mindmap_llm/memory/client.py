@@ -33,15 +33,25 @@ class MemoryClient:
         base_url: str,
         token: str,
         timeout_s: float = _DEFAULT_TIMEOUT,
+        internal_service_key: str | None = None,
+        job_id: UUID | None = None,
     ) -> None:
         self.base_url = (base_url or "").rstrip("/")
         self.token = token
+        import os
+
+        key = internal_service_key or os.environ.get("INTERNAL_SERVICE_KEY", "")
+        headers = {
+            "Content-Type": "application/json",
+            "X-Internal-Service-Key": key,
+        }
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        if job_id:
+            headers["X-Internal-Job-ID"] = str(job_id)
         self._client = httpx.AsyncClient(
             base_url=self.base_url,
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json",
-            },
+            headers=headers,
             timeout=timeout_s,
         )
 
@@ -78,9 +88,14 @@ class MemoryClient:
                 memories: list[UserMemory] = []
                 for item in items:
                     try:
+                        if "importance" in item and "importance_score" not in item:
+                            item["importance_score"] = item["importance"]
+                        if "memory_type" in item and "kind" not in item:
+                            raw_k = item["memory_type"]
+                            item["kind"] = raw_k if raw_k in ("preference", "decision", "fact") else "fact"
                         memories.append(UserMemory.model_validate(item))
                     except Exception as parse_err:
-                        logger.debug("Skipping unparseable memory item %s: %s", item, parse_err)
+                        logger.debug("Skipping unparseable memory item: %s", type(parse_err).__name__)
                 return memories
 
             logger.warning(
@@ -103,6 +118,8 @@ class MemoryClient:
         content: str,
         memory_type: str = "preference",
         map_id: UUID | str | None = None,
+        kind: str | None = None,
+        importance: float = 1.0,
     ) -> MemoryProposalResponse:
         """Submit a single memory proposal to POST /internal/memory/propose.
 
@@ -111,10 +128,13 @@ class MemoryClient:
         if not self.base_url:
             return MemoryProposalResponse(stored=False, reason="no_backend_url")
 
+        clean_kind = kind or (memory_type if memory_type in ("preference", "decision", "fact") else "fact")
         payload: dict[str, Any] = {
             "user_id": str(user_id),
             "content": content,
+            "kind": clean_kind,
             "memory_type": memory_type,
+            "importance": float(importance),
         }
         if map_id:
             payload["map_id"] = str(map_id)

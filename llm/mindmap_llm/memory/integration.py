@@ -39,6 +39,7 @@ async def retrieve_and_inject_memories(
     map_id: UUID | str | None,
     callback_base_url: str,
     callback_token: str,
+    job_id: UUID | None = None,
     llm_provider: str,
     llm_model: str,
     top_k: int = _DEFAULT_TOP_K,
@@ -55,7 +56,7 @@ async def retrieve_and_inject_memories(
     if not user_id or not callback_base_url:
         return system_prompt, []
 
-    client = MemoryClient(base_url=callback_base_url, token=callback_token)
+    client = MemoryClient(base_url=callback_base_url, token=callback_token, job_id=job_id)
     try:
         all_memories = await client.retrieve_user_memories(
             user_id=user_id,
@@ -73,7 +74,7 @@ async def retrieve_and_inject_memories(
 
     top_memories = select_top_k_relevant_memories(all_memories, query=query, top_k=top_k)
     if not top_memories:
-        return system_prompt, all_memories
+        return system_prompt, []
 
     enhanced = inject_memories_into_system_prompt(
         system_prompt,
@@ -87,7 +88,7 @@ async def retrieve_and_inject_memories(
         len(all_memories),
         user_id,
     )
-    return enhanced, all_memories
+    return enhanced, top_memories
 
 
 def fire_and_forget_memory_extraction(
@@ -95,6 +96,7 @@ def fire_and_forget_memory_extraction(
     llm: LLMProvider,
     callback_base_url: str,
     callback_token: str,
+    job_id: UUID | None = None,
     user_id: UUID | str | None,
     map_id: UUID | str | None,
     user_inputs: list[str],
@@ -109,7 +111,7 @@ def fire_and_forget_memory_extraction(
     if not user_id or not callback_base_url:
         return None
 
-    client = MemoryClient(base_url=callback_base_url, token=callback_token)
+    client = MemoryClient(base_url=callback_base_url, token=callback_token, job_id=job_id)
 
     async def _run() -> None:
         try:

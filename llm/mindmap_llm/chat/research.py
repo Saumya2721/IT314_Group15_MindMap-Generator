@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import time
 from collections.abc import Sequence
@@ -32,9 +33,8 @@ from research.subgraph import run_research_subgraph
 
 logger = logging.getLogger(__name__)
 
-# Strict conversational latency allocation for research execution.
-# Total chat turn must be <= 5.0s, so research gets at most 2.5s.
-DEFAULT_CHAT_RESEARCH_TIMEOUT_S = 2.5
+# Conversational latency allocation for research execution: configurable via environment (default: 8.0s)
+DEFAULT_CHAT_RESEARCH_TIMEOUT_S = float(os.getenv("CHAT_RESEARCH_TIMEOUT_S", "8.0"))
 
 # Patterns that indicate a need for fresh or external information
 _RESEARCH_KEYWORDS_RE = re.compile(

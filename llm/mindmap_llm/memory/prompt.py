@@ -54,7 +54,7 @@ def select_top_k_relevant_memories(
         content_tokens = set(re.findall(r"\w+", m.content.lower()))
         overlap = len(query_tokens & content_tokens)
         # Higher score for token overlap, plus memory's base importance score
-        return (overlap * 2.0) + (m.importance_score or 0.5)
+        return (overlap * 2.0) + m.importance_score
 
     ranked = sorted(active_memories, key=score_memory, reverse=True)
     return ranked[:top_k]
@@ -76,7 +76,7 @@ def get_memory_token_ceiling(provider: str, model: str) -> int:
     """Calculate the maximum token budget for memory injection (strict 10% of context window)."""
     limits = provider_limits(provider, model)
     # Never exceed 10% of model's full context window
-    return max(128, limits.context_window // 10)
+    return limits.context_window // 10
 
 
 def inject_memories_into_system_prompt(
