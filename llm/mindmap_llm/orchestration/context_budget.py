@@ -11,6 +11,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from chat.token_budget import estimate_tokens
+from orchestration.context_discovery import get_model_context_window
 from rag.retrieval import RetrievedChunk
 
 
@@ -22,20 +23,22 @@ class ProviderLimits:
 
 
 def provider_limits(provider: str, model: str) -> ProviderLimits:
-    """Conservative ceilings; do not treat a model's full window as input capacity."""
+    """Conservative ceilings derived dynamically from the verified model context window (AUD-09, S3-L7)."""
     name = f"{provider}:{model}".lower()
-    if "gemini" in name:
-        if "flash" in name:
-            return ProviderLimits(128_000, 32_000, 8_192)
-        return ProviderLimits(32_000, 24_000, 4_096)
+    ctx_window = get_model_context_window(model, provider)
+
     if "qwen" in name and "groq" in name:
         # Groq Qwen free-tier rejects >=1000 requested output tokens (OTPM).
-        return ProviderLimits(8_192, 6_000, 900)
-    if "groq" in name:
-        return ProviderLimits(8_192, 6_000, 2_048)
+        return ProviderLimits(ctx_window, min(6_000, ctx_window - 1000), 900)
     if "qwen" in name:
-        return ProviderLimits(8_192, 6_000, 900)
-    return ProviderLimits(8_192, 6_000, 2_048)
+        return ProviderLimits(ctx_window, min(6_000, ctx_window - 1000), 900)
+    if "groq" in name:
+        return ProviderLimits(ctx_window, min(6_000, ctx_window - 2100), 2_048)
+
+    # For modern large-context models (e.g. Gemini 3.8/3.6 Flash, Llama 3.3 70b):
+    output_ceiling = 8_192 if ctx_window >= 32_000 else 2_048
+    input_ceiling = min(int(ctx_window * 0.75), 128_000)
+    return ProviderLimits(ctx_window, input_ceiling, output_ceiling)
 
 
 @dataclass

@@ -27,8 +27,8 @@ def render(ctx):
 def test_provider_ceilings_and_qwen_otpm():
     assert provider_limits("groq", "llama-3.3-70b-versatile").input_ceiling == 6000
     assert provider_limits("groq", "qwen-2.5").output_ceiling == 900
-    assert provider_limits("gemini", "gemini-2.5-flash").input_ceiling == 32000
-    assert provider_limits("gemini", "gemini-2.5-flash").context_window == 128000
+    assert provider_limits("gemini", "gemini-3.8-flash").input_ceiling == 128000
+    assert provider_limits("gemini", "gemini-3.8-flash").context_window == 1048576
     assert ContextBudgetManager("groq", "qwen-2.5", 8000).max_output_tokens == 900
 
 

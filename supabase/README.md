@@ -14,7 +14,13 @@ supabase/
 │   ├── 20260930000100_storage_seed_assets.sql         private "seed-assets" bucket
 │   ├── 20261014000000_upgrade_profiles_rls.sql        users -> profiles, narrow RLS + column grants
 │   ├── 20261014000100_align_backend_db_contract.sql   callback_token_hash, pinecone_vector_id
-│   └── 20261015000000_sync_with_backend_contract.sql  NEW: final alignment with the backend (see below)
+│   ├── 20261015000000_sync_with_backend_contract.sql  alignment with the backend contract
+│   ├── 20261120000000_s3_db1_admin_schema.sql         Sprint 3: profiles.role ('user'|'admin'), admin_audit_log
+│   ├── 20261120000100_s3_db2_agent_memories.sql       Sprint 3: agent_memories table, RLS, cascade delete
+│   ├── 20261121000000_s3_db3_admin_analytics_views.sql Sprint 3: aggregate-only admin views (no content access)
+│   ├── 20261122000000_s3_db3_seed_asset_types.sql     Sprint 3: widen asset_type to include docx, pptx, url
+│   ├── 20261122000100_s3_be8_pipeline_config.sql      Sprint 3: pipeline_runtime_config table
+│   └── 20261123000000_runtime_contract_repairs.sql    Sprint 3: runtime contract repairs & OCC version checks
 ├── manual/
 │   └── drop_legacy_pgvector_column.sql   OPTIONAL, DESTRUCTIVE, never run by the CLI
 ├── tests/database/      pgTAP tests, run with `supabase test db`
@@ -29,13 +35,22 @@ supabase/
 ```
 auth.users (Supabase Auth: email/password, Google, JWTs, sessions)
    │ same UUID, ON DELETE CASCADE (trigger on_auth_user_created creates the row)
-public.profiles (id, name)
+public.profiles (id, name, role ['user'|'admin'], suspended_at)
    │
 public.mind_maps.user_id   <- the only place ownership is stored
    ├── chat_threads (1 per map) ── chat_messages
    ├── generation_jobs ── seed_assets      (files live in Storage: seed-assets/<user_id>/<map_id>/<job_id>/<n>_<file>)
    ├── nodes ── edges                      (parent/child = directed edge source -> target; root = node with no incoming edge)
    └── embeddings                          (chunk text + Pinecone vector id; vectors live in Pinecone)
+
+public.agent_memories (id, user_id, map_id, kind, content, importance, last_accessed_at, disabled_at)
+   └── owned by user_id; RLS restricts access to owner; admin has zero SELECT access.
+
+public.admin_audit_log (id, actor_id, target_user_id, action, metadata, created_at)
+   └── immutable audit log tracking all administrative mutations.
+
+public.pipeline_runtime_config (key, value, updated_at, updated_by)
+   └── dynamic runtime pipeline settings (ENABLE_TWO_PASS, RESEARCH_ENGINE, IMAGE_EXTRACTOR, MODEL).
 ```
 
 Triggers enforce what foreign keys cannot: every node, edge, job and embedding
@@ -103,6 +118,9 @@ supabase test db        # runs tests/database/*.sql with pgTAP
 * `01_schema_integrity`: every column the backend uses, types, indexes, bucket config, integrity triggers, lifecycle CHECKs, cascades.
 * `02_row_level_security`: owner, other user and anonymous access, column privileges, Storage folder isolation.
 * `03_backend_contract`: the backend's SQL copied verbatim and `PREPARE`d with untyped parameters, as asyncpg does. It runs a full generate -> regenerate -> failures -> delete flow.
+* `10_agent_memories`: RLS isolation, user-only access, cascade deletions, and admin zero-SELECT policy on memories.
+* `11_admin_audit_log`: verification of role permissions, admin audit log inserts, and aggregate analytics views.
+* `13_runtime_contract_repairs`: runtime repairs, asset types (docx/pptx/url), and memory timestamps.
 
 ## Environment variables (set in `backend/.env`, never committed)
 

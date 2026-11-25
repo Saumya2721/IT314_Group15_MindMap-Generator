@@ -10,7 +10,9 @@ ALTER TABLE public.agent_memories
     ADD COLUMN last_accessed_at timestamptz NOT NULL DEFAULT now(),
     ADD COLUMN disabled_at timestamptz,
     ADD CONSTRAINT chk_agent_memories_kind
-        CHECK (kind IN ('preference', 'decision', 'fact'));
+        CHECK (kind IN ('preference', 'decision', 'fact')),
+    ADD CONSTRAINT chk_agent_memories_importance
+        CHECK (importance >= 0.0 AND importance <= 1.0);
 
 -- A direct auth.users FK is needed by S3-DB2; the existing profiles FK is
 -- retained for backward compatibility with the original Sprint 2 schema.
