@@ -12,6 +12,9 @@ export function AdminDashboardContent() {
   const [auditLogs, setAuditLogs] = useState([])
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState('users') // 'users' | 'audit'
+  const [actionError, setActionError] = useState(null)
+  const [loadError, setLoadError] = useState('')
+  const [userOffset, setUserOffset] = useState(0)
 
   // Modal State for user action confirmations
   const [confirmModal, setConfirmModal] = useState({
@@ -22,21 +25,22 @@ export function AdminDashboardContent() {
 
   const loadData = useCallback(async () => {
     setLoading(true)
-    try {
-      const [usersData, analyticsData, logsData] = await Promise.all([
-        adminService.getUsers(),
-        adminService.getAnalytics(),
-        adminService.getAuditLogs(),
-      ])
-      setUsers(Array.isArray(usersData) ? usersData : [])
-      setAnalytics(analyticsData)
-      setAuditLogs(Array.isArray(logsData) ? logsData : [])
-    } catch (err) {
-      console.error('Failed to load admin dashboard data:', err)
-    } finally {
-      setLoading(false)
-    }
-  }, [])
+    const [directory, stats, logs] = await Promise.allSettled([
+      adminService.getUsers(20, userOffset),
+      adminService.getAnalytics(),
+      adminService.getAuditLogs(),
+    ])
+    setUsers(directory.status === 'fulfilled' ? directory.value : [])
+    setAnalytics(stats.status === 'fulfilled' ? stats.value : null)
+    setAuditLogs(logs.status === 'fulfilled' ? logs.value : [])
+    setLoadError(
+      [directory, stats, logs]
+        .filter((result) => result.status === 'rejected')
+        .map((result) => result.reason.message)
+        .join(' '),
+    )
+    setLoading(false)
+  }, [userOffset])
 
   useEffect(() => {
     loadData()
@@ -57,56 +61,23 @@ export function AdminDashboardContent() {
   const handleConfirmAction = async () => {
     const { user, type } = confirmModal
     if (!user || !type) return
+    setActionError(null)
 
     try {
-      if (type === 'suspend') {
-        await adminService.setUserStatus(user.id, 'suspended')
-        setUsers((prev) => prev.map((u) => (u.id === user.id ? { ...u, status: 'suspended' } : u)))
-        const newLog = {
-          id: `log-${Date.now()}`,
-          action: 'USER_SUSPENDED',
-          target_user_id: user.id,
-          admin_id: 'CURRENT_ADMIN',
-          timestamp: new Date().toISOString(),
-          details: `Suspended account for user ${user.email}`,
-        }
-        setAuditLogs((prev) => [newLog, ...prev])
-      } else if (type === 'unsuspend') {
-        await adminService.setUserStatus(user.id, 'active')
-        setUsers((prev) => prev.map((u) => (u.id === user.id ? { ...u, status: 'active' } : u)))
-        const newLog = {
-          id: `log-${Date.now()}`,
-          action: 'USER_UNSUSPENDED',
-          target_user_id: user.id,
-          admin_id: 'CURRENT_ADMIN',
-          timestamp: new Date().toISOString(),
-          details: `Restored active status for user ${user.email}`,
-        }
-        setAuditLogs((prev) => [newLog, ...prev])
-      } else if (type === 'delete') {
+      if (type === 'delete') {
         await adminService.deleteUser(user.id)
-        setUsers((prev) => prev.filter((u) => u.id !== user.id))
-        const newLog = {
-          id: `log-${Date.now()}`,
-          action: 'USER_DELETED',
-          target_user_id: user.id,
-          admin_id: 'CURRENT_ADMIN',
-          timestamp: new Date().toISOString(),
-          details: `Permanently deleted account ${user.email}`,
-        }
-        setAuditLogs((prev) => [newLog, ...prev])
+      } else {
+        await adminService.setUserStatus(user.id, type === 'suspend' ? 'suspended' : 'active')
       }
+      await loadData()
     } catch (err) {
       console.error('Admin action execution failed:', err)
+      setActionError(err?.message || 'Admin action execution failed.')
+      if (type === 'delete') await loadData()
     } finally {
       handleCloseConfirm()
     }
   }
-
-  // Calculate highest map count for simple SVG sparkline scaling
-  const maxMapCount = analytics?.maps_created_per_day
-    ? Math.max(...analytics.maps_created_per_day.map((d) => d.count), 1)
-    : 1
 
   return (
     <div className="admin-layout">
@@ -126,8 +97,9 @@ export function AdminDashboardContent() {
               className="admin-badge"
               style={{
                 textDecoration: 'none',
-                backgroundColor: 'var(--surface-dim, #e8f5e9)',
-                color: 'var(--accent-sage, #2d5a47)',
+                backgroundColor: 'rgba(45, 90, 71, 0.2)',
+                color: 'var(--accent-sage, #899b72)',
+                border: '1px solid rgba(137, 155, 114, 0.3)',
                 fontWeight: 600,
                 display: 'inline-flex',
                 alignItems: 'center',
@@ -141,6 +113,22 @@ export function AdminDashboardContent() {
               Pipeline Runtime Settings
             </Link>
           </div>
+
+          <div className="admin-subnav-tabs">
+            <Link to="/admin" className="admin-subnav-tab active">
+              <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>
+                dashboard
+              </span>
+              Overview &amp; Analytics
+            </Link>
+            <Link to="/admin/config" className="admin-subnav-tab">
+              <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>
+                tune
+              </span>
+              Pipeline Runtime Settings
+            </Link>
+          </div>
+
           <h1 className="admin-title">Management &amp; Analytics</h1>
           <p className="admin-subtitle">
             System health metrics, user governance, and action audit logs. Strict zero-access
@@ -148,38 +136,51 @@ export function AdminDashboardContent() {
           </p>
         </div>
 
+        {(actionError || loadError) && (
+          <div
+            className="admin-error-banner"
+            role="alert"
+            style={{
+              margin: '0 0 24px 0',
+              padding: '14px 18px',
+              backgroundColor: '#fee2e2',
+              border: '1px solid #ef4444',
+              borderRadius: '8px',
+              color: '#b91c1c',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+              fontSize: '14px',
+            }}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: '20px' }}>
+              error
+            </span>
+            <span>{actionError || loadError}</span>
+          </div>
+        )}
+
         {/* Aggregate Analytics Widgets */}
         <section className="admin-analytics-grid" aria-label="Platform Analytics">
-          {/* Widget 1: Maps Created Per Day */}
+          {/* Widget 1: Maps Generated */}
           <div className="analytics-card">
             <div className="analytics-card-header">
-              <span className="analytics-card-label">Maps Created Per Day</span>
+              <span className="analytics-card-label">Maps Generated</span>
               <span className="material-symbols-outlined analytics-card-icon">timeline</span>
             </div>
             <div className="analytics-card-value">
-              {analytics?.maps_created_per_day?.reduce((acc, curr) => acc + curr.count, 0) || 0}
+              {analytics?.map_generation?.maps_generated_last_7_days ?? 'Unavailable'}
             </div>
             <span className="analytics-card-footnote">Last 7 days total</span>
-
-            {/* Sparkline Visualisation */}
-            {analytics?.maps_created_per_day && (
-              <div className="analytics-chart-wrap" aria-label="Daily creation trend">
-                {analytics.maps_created_per_day.map((item) => {
-                  const barHeight = Math.round((item.count / maxMapCount) * 40)
-                  return (
-                    <div
-                      key={item.date}
-                      className="chart-bar-col"
-                      title={`${item.date}: ${item.count} maps`}
-                    >
-                      <div className="chart-bar-fill" style={{ height: `${barHeight}px` }} />
-                      <span className="chart-bar-label">
-                        {item.date.split(' ')[1] || item.date}
-                      </span>
-                    </div>
-                  )
-                })}
-              </div>
+            {analytics?.map_generation?.maps_created_per_day?.length > 0 && (
+              <ol className="analytics-chart-wrap" aria-label="Daily generation counts, UTC">
+                {analytics.map_generation.maps_created_per_day.map(({ date, count }) => (
+                  <li key={date} className="chart-bar-col" title={date}>
+                    <strong>{count}</strong>
+                    <span className="chart-bar-label">{date.slice(5)}</span>
+                  </li>
+                ))}
+              </ol>
             )}
           </div>
 
@@ -195,23 +196,75 @@ export function AdminDashboardContent() {
               </span>
             </div>
             <div className="analytics-card-value">
-              {analytics?.failure_rate !== undefined ? `${analytics.failure_rate}%` : '0%'}
+              {analytics
+                ? `${(analytics.job_failures.failure_rate * 100).toFixed(1)}%`
+                : 'Unavailable'}
             </div>
             <span className="analytics-card-footnote">LLM synthesis error boundary triggers</span>
           </div>
 
-          {/* Widget 3: Average Latency */}
+          {/* Widget 3: Average Generation Latency */}
           <div className="analytics-card">
             <div className="analytics-card-header">
               <span className="analytics-card-label">Avg. Generation Latency</span>
               <span className="material-symbols-outlined analytics-card-icon">speed</span>
             </div>
             <div className="analytics-card-value">
-              {analytics?.average_latency_ms
-                ? `${(analytics.average_latency_ms / 1000).toFixed(2)}s`
-                : '1.20s'}
+              {analytics
+                ? `${analytics.performance.avg_generation_latency_seconds.toFixed(2)}s`
+                : 'Unavailable'}
             </div>
             <span className="analytics-card-footnote">End-to-end knowledge graph synthesis</span>
+          </div>
+
+          {/* Widget 4: Active Users & Platform Reach */}
+          <div className="analytics-card">
+            <div className="analytics-card-header">
+              <span className="analytics-card-label">Active Users (7 Days)</span>
+              <span className="material-symbols-outlined analytics-card-icon" style={{ color: 'var(--accent-sage, #899b72)' }}>
+                group
+              </span>
+            </div>
+            <div className="analytics-card-value">
+              {analytics?.users?.active_users_last_7_days ?? 'Unavailable'}
+            </div>
+            <span className="analytics-card-footnote">
+              {analytics?.users
+                ? `${analytics.users.total_users} registered users (${analytics.users.active_users_last_30_days} active 30d)`
+                : 'Total accounts registered'}
+            </span>
+          </div>
+
+          {/* Widget 5: Chat Assistant Latency */}
+          <div className="analytics-card">
+            <div className="analytics-card-header">
+              <span className="analytics-card-label">Avg. Chat Latency</span>
+              <span className="material-symbols-outlined analytics-card-icon">chat_bubble</span>
+            </div>
+            <div className="analytics-card-value">
+              {analytics?.performance?.avg_chat_turn_latency_seconds !== undefined
+                ? `${analytics.performance.avg_chat_turn_latency_seconds.toFixed(2)}s`
+                : 'Unavailable'}
+            </div>
+            <span className="analytics-card-footnote">Turnaround for conversational RAG queries</span>
+          </div>
+
+          {/* Widget 6: Completed Jobs */}
+          <div className="analytics-card">
+            <div className="analytics-card-header">
+              <span className="analytics-card-label">Completed Jobs</span>
+              <span className="material-symbols-outlined analytics-card-icon" style={{ color: 'var(--accent-sage, #899b72)' }}>
+                task_alt
+              </span>
+            </div>
+            <div className="analytics-card-value">
+              {analytics?.job_failures?.completed_jobs ?? 'Unavailable'}
+            </div>
+            <span className="analytics-card-footnote">
+              {analytics?.job_failures
+                ? `${analytics.job_failures.failed_jobs} failed / ${analytics.map_generation?.total_generations || 0} total requests`
+                : 'Autonomous graph synthesis executions'}
+            </span>
           </div>
         </section>
 
@@ -276,13 +329,13 @@ export function AdminDashboardContent() {
                       <tr key={u.id}>
                         <td>
                           <div className="user-info-cell">
-                            <span className="user-name-text">{u.name || 'Anonymous User'}</span>
+                            <span className="user-name-text">{u.name || u.email || u.id}</span>
                             <span className="user-email-text">{u.email}</span>
                           </div>
                         </td>
                         <td>
-                          {u.signup_date
-                            ? new Date(u.signup_date).toLocaleDateString(undefined, {
+                          {u.created_at
+                            ? new Date(u.created_at).toLocaleDateString(undefined, {
                                 year: 'numeric',
                                 month: 'short',
                                 day: 'numeric',
@@ -290,12 +343,14 @@ export function AdminDashboardContent() {
                             : 'N/A'}
                         </td>
                         <td>
-                          <span className={`status-badge ${u.status || 'active'}`}>
+                          <span
+                            className={`status-badge ${u.status === 'deletion_pending' ? 'Deletion pending' : u.status || 'active'}`}
+                          >
                             {u.status || 'active'}
                           </span>
                         </td>
                         <td>
-                          <strong>{u.total_maps_count ?? 0}</strong>
+                          <strong>{u.map_count ?? 0}</strong>
                         </td>
                         <td>
                           <span
@@ -316,7 +371,7 @@ export function AdminDashboardContent() {
                             className="admin-table-actions"
                             style={{ justifyContent: 'flex-end' }}
                           >
-                            {u.status === 'suspended' ? (
+                            {u.status === 'deletion_pending' ? null : u.status === 'suspended' ? (
                               <button
                                 type="button"
                                 className="btn-admin-action unsuspend"
@@ -359,7 +414,7 @@ export function AdminDashboardContent() {
                               >
                                 delete
                               </span>
-                              Delete
+                              {u.status === 'deletion_pending' ? 'Retry deletion' : 'Delete'}
                             </button>
                           </div>
                         </td>
@@ -368,6 +423,22 @@ export function AdminDashboardContent() {
                   )}
                 </tbody>
               </table>
+              <nav aria-label="User directory pages">
+                <button
+                  type="button"
+                  disabled={loading || userOffset === 0}
+                  onClick={() => setUserOffset(userOffset - 20)}
+                >
+                  Previous
+                </button>
+                <button
+                  type="button"
+                  disabled={loading || users.length < 20}
+                  onClick={() => setUserOffset(userOffset + 20)}
+                >
+                  Next
+                </button>
+              </nav>
             </div>
           </section>
         )}
@@ -388,16 +459,15 @@ export function AdminDashboardContent() {
                     <div className="audit-log-top">
                       <span className="audit-log-action">{log.action}</span>
                       <span className="audit-log-time">
-                        {log.timestamp ? new Date(log.timestamp).toLocaleString() : 'Recent'}
+                        {log.created_at ? new Date(log.created_at).toLocaleString() : 'Recent'}
                       </span>
                     </div>
-                    <p className="audit-log-detail">{log.details}</p>
                     <div className="audit-log-meta">
                       <span>
                         Target User: <strong>{log.target_user_id}</strong>
                       </span>
                       <span>
-                        Admin ID: <strong>{log.admin_id}</strong>
+                        Admin ID: <strong>{log.actor_id}</strong>
                       </span>
                     </div>
                   </div>

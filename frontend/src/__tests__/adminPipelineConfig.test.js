@@ -6,81 +6,37 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { adminService } from '../services/adminService'
-import { evaluateAdminAccess } from './adminPanel.test'
+import { apiClient } from '../services/apiClient'
 
-describe('S3-FE7: Pipeline Configuration Admin Access Control', () => {
-  it('guards /admin/config strictly behind the admin role', () => {
-    // 1. Initializing state
-    expect(evaluateAdminAccess(null, true).status).toBe('loading')
-
-    // 2. Unauthenticated user
-    const unauth = evaluateAdminAccess(null, false)
-    expect(unauth.status).toBe('redirect')
-    expect(unauth.target).toBe('/login')
-
-    // 3. Regular non-admin user
-    const standardUser = { id: 'usr-1', email: 'user@mindweave.craft', role: 'user' }
-    const forbidden = evaluateAdminAccess(standardUser, false)
-    expect(forbidden.status).toBe('redirect')
-    expect(forbidden.target).toBe('/dashboard')
-
-    // 4. Authenticated admin
-    const adminUser = { id: 'admin-1', email: 'admin@mindweave.craft', role: 'admin' }
-    const allowed = evaluateAdminAccess(adminUser, false)
-    expect(allowed.status).toBe('allowed')
-  })
-})
-
+vi.mock('../services/apiClient', () => ({
+  apiClient: { get: vi.fn(), post: vi.fn(), delete: vi.fn(), patch: vi.fn() },
+}))
 describe('S3-FE7: Pipeline Configuration Service Contracts', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
 
-  it('retrieves runtime pipeline config with all required feature flags', async () => {
-    const config = await adminService.getPipelineConfig()
-    expect(config).toBeDefined()
-
-    // Required interactive toggles
-    expect(config).toHaveProperty('ENABLE_TWO_PASS')
-    expect(typeof config.ENABLE_TWO_PASS).toBe('boolean')
-
-    expect(config).toHaveProperty('RESEARCH_ENGINE')
-    expect(['subgraph', 'inline']).toContain(config.RESEARCH_ENGINE)
-
-    expect(config).toHaveProperty('IMAGE_EXTRACTOR')
-    expect(['gemini', 'openrouter', 'tesseract']).toContain(config.IMAGE_EXTRACTOR)
-
-    // Required prompt template version and LLM provider metadata
-    expect(config).toHaveProperty('llm')
-    expect(config.llm).toHaveProperty('provider')
-    expect(config.llm).toHaveProperty('model')
-
-    expect(config).toHaveProperty('prompts')
-    expect(config.prompts).toHaveProperty('version')
+  it('returns the backend configuration', async () => {
+    const config = { enable_two_pass: false, research_engine: 'inline', image_extractor: 'gemini' }
+    apiClient.get.mockResolvedValueOnce({ ok: true, data: config })
+    expect(await adminService.getPipelineConfig()).toEqual(config)
+    expect(apiClient.get).toHaveBeenCalledWith('/api/admin/config')
   })
 
-  it('applies and updates pipeline configuration via PATCH payload', async () => {
-    const updates = {
-      ENABLE_TWO_PASS: true,
-      RESEARCH_ENGINE: 'subgraph',
-      IMAGE_EXTRACTOR: 'openrouter',
-    }
-
-    const updated = await adminService.updatePipelineConfig(updates)
-    expect(updated).toBeDefined()
-    expect(updated.ENABLE_TWO_PASS).toBe(true)
-    expect(updated.RESEARCH_ENGINE).toBe('subgraph')
-    expect(updated.IMAGE_EXTRACTOR).toBe('openrouter')
-    expect(updated).toHaveProperty('updated_at')
+  it('normalizes PATCH keys and returns the persisted settings', async () => {
+    const saved = { enable_two_pass: false, research_engine: 'subgraph', image_extractor: 'gemini' }
+    apiClient.patch.mockResolvedValueOnce({ ok: true, data: saved })
+    expect(await adminService.updatePipelineConfig({ RESEARCH_ENGINE: 'subgraph' })).toEqual(saved)
+    expect(apiClient.patch).toHaveBeenCalledWith('/api/admin/config', {
+      research_engine: 'subgraph',
+    })
   })
 
-  it('preserves unspecified configuration fields during partial updates', async () => {
-    const partialUpdate = {
-      RESEARCH_ENGINE: 'inline',
-    }
-
-    const updated = await adminService.updatePipelineConfig(partialUpdate)
-    expect(updated.RESEARCH_ENGINE).toBe('inline')
+  it('does not signal success for a rejected save', async () => {
+    apiClient.patch.mockResolvedValueOnce({ ok: false, error: 'Invalid config' })
+    await expect(adminService.updatePipelineConfig({ image_extractor: 'invalid' })).rejects.toThrow(
+      'Invalid config',
+    )
   })
 })
 

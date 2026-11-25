@@ -77,3 +77,23 @@
 .btn-dismiss-banner:hover {
   background-color: rgba(245, 158, 11, 0.2);
 }
+
+/* Contextual placement inside chat messages */
+.research-degraded-banner.inline,
+.chat-messages-container .research-degraded-banner,
+.chat-sidebar-drawer .research-degraded-banner,
+.chat-panel-container .research-degraded-banner,
+.chat-message-bubble .research-degraded-banner,
+.chat-message .research-degraded-banner,
+.chat-body .research-degraded-banner,
+.chat-thread-container .research-degraded-banner {
+  position: static;
+  top: auto;
+  left: auto;
+  transform: none;
+  width: 100%;
+  max-width: 100%;
+  margin: 8px 0;
+  box-sizing: border-box;
+  animation: none;
+}

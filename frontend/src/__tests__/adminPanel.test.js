@@ -6,6 +6,11 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { adminService } from '../services/adminService'
+import { apiClient } from '../services/apiClient'
+
+vi.mock('../services/apiClient', () => ({
+  apiClient: { get: vi.fn(), post: vi.fn(), delete: vi.fn(), patch: vi.fn() },
+}))
 import { AdminErrorBoundary } from '../pages/admin/AdminErrorBoundary'
 
 // Route evaluation helper matching AdminRoute decision logic
@@ -53,43 +58,33 @@ describe('S3-FE1: Admin Service & Privacy Enforcement', () => {
     vi.clearAllMocks()
   })
 
-  it('provides default users metadata without node/edge content', async () => {
-    const users = await adminService.getUsers()
-    expect(Array.isArray(users)).toBe(true)
-    expect(users.length).toBeGreaterThan(0)
-
-    users.forEach((u) => {
-      expect(u).toHaveProperty('id')
-      expect(u).toHaveProperty('email')
-      expect(u).toHaveProperty('status')
-      expect(u).toHaveProperty('total_maps_count')
-      // Strict privacy check: ensure no map content/nodes/edges are exposed
-      expect(u).not.toHaveProperty('nodes')
-      expect(u).not.toHaveProperty('edges')
-      expect(u).not.toHaveProperty('graph_data')
-    })
+  it('loads paginated users from the API', async () => {
+    const users = [{ id: 'usr-1', email: 'user@example.test', status: 'active', map_count: 2 }]
+    apiClient.get.mockResolvedValueOnce({ ok: true, data: users })
+    expect(await adminService.getUsers(20, 20)).toEqual(users)
+    expect(apiClient.get).toHaveBeenCalledWith('/api/admin/users?limit=20&offset=20')
   })
 
-  it('provides aggregate platform analytics data', async () => {
-    const analytics = await adminService.getAnalytics()
-    expect(analytics).toBeDefined()
-    expect(analytics).toHaveProperty('maps_created_per_day')
-    expect(analytics).toHaveProperty('failure_rate')
-    expect(analytics).toHaveProperty('average_latency_ms')
-    expect(Array.isArray(analytics.maps_created_per_day)).toBe(true)
+  it('loads real analytics and audit records through their canonical routes', async () => {
+    const statistics = { map_generation: { maps_generated_last_7_days: 0 } }
+    const audit = [{ action: 'user.suspend', target_user_id: 'usr-1', actor_id: 'admin-1' }]
+    apiClient.get.mockResolvedValueOnce({ ok: true, data: statistics })
+    apiClient.get.mockResolvedValueOnce({ ok: true, data: audit })
+    expect(await adminService.getAnalytics()).toEqual(statistics)
+    expect(await adminService.getAuditLogs()).toEqual(audit)
+    expect(apiClient.get).toHaveBeenNthCalledWith(1, '/api/admin/stats')
+    expect(apiClient.get).toHaveBeenNthCalledWith(2, '/api/admin/audit-log')
   })
 
-  it('provides admin audit logs with timestamps and target user IDs', async () => {
-    const logs = await adminService.getAuditLogs()
-    expect(Array.isArray(logs)).toBe(true)
-    expect(logs.length).toBeGreaterThan(0)
-
-    logs.forEach((log) => {
-      expect(log).toHaveProperty('action')
-      expect(log).toHaveProperty('target_user_id')
-      expect(log).toHaveProperty('admin_id')
-      expect(log).toHaveProperty('timestamp')
-    })
+  it('propagates a rejected suspension and uses the canonical POST routes', async () => {
+    apiClient.post.mockResolvedValueOnce({ ok: false, error: 'Permission denied' })
+    apiClient.post.mockResolvedValueOnce({ ok: true, data: { status: 'active' } })
+    await expect(adminService.setUserStatus('usr-1', 'suspended')).rejects.toThrow(
+      'Permission denied',
+    )
+    expect(await adminService.setUserStatus('usr-1', 'active')).toEqual({ status: 'active' })
+    expect(apiClient.post).toHaveBeenNthCalledWith(1, '/api/admin/users/usr-1/suspend')
+    expect(apiClient.post).toHaveBeenNthCalledWith(2, '/api/admin/users/usr-1/unsuspend')
   })
 })
 

@@ -51,6 +51,23 @@ This guide outlines rules, architectural constraints, and verification protocols
 ### F. Layout & Flyout Positioning
 - Floating inspector cards (`.node-inspector-flyout`, `.edge-inspector-flyout`) must be positioned at `top: 72px` or below with `max-height: calc(100vh - 96px)` to avoid being clipped behind the 56px editor navigation bar (`CanvasTopBar`).
 
+### G. Admin Route Protection & Privacy Invariants (S3-FE1, S3-FE7)
+- All `/admin/*` routes must be wrapped with an admin check (`user?.role === 'admin'`). Standard users attempting to access `/admin` must be redirected safely to `/dashboard` with an access-denied toast.
+- The Admin UI must render aggregate telemetry and user accounts only, never displaying user mind map titles, node labels, or chat queries.
+
+### H. Long-Term Memory Sovereignty & Export (S3-FE2)
+- The `/memory` interface must allow users to view, toggle disabled state, delete, and export their own memories as a GDPR JSON bundle via `memoryService.exportMemories()`.
+- No user can access or view another user's memory records.
+
+### I. Multi-Modal Intake & SSRF Validation (S3-FE4, S3-FE5)
+- `CreateMapPage.jsx` must support file uploads for DOCX, PPTX, PDF, and images, as well as `seed_url`.
+- URL inputs must validate against private IP patterns (`127.0.0.1`, `10.*`, `192.168.*`, `172.16-31.*`, `localhost`) on the client side, displaying clear error messaging without submitting invalid targets.
+
+### J. Top-to-Bottom Handle Alignment & React Flow Geometry
+- Edge adapters in `src/utils/graphAdapter.js` must specify `sourceHandle: 'source-bottom'` and `targetHandle: 'target-top'`.
+- All custom node components (`RootNode`, `BranchNode`, `ConceptNode`) must expose `<Handle id="source-bottom" position={Position.Bottom} />` and `<Handle id="target-top" position={Position.Top} />`.
+- Fallback layouts must group nodes by depth level along $Y$ ($y = 80 + \text{depth} \times 200$) and space sibling nodes horizontally along $X$.
+
 ---
 
 ## 3. Environment & Execution Specifics
